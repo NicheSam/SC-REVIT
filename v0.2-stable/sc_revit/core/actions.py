@@ -1,0 +1,45 @@
+﻿"""Action names shared by Python clients and the Revit add-in.
+
+Keep this list as the v0.3 routing contract.  The current C# implementation still
+handles these actions inside RfaMetadataApplication.cs, but future C# handler
+classes should keep the same names for backward compatibility.
+"""
+
+FAMILY_LIBRARY_ACTIONS = {
+    "scan_project_families",
+    "export_project_families",
+    "add_missing_string_parameters",
+    "set_string_parameter_values",
+}
+
+CAD_POINTS_ACTIONS = {
+    "list_point_placement_context",
+    "get_cad_import_path",
+    "list_cad_block_names",
+    "scan_cad_block_points",
+    "transform_dwg_block_points",
+    "create_dwg_preview_markers",
+    "place_cad_block_points",
+    "place_dwg_block_points",
+}
+
+FIRE_BRANCH_ACTIONS = {
+    "list_fire_branch_context",
+    "read_fire_branch_selection",
+    "create_fire_branch_preview",
+    "create_fire_branch_pipes",
+}
+
+OPENING_ACTIONS = {
+    "list_opening_context",
+    "scan_opening_candidates",
+    "view_opening_candidate",
+    "place_opening_markers",
+}
+
+ALL_ACTIONS = (
+    FAMILY_LIBRARY_ACTIONS
+    | CAD_POINTS_ACTIONS
+    | FIRE_BRANCH_ACTIONS
+    | OPENING_ACTIONS
+)

@@ -20,4 +20,8 @@ obj/
 *.cache
 *.user
 *.suo
-
+*.zip
+*.7z
+*.rar
+.env
+.env.*

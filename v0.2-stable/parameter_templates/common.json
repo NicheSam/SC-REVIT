@@ -1,0 +1,10 @@
+{
+  "template_name": "共通模板",
+  "applies_to": { "scope": "all" },
+  "parameters": [
+    { "name": "SC_系統別", "required": true, "default_value": null, "expected_kind": "type", "expected_storage_type": "String" },
+    { "name": "SC_主名", "required": true, "default_value": null, "expected_kind": "type", "expected_storage_type": "String" },
+    { "name": "SC_原始檔名", "required": true, "default_value": null, "expected_kind": "type", "expected_storage_type": "String" },
+    { "name": "SC_維護狀態", "required": false, "default_value": "使用中", "expected_kind": "type", "expected_storage_type": "String" }
+  ]
+}

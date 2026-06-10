@@ -1,0 +1,7 @@
+SC REVIT
+Version: v0.2-stable
+Status: Stable baseline / 穩定封存
+ArchivedAt: 2026-06-10 11:01:54 +08:00
+SourceFolder: E:\Desktop\Codex\SC REVIT
+PreviousVersion: E:\Desktop\Codex\SC REVIT_versions\v0.1
+Note: 這是 V0.3 開發前的穩定回退基線。封存不作為 Revit 目前啟動路徑。
