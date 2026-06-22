@@ -1,0 +1,26 @@
+[
+  {
+    "file_name": "AHU_1200CMH.rfa",
+    "family_name": "空調箱",
+    "type_name": "1200CMH",
+    "revit_category": "Mechanical Equipment"
+  },
+  {
+    "file_name": "Smoke Detector Ceiling.rfa",
+    "family_name": "煙霧偵測器",
+    "type_name": "天花型",
+    "revit_category": "Fire Alarm Devices"
+  },
+  {
+    "file_name": "Emergency Light Wall.rfa",
+    "family_name": "緊急照明",
+    "type_name": "壁掛型",
+    "revit_category": "Lighting Fixtures"
+  },
+  {
+    "file_name": "Unknown Device.rfa",
+    "family_name": "未知設備",
+    "type_name": "",
+    "revit_category": "Generic Models"
+  }
+]

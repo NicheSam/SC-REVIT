@@ -1,0 +1,5 @@
+SC REVIT
+Version: v0.4-dev
+Status: Active development
+TargetRevit: 2024
+ReleaseAsset: SC_REVIT_v0.4-dev_installer.zip

@@ -8,6 +8,7 @@ build/
 dist/
 runtime/
 notion/
+release/
 bin/
 obj/
 **/bin_build_*/
@@ -23,5 +24,7 @@ obj/
 *.zip
 *.7z
 *.rar
+tmp_*.png
+PROJECT_CONTEXT.md
 .env
 .env.*
