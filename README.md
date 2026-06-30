@@ -7,11 +7,11 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 
 最新版測試安裝包：
 
-[下載 SC_REVIT_v0.4-dev_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.4-dev/SC_REVIT_v0.4-dev_installer.zip)
+[下載 SC_REVIT_v0.4.1-dev_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.4.1-dev/SC_REVIT_v0.4.1-dev_installer.zip)
 
 Release 頁面：
 
-[SC REVIT v0.4-dev installer](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.4-dev)
+[SC REVIT v0.4.1-dev installer](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.4.1-dev)
 
 ## 環境需求
 
@@ -27,7 +27,7 @@ Release 頁面：
 
 ## 安裝方式
 
-1. 下載 `SC_REVIT_v0.4-dev_installer.zip`。
+1. 下載 `SC_REVIT_v0.4.1-dev_installer.zip`。
 2. 解壓縮 ZIP。
 3. 執行 `Install_SC_REVIT.bat`。
 4. 等待安裝完成。
@@ -72,7 +72,7 @@ Release 頁面：
 - `批量點位放置`：從 CAD / DWG block 點位批量放置 Revit 元件。
 - `SC 後台`：查看工具操作紀錄、建立結果與後續管理狀態。
 - `開孔定位`：檢查 MEP 與建築連結物件，產生開孔候選。
-- `消防支管建立`：輔助建立消防支管。
+- `消防支管建立`：依候選主管與撒水頭位置，輔助建立垂直於最近主管的消防支管。
 - `身份檢查`：檢查選取元件是否具備後台追蹤所需身份資料。
 - `參數健檢`：檢查 SC_ 參數缺漏與空值。
 - `斷點檢查`：診斷 pipe / duct / conduit 連接狀態，只對可修復 pipe 執行自動修復。
