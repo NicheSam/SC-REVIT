@@ -30,3 +30,14 @@ def save_library_root(library_root: str) -> None:
     payload = load_settings()
     payload["library_root"] = library_root
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def save_drainage_settings(settings: Dict[str, Any]) -> None:
+    path = get_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = load_settings()
+    payload["drainage"] = dict(settings)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )

@@ -11,7 +11,12 @@ Set-Location $root
 if ([string]::IsNullOrWhiteSpace($Version)) {
   $versionPath = Join-Path $root "VERSION.txt"
   if (Test-Path -LiteralPath $versionPath) {
-    $Version = (Get-Content -LiteralPath $versionPath -First 1).Trim()
+    $versionLine = Get-Content -LiteralPath $versionPath |
+      Where-Object { $_ -match '^\s*Version\s*:' } |
+      Select-Object -First 1
+    if ($versionLine) {
+      $Version = ($versionLine -replace '^\s*Version\s*:\s*', '').Trim()
+    }
   }
 }
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -60,6 +65,26 @@ if (Test-Path -LiteralPath $zipPath) {
 }
 $packageItems = Get-ChildItem -LiteralPath $packageRoot -Force
 Compress-Archive -LiteralPath $packageItems.FullName -DestinationPath $zipPath -Force
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+try {
+  $requiredEntries = @(
+    "Install_SC_REVIT.bat",
+    "install_sc_revit.ps1",
+    "payload/dist/RevitFamilyClassifier/RevitFamilyClassifier.exe",
+    "payload/revit_addin/bin/RfaMetadataAddin.dll"
+  )
+  $entryNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
+  foreach ($entry in $requiredEntries) {
+    if ($entryNames -notcontains $entry) {
+      throw "Release ZIP is missing required entry: $entry"
+    }
+  }
+}
+finally {
+  $zip.Dispose()
+}
 
 Write-Host ""
 Write-Host "Release package ready:" -ForegroundColor Green

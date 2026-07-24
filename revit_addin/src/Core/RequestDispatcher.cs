@@ -38,6 +38,11 @@ namespace RfaMetadataAddin
                 return true;
             }
 
+            if (TryHandleDrainageAction(uiApp, payload, action, responseFile, serializer))
+            {
+                return true;
+            }
+
             if (TryHandleMepToolsAction(uiApp, payload, action, responseFile, serializer))
             {
                 return true;

@@ -32,6 +32,7 @@ TRACKED_PRODUCT_ACTIONS = {
     "place_dwg_blocks",
     "place_opening_markers",
     "create_fire_branch_pipes",
+    "create_drainage_pipes",
 }
 
 

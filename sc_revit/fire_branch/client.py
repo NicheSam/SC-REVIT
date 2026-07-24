@@ -32,6 +32,7 @@ def request_fire_branch_selection(timeout_seconds: int = 120) -> dict:
 def request_create_fire_branch_pipes(
     *,
     main_pipe_id: str | int,
+    main_pipe_ids: list[str | int] | None = None,
     sprinkler_ids: list[str | int],
     pipe_type_id: str | int,
     system_type_id: str | int,
@@ -45,6 +46,7 @@ def request_create_fire_branch_pipes(
 ) -> dict:
     request = create_fire_branch_pipes_request(
         main_pipe_id=main_pipe_id,
+        main_pipe_ids=main_pipe_ids,
         sprinkler_ids=sprinkler_ids,
         pipe_type_id=pipe_type_id,
         system_type_id=system_type_id,
@@ -61,6 +63,7 @@ def request_create_fire_branch_pipes(
 def request_create_fire_branch_preview(
     *,
     main_pipe_id: str | int,
+    main_pipe_ids: list[str | int] | None = None,
     sprinkler_ids: list[str | int],
     level_id: str | int,
     branch_offset_cm: float,
@@ -69,6 +72,7 @@ def request_create_fire_branch_preview(
 ) -> dict:
     request = create_fire_branch_preview_request(
         main_pipe_id=main_pipe_id,
+        main_pipe_ids=main_pipe_ids,
         sprinkler_ids=sprinkler_ids,
         level_id=level_id,
         branch_offset_cm=branch_offset_cm,

@@ -345,6 +345,7 @@ def create_fire_branch_selection_request() -> QueueRequest:
 def create_fire_branch_pipes_request(
     *,
     main_pipe_id: str | int,
+    main_pipe_ids: list[str | int] | None = None,
     sprinkler_ids: list[str | int],
     pipe_type_id: str | int,
     system_type_id: str | int,
@@ -365,6 +366,7 @@ def create_fire_branch_pipes_request(
         "request_id": request.request_id,
         "action": request.action,
         "main_pipe_id": str(main_pipe_id),
+        "main_pipe_ids": [str(item) for item in (main_pipe_ids or [main_pipe_id])],
         "sprinkler_ids": [str(item) for item in sprinkler_ids],
         "pipe_type_id": str(pipe_type_id),
         "system_type_id": str(system_type_id),
@@ -383,6 +385,7 @@ def create_fire_branch_pipes_request(
 def create_fire_branch_preview_request(
     *,
     main_pipe_id: str | int,
+    main_pipe_ids: list[str | int] | None = None,
     sprinkler_ids: list[str | int],
     level_id: str | int,
     branch_offset_cm: float,
@@ -398,10 +401,268 @@ def create_fire_branch_preview_request(
         "request_id": request.request_id,
         "action": request.action,
         "main_pipe_id": str(main_pipe_id),
+        "main_pipe_ids": [str(item) for item in (main_pipe_ids or [main_pipe_id])],
         "sprinkler_ids": [str(item) for item in sprinkler_ids],
         "level_id": str(level_id),
         "branch_offset_cm": branch_offset_cm,
         "height_reference": height_reference,
+    }
+    _write_request_json(request, payload)
+    return request
+
+
+def create_drainage_context_request() -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="list_drainage_context",
+    )
+    _write_request_json(request, {"request_id": request.request_id, "action": request.action})
+    return request
+
+
+def create_drainage_selection_request() -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="read_drainage_selection",
+    )
+    _write_request_json(request, {"request_id": request.request_id, "action": request.action})
+    return request
+
+
+def create_drainage_target_search_request(
+    *,
+    document_fingerprint: str,
+    document_revision: int,
+    scope: str = "active_view",
+    max_results: int = 200,
+    explicit_element_ids: list[str] | None = None,
+    pipe_type_ids: list[str] | None = None,
+    system_type_ids: list[str] | None = None,
+    level_ids: list[str] | None = None,
+) -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="search_drainage_targets",
+    )
+    _write_request_json(
+        request,
+        {
+            "request_id": request.request_id,
+            "action": request.action,
+            "document_fingerprint": document_fingerprint,
+            "document_revision": document_revision,
+            "scope": scope,
+            "max_results": max_results,
+            "explicit_element_ids":
+                list(explicit_element_ids or []),
+            "pipe_type_ids": list(pipe_type_ids or []),
+            "system_type_ids": list(system_type_ids or []),
+            "level_ids": list(level_ids or []),
+        },
+    )
+    return request
+
+
+def create_drainage_preview_request(
+    *,
+    document_fingerprint: str,
+    document_revision: int,
+    main_pipe_id: str | int,
+    main_pipe_unique_id: str,
+    fixture_ids: list[str | int],
+    fixture_unique_ids: list[str],
+    selection_source: str,
+    main_candidate_count: int,
+    candidate_set_token: str | None = None,
+    pipe_type_id: str | int,
+    pipe_type_unique_id: str,
+    system_type_id: str | int,
+    system_type_unique_id: str,
+    level_id: str | int,
+    level_unique_id: str,
+    junction_type_id: str | int,
+    junction_type_unique_id: str,
+    elbow_type_id: str | int,
+    elbow_type_unique_id: str,
+    slope_ratio: float = 0.01,
+    diameter_mm: float = 100,
+    downstream_mode: str = "auto",
+    source_connector_origin: dict[str, float] | None = None,
+    route_policy: dict[str, float] | None = None,
+) -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="create_drainage_preview",
+    )
+    payload = {
+        "request_id": request.request_id,
+        "action": request.action,
+        "document_fingerprint": document_fingerprint,
+        "document_revision": document_revision,
+        "main_pipe_id": str(main_pipe_id),
+        "main_pipe_unique_id": main_pipe_unique_id,
+        "fixture_ids": [str(item) for item in fixture_ids],
+        "fixture_unique_ids": list(fixture_unique_ids),
+        "selection_source": selection_source,
+        "main_candidate_count": main_candidate_count,
+        "pipe_type_id": str(pipe_type_id),
+        "pipe_type_unique_id": pipe_type_unique_id,
+        "system_type_id": str(system_type_id),
+        "system_type_unique_id": system_type_unique_id,
+        "level_id": str(level_id),
+        "level_unique_id": level_unique_id,
+        "junction_type_id": str(junction_type_id),
+        "junction_type_unique_id": junction_type_unique_id,
+        "elbow_type_id": str(elbow_type_id),
+        "elbow_type_unique_id": elbow_type_unique_id,
+        "slope_ratio": slope_ratio,
+        "diameter_mm": diameter_mm,
+        "downstream_mode": downstream_mode,
+    }
+    if candidate_set_token is not None:
+        payload["candidate_set_token"] = candidate_set_token
+    if source_connector_origin is not None:
+        payload["source_connector_origin"] = {
+            key: float(source_connector_origin[key])
+            for key in ("x", "y", "z")
+        }
+    if route_policy is not None:
+        payload["route_policy"] = route_policy
+    _write_request_json(request, payload)
+    return request
+
+
+def create_confirm_drainage_snapshot_request(
+    *,
+    snapshot_id: str,
+    snapshot_hash: str,
+    document_fingerprint: str,
+    document_revision: int,
+    actor_kind: str = "human",
+) -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="confirm_drainage_snapshot",
+    )
+    _write_request_json(
+        request,
+        {
+            "request_id": request.request_id,
+            "action": request.action,
+            "snapshot_id": snapshot_id,
+            "snapshot_hash": snapshot_hash,
+            "document_fingerprint": document_fingerprint,
+            "document_revision": document_revision,
+            "actor_kind": actor_kind,
+        },
+    )
+    return request
+
+
+def create_clear_drainage_preview_request(
+    *,
+    snapshot_id: str,
+    snapshot_hash: str,
+    document_fingerprint: str,
+    document_revision: int,
+) -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="clear_drainage_preview",
+    )
+    _write_request_json(
+        request,
+        {
+            "request_id": request.request_id,
+            "action": request.action,
+            "snapshot_id": snapshot_id,
+            "snapshot_hash": snapshot_hash,
+            "document_fingerprint": document_fingerprint,
+            "document_revision": document_revision,
+        },
+    )
+    return request
+
+
+def create_drainage_pipes_request(
+    *,
+    snapshot_id: str,
+    snapshot_hash: str,
+    confirmation_id: str,
+    operation_id: str,
+    idempotency_key: str,
+    actor_kind: str = "human_gui",
+) -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="create_drainage_pipes",
+    )
+    payload = {
+        "request_id": request.request_id,
+        "action": request.action,
+        "snapshot_id": snapshot_id,
+        "snapshot_hash": snapshot_hash,
+        "confirmation_id": confirmation_id,
+        "operation_id": operation_id,
+        "idempotency_key": idempotency_key,
+        "actor_kind": actor_kind,
+    }
+    _write_request_json(request, payload)
+    return request
+
+
+def create_get_drainage_operation_request(operation_id: str) -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="get_drainage_operation",
+    )
+    _write_request_json(
+        request,
+        {
+            "request_id": request.request_id,
+            "action": request.action,
+            "operation_id": operation_id,
+        },
+    )
+    return request
+
+
+def create_validate_drainage_result_request(
+    element_ids: list[str | int],
+    *,
+    operation_id: str = "",
+    expected_slope_ratio: float = 0.01,
+    route_evidence: list[dict] | None = None,
+) -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="validate_drainage_result",
+    )
+    payload = {
+        "request_id": request.request_id,
+        "action": request.action,
+        "operation_id": operation_id,
+        "element_ids": [str(item) for item in element_ids],
+        "expected_slope_ratio": expected_slope_ratio,
+        "route_evidence": route_evidence or [],
     }
     _write_request_json(request, payload)
     return request

@@ -7,6 +7,10 @@ from sc_revit.core.batch import record_request_failed, record_request_succeeded
 from rfa_reader import RfaReaderError
 
 
+class RevitQueueTimeoutError(RfaReaderError):
+    pass
+
+
 def wait_for_revit_response(
     request_id: str,
     timeout_seconds: int,
@@ -43,4 +47,4 @@ def wait_for_revit_response(
         time.sleep(0.5)
 
     record_request_failed(request_id, timeout_message)
-    raise RfaReaderError(timeout_message)
+    raise RevitQueueTimeoutError(timeout_message)

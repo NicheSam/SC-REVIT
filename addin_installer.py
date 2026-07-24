@@ -1,6 +1,7 @@
 import os
 import shutil
 import hashlib
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,7 +46,7 @@ def ensure_revit_addin_installed() -> AddinInstallResult:
     ):
         shutil.copy2(SOURCE_DLL, ascii_deploy_dll)
     (ascii_deploy_dir / "sc_revit_home.txt").write_text(
-        str(BASE_DIR.resolve()),
+        str(get_launcher_root()),
         encoding="utf-8",
     )
 
@@ -63,8 +64,11 @@ def ensure_revit_addin_installed() -> AddinInstallResult:
     existed_before = target_path.exists()
 
     try:
+        if existed_before:
+            target_path.chmod(0o666)
         manifest = render_manifest(ascii_deploy_dll)
         target_path.write_text(manifest, encoding="utf-8")
+        target_path.chmod(0o444)
     except PermissionError as exc:
         raise RuntimeError(
             "無法寫入 Revit 外掛資料夾；請允許安裝或手動複製 .addin"
@@ -76,6 +80,12 @@ def ensure_revit_addin_installed() -> AddinInstallResult:
     )
 
 
+def get_launcher_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return BASE_DIR.resolve()
+
+
 def render_manifest(dll_path: Path) -> str:
     normalized = str(dll_path.resolve())
     return f"""<?xml version="1.0" encoding="utf-8" standalone="no"?>
@@ -84,7 +94,7 @@ def render_manifest(dll_path: Path) -> str:
     <Name>RfaMetadataListener</Name>
     <Assembly>{normalized}</Assembly>
     <AddInId>6DCCB516-9F7B-4AF4-90D4-6BE5B8B9B1D8</AddInId>
-    <FullClassName>RfaMetadataAddin.RfaMetadataApplication</FullClassName>
+    <FullClassName>RfaMetadataAddin.RfaMetadataBootstrapApplication</FullClassName>
     <VendorId>DEX</VendorId>
     <VendorDescription>Background queue listener for RFA metadata requests</VendorDescription>
   </AddIn>

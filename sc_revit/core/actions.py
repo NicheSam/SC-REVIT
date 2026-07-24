@@ -42,6 +42,17 @@ BACKSTAGE_ACTIONS = {
     "delete_tracked_elements",
 }
 
+DRAINAGE_ACTIONS = {
+    "list_drainage_context",
+    "read_drainage_selection",
+    "create_drainage_preview",
+    "confirm_drainage_snapshot",
+    "clear_drainage_preview",
+    "create_drainage_pipes",
+    "validate_drainage_result",
+    "get_drainage_operation",
+}
+
 MEP_TOOLS_ACTIONS = {
     "inspect_selected_elements",
     "scan_sc_parameters",
@@ -54,6 +65,7 @@ ALL_ACTIONS = (
     FAMILY_LIBRARY_ACTIONS
     | CAD_POINTS_ACTIONS
     | FIRE_BRANCH_ACTIONS
+    | DRAINAGE_ACTIONS
     | OPENING_ACTIONS
     | BACKSTAGE_ACTIONS
     | MEP_TOOLS_ACTIONS

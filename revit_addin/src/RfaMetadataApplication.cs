@@ -35,8 +35,15 @@ namespace RfaMetadataAddin
         {
             public FamilyInstance Sprinkler { get; set; }
             public XYZ Point { get; set; }
+            public Pipe MainPipe { get; set; }
+            public long MainPipeId { get; set; }
+            public XYZ MainStart { get; set; }
+            public XYZ MainDirection { get; set; }
+            public XYZ BranchDirection { get; set; }
+            public double MainZ { get; set; }
             public double MainParameter { get; set; }
             public double BranchParameter { get; set; }
+            public int SideSign { get; set; }
         }
 
         private class OpeningPlanReference
@@ -58,17 +65,84 @@ namespace RfaMetadataAddin
 
         public Result OnStartup(UIControlledApplication application)
         {
-            Directory.CreateDirectory(RequestDir);
-            Directory.CreateDirectory(ResponseDir);
-            Directory.CreateDirectory(ErrorDir);
-            EnsureRibbon(application);
-            application.Idling += OnIdling;
-            return Result.Succeeded;
+            string stage = "create_directories";
+            try
+            {
+                Directory.CreateDirectory(RequestDir);
+                Directory.CreateDirectory(ResponseDir);
+                Directory.CreateDirectory(ErrorDir);
+                string startupFault = Path.Combine(
+                    ErrorDir,
+                    "startup_fault.json");
+                if (File.Exists(startupFault))
+                {
+                    File.Delete(startupFault);
+                }
+                string startupTextFault = Path.Combine(
+                    ErrorDir,
+                    "startup_fault.txt");
+                if (File.Exists(startupTextFault))
+                {
+                    File.Delete(startupTextFault);
+                }
+                stage = "ensure_ribbon";
+                EnsureRibbon(application);
+                stage = "initialize_document_state";
+                InitializeDrainageDocumentState(application);
+                stage = "register_preview_server";
+                DrainagePreviewServer.Register();
+                stage = "subscribe_idling";
+                application.Idling += OnIdling;
+                return Result.Succeeded;
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    string fallbackErrorDir = Path.Combine(
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.LocalApplicationData),
+                        "RevitFamilyClassifier",
+                        "runtime",
+                        "queue",
+                        "errors");
+                    Directory.CreateDirectory(fallbackErrorDir);
+                    File.WriteAllText(
+                        Path.Combine(
+                            fallbackErrorDir,
+                            "startup_fault.txt"),
+                        stage + "\r\n" + ex,
+                        Encoding.UTF8);
+                }
+                catch
+                {
+                    // Continue to the structured logger below.
+                }
+                try
+                {
+                    Directory.CreateDirectory(ErrorDir);
+                    File.WriteAllText(
+                        Path.Combine(ErrorDir, "startup_fault.json"),
+                        new JavaScriptSerializer().Serialize(new
+                        {
+                            stage = stage,
+                            error = ex.ToString()
+                        }),
+                        Encoding.UTF8);
+                }
+                catch
+                {
+                    // Preserve the original startup failure.
+                }
+                return Result.Failed;
+            }
         }
 
         public Result OnShutdown(UIControlledApplication application)
         {
             application.Idling -= OnIdling;
+            DrainagePreviewServer.Unregister();
+            ShutdownDrainageDocumentState(application);
             return Result.Succeeded;
         }
 
@@ -156,6 +230,18 @@ namespace RfaMetadataAddin
                 assemblyPath,
                 "RfaMetadataAddin.OpenFireBranchCommand"
             );
+            PushButtonData drainageConnectButtonData = new PushButtonData(
+                "ConnectDrainageToMain",
+                "\u6392\u6c34\u63a5\u5165\u5e79\u7ba1",
+                assemblyPath,
+                "RfaMetadataAddin.ConnectDrainageToMainCommand"
+            );
+            PushButtonData drainageSettingsButtonData = new PushButtonData(
+                "OpenDrainageConfiguration",
+                "\u7ba1\u4ef6\u8a2d\u5b9a",
+                assemblyPath,
+                "RfaMetadataAddin.OpenDrainageConfigurationCommand"
+            );
             PushButtonData openingButtonData = new PushButtonData(
                 "OpenOpeningCheck",
                 "開孔定位",
@@ -241,6 +327,35 @@ namespace RfaMetadataAddin
                 fireBranchButton.LongDescription = "Create first-pass sprinkler branch pipes from selected main pipe and sprinklers.";
                 fireBranchButton.Image = CreateRibbonIcon("placement", 16);
                 fireBranchButton.LargeImage = CreateRibbonIcon("placement", 32);
+            }
+
+            RibbonPanel drainagePanel = application
+                .GetRibbonPanels(RibbonTabName)
+                .FirstOrDefault(item => item.Name == "\u6392\u6c34\u7cfb\u7d71")
+                ?? application.CreateRibbonPanel(RibbonTabName, "\u6392\u6c34\u7cfb\u7d71");
+            SplitButtonData drainageSplitButtonData = new SplitButtonData(
+                "DrainageConnectionWorkflow",
+                "\u6392\u6c34\u63a5\u5165\u5e79\u7ba1");
+            SplitButton drainageSplitButton =
+                drainagePanel.AddItem(drainageSplitButtonData) as SplitButton;
+            if (drainageSplitButton != null)
+            {
+                drainageSplitButton.IsSynchronizedWithCurrentItem = false;
+                PushButton drainageConnectButton =
+                    drainageSplitButton.AddPushButton(drainageConnectButtonData);
+                drainageConnectButton.ToolTip =
+                    "\u9023\u7e8c\u9078\u53d6\u5668\u5177\u6216\u7acb\u7ba1\uff0c\u81ea\u52d5\u63a5\u5165\u6392\u6c34\u5e79\u7ba1";
+                drainageConnectButton.LongDescription =
+                    "Continuously connect sanitary sources to a ranked main pipe. Press Esc to finish the batch.";
+                drainageConnectButton.Image = CreateRibbonIcon("placement", 16);
+                drainageConnectButton.LargeImage = CreateRibbonIcon("placement", 32);
+
+                PushButton drainageSettingsButton =
+                    drainageSplitButton.AddPushButton(drainageSettingsButtonData);
+                drainageSettingsButton.ToolTip =
+                    "\u4f9d Pipe Type \u8a2d\u5b9a\u659cT\u3001Y\u300145\u5ea6\u5f4e\u982d\u8207\u652f\u7ba1\u5761\u5ea6";
+                drainageSettingsButton.Image = CreateRibbonIcon("settings", 16);
+                drainageSettingsButton.LargeImage = CreateRibbonIcon("settings", 32);
             }
 
             RibbonPanel coordinationPanel = application
@@ -1162,6 +1277,7 @@ namespace RfaMetadataAddin
             return new Dictionary<string, object>
             {
                 { "element_id", pipe.Id.Value },
+                { "unique_id", pipe.UniqueId },
                 { "name", pipe.Name },
                 { "level_id", levelId != ElementId.InvalidElementId ? levelId.Value : 0 },
                 { "pipe_type_id", pipe.GetTypeId().Value },
@@ -1270,6 +1386,41 @@ namespace RfaMetadataAddin
             return referenceZ;
         }
 
+        private static FamilyInstance TryNewTeeFitting(Document doc, Connector mainA, Connector mainB, Connector branch)
+        {
+            if (mainA == null || mainB == null || branch == null)
+            {
+                return null;
+            }
+
+            Connector[][] orders = new Connector[][]
+            {
+                new Connector[] { mainA, mainB, branch },
+                new Connector[] { mainB, mainA, branch },
+                new Connector[] { mainA, branch, mainB },
+                new Connector[] { mainB, branch, mainA },
+                new Connector[] { branch, mainA, mainB },
+                new Connector[] { branch, mainB, mainA },
+            };
+            foreach (Connector[] order in orders)
+            {
+                try
+                {
+                    FamilyInstance fitting = doc.Create.NewTeeFitting(order[0], order[1], order[2]);
+                    doc.Regenerate();
+                    if (fitting != null)
+                    {
+                        return fitting;
+                    }
+                }
+                catch
+                {
+                    // Revit API fitting creation is order-sensitive.
+                }
+            }
+            return null;
+        }
+
         private static bool TryCreateTeeAtPoint(Document doc, List<Pipe> mainSegments, Pipe branchPipe, XYZ tiePoint)
         {
             if (branchPipe == null)
@@ -1296,12 +1447,7 @@ namespace RfaMetadataAddin
                 Connector mainA = FindConnectorNear(target, tiePoint);
                 Connector mainB = newSegment != null ? FindConnectorNear(newSegment, tiePoint) : null;
                 Connector branchConnector = FindConnectorNear(branchPipe, tiePoint);
-                if (mainA != null && mainB != null && branchConnector != null)
-                {
-                    FamilyInstance fitting = doc.Create.NewTeeFitting(mainA, mainB, branchConnector);
-                    doc.Regenerate();
-                    return fitting != null;
-                }
+                return TryNewTeeFitting(doc, mainA, mainB, branchConnector) != null;
             }
             catch
             {
@@ -3841,6 +3987,18 @@ namespace RfaMetadataAddin
     }
 
     [Autodesk.Revit.Attributes.Transaction(Autodesk.Revit.Attributes.TransactionMode.Manual)]
+    public class OpenDrainageCommand : IExternalCommand
+    {
+        public Result Execute(
+            ExternalCommandData commandData,
+            ref string message,
+            ElementSet elements)
+        {
+            return FamilyClassifierLauncher.Open("--mode=drainage", ref message);
+        }
+    }
+
+    [Autodesk.Revit.Attributes.Transaction(Autodesk.Revit.Attributes.TransactionMode.Manual)]
     public class OpenBackstageCommand : IExternalCommand
     {
         public Result Execute(
@@ -3907,12 +4065,17 @@ namespace RfaMetadataAddin
             try
             {
                 string projectRoot = ResolveProjectRoot();
-                string exePath = Path.Combine(
+                string directExePath = Path.Combine(
                     projectRoot,
-                    "dist",
-                    "RevitFamilyClassifier",
-                    "RevitFamilyClassifier.exe"
-                );
+                    "RevitFamilyClassifier.exe");
+                string exePath = File.Exists(directExePath)
+                    ? directExePath
+                    : Path.Combine(
+                        projectRoot,
+                        "dist",
+                        "RevitFamilyClassifier",
+                        "RevitFamilyClassifier.exe"
+                    );
                 string guiPath = Path.Combine(projectRoot, "gui_app.py");
                 ProcessStartInfo startInfo;
                 if (File.Exists(exePath))
@@ -3992,8 +4155,13 @@ namespace RfaMetadataAddin
             }
 
             string exePath = Path.Combine(root, "dist", "RevitFamilyClassifier", "RevitFamilyClassifier.exe");
+            string directExePath = Path.Combine(
+                root,
+                "RevitFamilyClassifier.exe");
             string guiPath = Path.Combine(root, "gui_app.py");
-            return File.Exists(exePath) || File.Exists(guiPath);
+            return File.Exists(directExePath)
+                || File.Exists(exePath)
+                || File.Exists(guiPath);
         }
     }
 }

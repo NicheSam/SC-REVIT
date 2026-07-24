@@ -24,7 +24,13 @@ if ($revitProcess) {
 Write-Host ""
 Write-Host "[1/4] Copy application files..."
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
-Copy-Item -LiteralPath (Join-Path $payloadRoot "*") -Destination $InstallRoot -Recurse -Force
+$payloadItems = Get-ChildItem -LiteralPath $payloadRoot -Force
+if ($payloadItems.Count -eq 0) {
+  throw "Payload folder is empty: $payloadRoot"
+}
+foreach ($item in $payloadItems) {
+  Copy-Item -LiteralPath $item.FullName -Destination $InstallRoot -Recurse -Force
+}
 
 $guiExe = Join-Path $InstallRoot "dist\RevitFamilyClassifier\RevitFamilyClassifier.exe"
 $sourceDll = Join-Path $InstallRoot "revit_addin\bin\RfaMetadataAddin.dll"
@@ -52,6 +58,9 @@ Write-Host "[3/4] Write Revit 2024 addin manifest..."
 $addinDir = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024"
 New-Item -ItemType Directory -Force -Path $addinDir | Out-Null
 $addinPath = Join-Path $addinDir "RfaMetadataAddin.addin"
+if (Test-Path -LiteralPath $addinPath) {
+  Set-ItemProperty -LiteralPath $addinPath -Name IsReadOnly -Value $false
+}
 $manifest = @"
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <RevitAddIns>
@@ -59,7 +68,7 @@ $manifest = @"
     <Name>RfaMetadataListener</Name>
     <Assembly>$deployDll</Assembly>
     <AddInId>6DCCB516-9F7B-4AF4-90D4-6BE5B8B9B1D8</AddInId>
-    <FullClassName>RfaMetadataAddin.RfaMetadataApplication</FullClassName>
+    <FullClassName>RfaMetadataAddin.RfaMetadataBootstrapApplication</FullClassName>
     <VendorId>DEX</VendorId>
     <VendorDescription>Background queue listener for SC REVIT requests</VendorDescription>
   </AddIn>
@@ -74,6 +83,7 @@ $manifest = @"
 </RevitAddIns>
 "@
 [System.IO.File]::WriteAllText($addinPath, $manifest, [System.Text.UTF8Encoding]::new($false))
+Set-ItemProperty -LiteralPath $addinPath -Name IsReadOnly -Value $true
 
 Write-Host "[4/4] Verify installation..."
 [xml]$addinXml = Get-Content -LiteralPath $addinPath -Encoding UTF8

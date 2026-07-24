@@ -2,9 +2,10 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
-$specPath = "E:\Desktop\Codex\pyinstaller_spec_tmp"
-$workPath = "E:\Desktop\Codex\pyinstaller_build_tmp"
-$distPath = "E:\Desktop\Codex\pyinstaller_dist_tmp"
+$buildTempRoot = Join-Path $root ".build_tmp"
+$specPath = Join-Path $buildTempRoot "spec"
+$workPath = Join-Path $buildTempRoot "work"
+$distPath = Join-Path $buildTempRoot "dist"
 $finalDist = Join-Path $root "dist\RevitFamilyClassifier"
 New-Item -ItemType Directory -Force -Path $specPath | Out-Null
 New-Item -ItemType Directory -Force -Path $workPath | Out-Null

@@ -2,6 +2,7 @@ import os
 import sys
 import threading
 import tkinter as tk
+import uuid
 from tkinter import font as tkfont
 from datetime import datetime
 from pathlib import Path
@@ -54,6 +55,17 @@ from sc_revit.fire_branch import (
     request_fire_branch_context,
     request_fire_branch_selection,
 )
+from sc_revit.drainage import (
+    default_service as drainage_service,
+    request_drainage_context,
+    request_drainage_selection,
+)
+from sc_revit.drainage.models import (
+    DrainageIntent,
+    DrainageRoutePolicy,
+    OperationRef,
+    SnapshotRef,
+)
 from sc_revit.connect_fitting import request_connect_pipe_fittings, request_diagnose_mep_connectors
 from sc_revit.core.backstage import request_delete_tracked_elements, request_sync_tracked_elements
 from sc_revit.core.batch import BatchStore, DB_PATH, activate_batch, batch_context
@@ -65,7 +77,11 @@ from sc_revit.project_recovery import (
     request_project_family_export,
     request_project_family_scan,
 )
-from settings_store import load_settings, save_library_root
+from settings_store import (
+    load_settings,
+    save_drainage_settings,
+    save_library_root,
+)
 from workflow import classify_rfa_via_revit, refresh_result_metadata_via_revit
 
 
@@ -87,6 +103,7 @@ class FamilyClassifierApp(tk.Tk):
             "recovery": "REVIT 族群回收器",
             "placement": "REVIT 批量點位放置",
             "fire_branch": "REVIT 消防支管建立",
+            "drainage": "SC REVIT 排水建模",
             "opening_check": "REVIT 開孔定位",
             "backstage": "SC REVIT " + "\u5f8c\u53f0",
             "element_inspector": "SC REVIT " + "\u5143\u4ef6\u8eab\u4efd\u6aa2\u67e5",
@@ -115,7 +132,10 @@ class FamilyClassifierApp(tk.Tk):
 
         self._ensure_addin_installed()
         self._build_ui()
-        self._load_or_choose_library_root()
+        if self.app_mode == "drainage":
+            self.after(150, self._load_drainage_workspace)
+        else:
+            self._load_or_choose_library_root()
 
     def _read_app_mode(self) -> str:
         args = {arg.casefold() for arg in sys.argv[1:]}
@@ -125,6 +145,8 @@ class FamilyClassifierApp(tk.Tk):
             return "placement"
         if "--mode=fire-branch" in args or "--fire-branch" in args:
             return "fire_branch"
+        if "--mode=drainage" in args or "--drainage" in args:
+            return "drainage"
         if "--mode=opening-check" in args or "--opening-check" in args:
             return "opening_check"
         if "--mode=backstage" in args or "--backstage" in args:
@@ -175,12 +197,39 @@ class FamilyClassifierApp(tk.Tk):
         top.grid(row=0, column=0, sticky="ew")
         top.columnconfigure(1, weight=1)
 
-        ttk.Label(top, text="族群庫位置").grid(row=0, column=0, sticky="w")
         self.library_var = tk.StringVar(value="尚未載入")
-        ttk.Label(top, textvariable=self.library_var).grid(row=0, column=1, sticky="w", padx=10)
         self.listener_var = tk.StringVar(value="Revit：檢查中")
-        ttk.Label(top, textvariable=self.listener_var).grid(row=0, column=2, padx=(8, 12))
-        ttk.Button(top, text="重新選擇", command=lambda: self._choose_library_root(force=True)).grid(row=0, column=3, padx=(8, 0))
+        if self.app_mode == "drainage":
+            ttk.Label(
+                top,
+                text="SC REVIT｜1% 排水建模",
+                font=("Microsoft JhengHei UI", 12, "bold"),
+            ).grid(row=0, column=0, sticky="w")
+            ttk.Label(
+                top,
+                text="先在 Revit 選取 1 段主管與至少 1 個衛生器具",
+            ).grid(row=0, column=1, sticky="w", padx=12)
+            ttk.Label(
+                top,
+                textvariable=self.listener_var,
+            ).grid(row=0, column=2, padx=(8, 0))
+        else:
+            ttk.Label(top, text="族群庫位置").grid(
+                row=0, column=0, sticky="w"
+            )
+            ttk.Label(
+                top,
+                textvariable=self.library_var,
+            ).grid(row=0, column=1, sticky="w", padx=10)
+            ttk.Label(
+                top,
+                textvariable=self.listener_var,
+            ).grid(row=0, column=2, padx=(8, 12))
+            ttk.Button(
+                top,
+                text="重新選擇",
+                command=lambda: self._choose_library_root(force=True),
+            ).grid(row=0, column=3, padx=(8, 0))
 
         if self.app_mode == "archive":
             actions = ttk.Frame(self, padding=(12, 0, 12, 12))
@@ -234,6 +283,12 @@ class FamilyClassifierApp(tk.Tk):
             backstage_tab = ttk.Frame(main_tabs, padding=12)
             main_tabs.add(backstage_tab, text="SC " + "\u5f8c\u53f0")
             self._build_backstage_tab(backstage_tab)
+            self._refresh_listener_status()
+            return
+        if self.app_mode == "drainage":
+            drainage_tab = ttk.Frame(main_tabs, padding=12)
+            main_tabs.add(drainage_tab, text="排水建模")
+            self._build_drainage_tab(drainage_tab)
             self._refresh_listener_status()
             return
         if self.app_mode == "element_inspector":
@@ -906,7 +961,7 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("element_inspector", "inspect_selected", "Inspect selected elements"):
                 payload = request_inspect_selected_elements()
         except Exception as exc:
-            self.after(0, lambda: self._finish_mep_tool_error("element_inspector", exc))
+            self.after(0, lambda exc=exc: self._finish_mep_tool_error("element_inspector", exc))
             return
         self.after(0, lambda: self._finish_element_inspection(payload))
 
@@ -1005,7 +1060,7 @@ class FamilyClassifierApp(tk.Tk):
                     expected_parameters=expected,
                 )
         except Exception as exc:
-            self.after(0, lambda: self._finish_mep_tool_error("parameter_audit", exc))
+            self.after(0, lambda exc=exc: self._finish_mep_tool_error("parameter_audit", exc))
             return
         self.after(0, lambda: self._finish_parameter_audit(payload))
 
@@ -1088,7 +1143,7 @@ class FamilyClassifierApp(tk.Tk):
             ):
                 payload = request_diagnose_mep_connectors(max_distance_mm=max_distance_mm)
         except Exception as exc:
-            self.after(0, lambda: self._finish_mep_tool_error("connect_fitting", exc))
+            self.after(0, lambda exc=exc: self._finish_mep_tool_error("connect_fitting", exc))
             return
         self.after(0, lambda: self._finish_connector_diagnosis(payload))
 
@@ -1145,7 +1200,7 @@ class FamilyClassifierApp(tk.Tk):
             ):
                 payload = request_connect_pipe_fittings(max_distance_mm=max_distance_mm)
         except Exception as exc:
-            self.after(0, lambda: self._finish_mep_tool_error("connect_fitting", exc))
+            self.after(0, lambda exc=exc: self._finish_mep_tool_error("connect_fitting", exc))
             return
         self.after(0, lambda: self._finish_pipe_connection(payload))
 
@@ -1258,7 +1313,7 @@ class FamilyClassifierApp(tk.Tk):
                     support_type_id=self.piping_support_type_var.get() or None,
                 )
         except Exception as exc:
-            self.after(0, lambda: self._finish_mep_tool_error("piping_support", exc))
+            self.after(0, lambda exc=exc: self._finish_mep_tool_error("piping_support", exc))
             return
         self.after(0, lambda: self._finish_piping_support_preview(payload))
 
@@ -1483,7 +1538,7 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("openings", "list_context", "Opening context"):
                 payload = request_opening_context()
         except Exception as exc:
-            self.after(0, lambda: self._finish_opening_error("讀取開孔資料失敗", exc))
+            self.after(0, lambda exc=exc: self._finish_opening_error("讀取開孔資料失敗", exc))
             return
         self.after(0, lambda: self._finish_opening_context(payload))
 
@@ -1554,7 +1609,7 @@ class FamilyClassifierApp(tk.Tk):
                     clearance_mm=clearance_mm,
                 )
         except Exception as exc:
-            self.after(0, lambda: self._finish_opening_error("開孔掃描失敗", exc))
+            self.after(0, lambda exc=exc: self._finish_opening_error("開孔掃描失敗", exc))
             return
         self.after(0, lambda: self._finish_opening_scan(payload))
 
@@ -1714,7 +1769,7 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("openings", "view_candidate", "View opening candidate", {"opening_id": candidate.get("opening_id")}):
                 payload = request_view_opening_candidate(candidate=candidate, box_size_cm=250)
         except Exception as exc:
-            self.after(0, lambda: self._finish_opening_error("3D 檢視失敗", exc))
+            self.after(0, lambda exc=exc: self._finish_opening_error("3D 檢視失敗", exc))
             return
         self.after(0, lambda: self._finish_opening_view(payload))
 
@@ -1752,7 +1807,7 @@ class FamilyClassifierApp(tk.Tk):
                     dimension_type_id=dimension_type_id,
                 )
         except Exception as exc:
-            self.after(0, lambda: self._finish_opening_error("建立開孔標記失敗", exc))
+            self.after(0, lambda exc=exc: self._finish_opening_error("建立開孔標記失敗", exc))
             return
         self.after(0, lambda: self._finish_opening_marker_placement(payload))
 
@@ -1874,8 +1929,260 @@ class FamilyClassifierApp(tk.Tk):
         self.fire_level_items = {}
         self.fire_diameter_items = {}
         self.fire_main_pipe = None
+        self.fire_main_pipes = []
         self.fire_sprinklers = []
         self.fire_preview_group = None
+
+    def _analyze_fire_branch_selection(self) -> dict:
+        mains = list(getattr(self, "fire_main_pipes", []) or [])
+        if not mains and self.fire_main_pipe:
+            mains = [self.fire_main_pipe]
+        if not mains:
+            return {"valid": False, "reason": "尚未讀取主管。"}
+
+        candidate_data = []
+        for main_pipe in mains:
+            start = main_pipe.get("start") or {}
+            end = main_pipe.get("end") or {}
+            sx = float(start.get("x") or 0)
+            sy = float(start.get("y") or 0)
+            sz = float(start.get("z") or 0)
+            ex = float(end.get("x") or 0)
+            ey = float(end.get("y") or 0)
+            ez = float(end.get("z") or 0)
+            dx = ex - sx
+            dy = ey - sy
+            length = (dx * dx + dy * dy) ** 0.5
+            if length <= 0.000001:
+                continue
+            ux = dx / length
+            uy = dy / length
+            candidate_data.append(
+                {
+                    "element_id": str(main_pipe.get("element_id") or ""),
+                    "sx": sx,
+                    "sy": sy,
+                    "ex": ex,
+                    "ey": ey,
+                    "z_delta": abs(ez - sz),
+                    "ux": ux,
+                    "uy": uy,
+                    "bx": -uy,
+                    "by": ux,
+                    "length": length,
+                    "diameter_mm": float(main_pipe.get("diameter_mm") or 0),
+                }
+            )
+        short_pipe_ft = 50 / 30.48
+        riser_horizontal_ft = 30 / 30.48
+        riser_vertical_ft = 30 / 30.48
+        max_diameter_mm = max((item["diameter_mm"] for item in candidate_data), default=0)
+        main_data = []
+        excluded_main_count = 0
+        for candidate in candidate_data:
+            if (
+                candidate["length"] < short_pipe_ft
+                or (candidate["length"] < riser_horizontal_ft and candidate["z_delta"] > riser_vertical_ft)
+                or (
+                    max_diameter_mm > 0
+                    and candidate["diameter_mm"] > 0
+                    and candidate["diameter_mm"] < max_diameter_mm * 0.75
+                )
+            ):
+                excluded_main_count += 1
+                continue
+            main_data.append(candidate)
+        if not main_data:
+            return {"valid": False, "reason": "選取的管都被判定為短管、立管或小管徑支管，請重新選取真正的主管。"}
+
+        def keep_main_path_segments(items: list[dict]) -> list[dict]:
+            if len(items) <= 2:
+                return items
+
+            snap_tolerance = 5 / 30.48
+            nodes: list[tuple[float, float]] = []
+            edges: list[dict] = []
+
+            def find_or_add_node(x: float, y: float) -> int:
+                for index, (nx, ny) in enumerate(nodes):
+                    if ((nx - x) ** 2 + (ny - y) ** 2) ** 0.5 <= snap_tolerance:
+                        return index
+                nodes.append((x, y))
+                return len(nodes) - 1
+
+            for index, item in enumerate(items):
+                start_node = find_or_add_node(item["sx"], item["sy"])
+                end_node = find_or_add_node(item["ex"], item["ey"])
+                if start_node == end_node:
+                    continue
+                edges.append(
+                    {
+                        "item_index": index,
+                        "a": start_node,
+                        "b": end_node,
+                        "length": item["length"],
+                    }
+                )
+
+            if len(edges) <= 2:
+                return [items[edge["item_index"]] for edge in edges]
+
+            adjacency: dict[int, list[dict]] = {index: [] for index in range(len(nodes))}
+            for edge in edges:
+                adjacency[edge["a"]].append(edge)
+                adjacency[edge["b"]].append(edge)
+
+            components: list[list[int]] = []
+            visited: set[int] = set()
+            for node_index in range(len(nodes)):
+                if node_index in visited:
+                    continue
+                stack = [node_index]
+                visited.add(node_index)
+                component: list[int] = []
+                while stack:
+                    current = stack.pop()
+                    component.append(current)
+                    for edge in adjacency.get(current, []):
+                        next_node = edge["b"] if edge["a"] == current else edge["a"]
+                        if next_node not in visited:
+                            visited.add(next_node)
+                            stack.append(next_node)
+                components.append(component)
+
+            keep_indexes: set[int] = set()
+            for component in components:
+                component_set = set(component)
+                component_edges = [
+                    edge for edge in edges if edge["a"] in component_set and edge["b"] in component_set
+                ]
+                if len(component_edges) <= 2:
+                    keep_indexes.update(edge["item_index"] for edge in component_edges)
+                    continue
+
+                best_distance = -1.0
+                best_previous: dict[int, tuple[int, dict]] = {}
+                best_start = None
+                best_target = None
+                for start in component:
+                    distances = {node: float("inf") for node in component}
+                    previous: dict[int, tuple[int, dict]] = {}
+                    distances[start] = 0.0
+                    remaining = set(component)
+                    while remaining:
+                        current = min(remaining, key=lambda node: distances[node])
+                        if distances[current] == float("inf"):
+                            break
+                        remaining.remove(current)
+                        for edge in adjacency.get(current, []):
+                            next_node = edge["b"] if edge["a"] == current else edge["a"]
+                            if next_node not in component_set:
+                                continue
+                            next_distance = distances[current] + edge["length"]
+                            if next_distance < distances[next_node]:
+                                distances[next_node] = next_distance
+                                previous[next_node] = (current, edge)
+                    for target, distance in distances.items():
+                        if distance > best_distance and distance < float("inf"):
+                            best_distance = distance
+                            best_previous = previous
+                            best_start = start
+                            best_target = target
+
+                current = best_target
+                while current is not None and current != best_start and current in best_previous:
+                    previous_node, edge = best_previous[current]
+                    keep_indexes.add(edge["item_index"])
+                    current = previous_node
+
+            if not keep_indexes:
+                return items
+            return [item for index, item in enumerate(items) if index in keep_indexes]
+
+        path_main_data = keep_main_path_segments(main_data)
+        excluded_main_count += len(main_data) - len(path_main_data)
+        main_data = path_main_data
+
+        points = []
+        projection_tolerance = 30 / 30.48
+        for sprinkler in self.fire_sprinklers:
+            point = sprinkler.get("point") or {}
+            px = float(point.get("x") or 0)
+            py = float(point.get("y") or 0)
+            best = None
+            second = None
+            for main in main_data:
+                raw_main_parameter = (px - main["sx"]) * main["ux"] + (py - main["sy"]) * main["uy"]
+                if raw_main_parameter < -projection_tolerance or raw_main_parameter > main["length"] + projection_tolerance:
+                    continue
+                main_parameter = max(0.0, min(main["length"], raw_main_parameter))
+                projected_x = main["sx"] + main["ux"] * main_parameter
+                projected_y = main["sy"] + main["uy"] * main_parameter
+                signed_branch = (px - projected_x) * main["bx"] + (py - projected_y) * main["by"]
+                distance = abs(signed_branch)
+                candidate = {
+                    "main_id": main["element_id"],
+                    "side": -1 if signed_branch < 0 else 1,
+                    "main_parameter": main_parameter,
+                    "branch_parameter": distance,
+                    "distance": distance,
+                }
+                if best is None or candidate["distance"] < best["distance"]:
+                    second = best
+                    best = candidate
+                elif second is None or candidate["distance"] < second["distance"]:
+                    second = candidate
+            if best:
+                if (
+                    second
+                    and second["main_id"] != best["main_id"]
+                    and second["distance"] - best["distance"] < (30 / 30.48)
+                ):
+                    sprinkler_id = sprinkler.get("element_id") or "-"
+                    return {
+                        "valid": False,
+                        "reason": f"撒水頭 {sprinkler_id} 距離兩段主管太接近，請分段建立或縮小主管候選。",
+                    }
+                points.append(best)
+            else:
+                sprinkler_id = sprinkler.get("element_id") or "-"
+                return {
+                    "valid": False,
+                    "reason": f"撒水頭 {sprinkler_id} 不在主管魚骨掃描範圍內，請縮小撒水頭範圍或補選主管段。",
+                }
+
+        if not points:
+            return {"valid": False, "reason": "尚未讀取撒水頭。"}
+
+        row_tolerance = 10 / 30.48
+        row_count = 0
+        for key in sorted({(point["main_id"], point["side"]) for point in points}):
+            current_average = 0.0
+            current_count = 0
+            for point in sorted(
+                [item for item in points if (item["main_id"], item["side"]) == key],
+                key=lambda item: item["main_parameter"],
+            ):
+                if current_count == 0 or abs(point["main_parameter"] - current_average) > row_tolerance:
+                    row_count += 1
+                    current_average = point["main_parameter"]
+                    current_count = 1
+                else:
+                    current_average = ((current_average * current_count) + point["main_parameter"]) / (current_count + 1)
+                    current_count += 1
+
+        max_branch_length_m = max(point["branch_parameter"] for point in points) * 0.3048
+        estimated_pipe_count = len(points) + row_count * 2
+        return {
+            "valid": True,
+            "main_count": len(main_data),
+            "main_candidate_count": len(candidate_data),
+            "excluded_main_count": excluded_main_count,
+            "sprinkler_count": len(points),
+            "row_count": row_count,
+            "estimated_pipe_count": estimated_pipe_count,
+            "max_branch_length_m": max_branch_length_m,
+        }
 
     def _load_fire_branch_context(self) -> None:
         self.fire_branch_status_var.set("讀取管類型中…")
@@ -1886,7 +2193,7 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("fire_branch", "list_context", "Fire branch context"):
                 payload = request_fire_branch_context()
         except Exception as exc:
-            self.after(0, lambda: self._finish_fire_branch_error("讀取失敗", exc))
+            self.after(0, lambda exc=exc: self._finish_fire_branch_error("讀取失敗", exc))
             return
         self.after(0, lambda: self._finish_fire_branch_context(payload))
 
@@ -1922,7 +2229,24 @@ class FamilyClassifierApp(tk.Tk):
         if self.fire_level_items:
             self.fire_level_combo.current(0)
         if self.fire_diameter_items:
-            self.fire_diameter_combo.current(0)
+            diameter_labels = list(self.fire_diameter_items.keys())
+            preferred_label = None
+            for target_mm in (32, 25):
+                for label, item in self.fire_diameter_items.items():
+                    if abs(float(item.get("value_mm") or 0) - target_mm) <= 0.1:
+                        preferred_label = label
+                        break
+                if preferred_label:
+                    break
+            if not preferred_label:
+                small_diameters = [
+                    (float(item.get("value_mm") or 0), label)
+                    for label, item in self.fire_diameter_items.items()
+                    if 0 < float(item.get("value_mm") or 0) <= 50
+                ]
+                if small_diameters:
+                    preferred_label = sorted(small_diameters)[0][1]
+            self.fire_diameter_var.set(preferred_label or diameter_labels[0])
         self.fire_branch_status_var.set(
             f"已讀取｜管類型 {len(self.fire_pipe_type_items)}｜系統類型 {len(self.fire_system_type_items)}｜管徑 {len(self.fire_diameter_items)}"
         )
@@ -1944,9 +2268,56 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("fire_branch", "read_selection", "Read fire branch selection"):
                 payload = request_fire_branch_selection()
         except Exception as exc:
-            self.after(0, lambda: self._finish_fire_branch_error("選取讀取失敗", exc))
+            self.after(0, lambda exc=exc: self._finish_fire_branch_error("選取讀取失敗", exc))
             return
         self.after(0, lambda: self._finish_fire_branch_selection(payload))
+
+    def _filter_fire_main_run(self, pipes: list[dict]) -> list[dict]:
+        if not pipes:
+            return []
+        base = pipes[0]
+        start = base.get("start") or {}
+        end = base.get("end") or {}
+        sx = float(start.get("x") or 0)
+        sy = float(start.get("y") or 0)
+        sz = float(start.get("z") or 0)
+        ex = float(end.get("x") or 0)
+        ey = float(end.get("y") or 0)
+        dx = ex - sx
+        dy = ey - sy
+        length = (dx * dx + dy * dy) ** 0.5
+        if length <= 0.000001:
+            return [base]
+        ux = dx / length
+        uy = dy / length
+        base_diameter = float(base.get("diameter_mm") or 0)
+        z_tolerance = 10 / 30.48
+        result = []
+        for pipe in pipes:
+            pipe_start = pipe.get("start") or {}
+            pipe_end = pipe.get("end") or {}
+            psx = float(pipe_start.get("x") or 0)
+            psy = float(pipe_start.get("y") or 0)
+            psz = float(pipe_start.get("z") or 0)
+            pex = float(pipe_end.get("x") or 0)
+            pey = float(pipe_end.get("y") or 0)
+            pez = float(pipe_end.get("z") or 0)
+            pdx = pex - psx
+            pdy = pey - psy
+            pipe_length = (pdx * pdx + pdy * pdy) ** 0.5
+            if pipe_length <= 0.000001:
+                continue
+            pux = pdx / pipe_length
+            puy = pdy / pipe_length
+            parallel = abs(ux * pux + uy * puy)
+            pipe_diameter = float(pipe.get("diameter_mm") or 0)
+            if (
+                parallel >= 0.98
+                and abs(((psz + pez) * 0.5) - sz) <= z_tolerance
+                and (base_diameter <= 0 or pipe_diameter <= 0 or abs(pipe_diameter - base_diameter) <= 1)
+            ):
+                result.append(pipe)
+        return result or [base]
 
     def _finish_fire_branch_selection(self, payload: dict) -> None:
         pipes = list(payload.get("pipes", []))
@@ -1954,12 +2325,14 @@ class FamilyClassifierApp(tk.Tk):
         mode = getattr(self, "fire_selection_mode", "all")
         if mode in {"main", "all"}:
             self.fire_main_pipe = pipes[0] if pipes else None
+            self.fire_main_pipes = self._filter_fire_main_run(pipes)
         if mode in {"sprinklers", "all"}:
             self.fire_sprinklers = sprinklers
         if mode in {"main", "all"}:
             if self.fire_main_pipe:
+                main_count_text = f"{len(self.fire_main_pipes)} 段主管" if len(self.fire_main_pipes) > 1 else "1 段主管"
                 self.fire_main_pipe_var.set(
-                    f"ID {self.fire_main_pipe.get('element_id')}｜{self.fire_main_pipe.get('name')}｜管徑 {float(self.fire_main_pipe.get('diameter_mm') or 0):g} mm"
+                    f"{main_count_text}｜第一段 ID {self.fire_main_pipe.get('element_id')}｜{self.fire_main_pipe.get('name')}｜管徑 {float(self.fire_main_pipe.get('diameter_mm') or 0):g} mm"
                 )
                 pipe_type_id = str(self.fire_main_pipe.get("pipe_type_id") or "")
                 for name, item in self.fire_pipe_type_items.items():
@@ -1971,10 +2344,6 @@ class FamilyClassifierApp(tk.Tk):
                     if str(item.get("element_id")) == system_type_id:
                         self.fire_system_type_var.set(name)
                         break
-                if float(self.fire_main_pipe.get("diameter_mm") or 0) > 0:
-                    diameter_label = f"{float(self.fire_main_pipe.get('diameter_mm')):g} mm"
-                    if diameter_label in self.fire_diameter_items:
-                        self.fire_diameter_var.set(diameter_label)
             else:
                 self.fire_main_pipe_var.set("未選取主管")
 
@@ -1996,7 +2365,8 @@ class FamilyClassifierApp(tk.Tk):
                         f"{float(point.get('z') or 0):.2f}",
                     ),
                 )
-        self.fire_branch_status_var.set(f"已讀取｜主管 {1 if self.fire_main_pipe else 0}｜撒水頭 {len(self.fire_sprinklers)}")
+        self.fire_preview_group = None
+        self.fire_branch_status_var.set(f"已讀取｜主管 {len(self.fire_main_pipes)}｜撒水頭 {len(self.fire_sprinklers)}")
 
     def _create_fire_branch_pipes(self) -> None:
         if not self.fire_main_pipe:
@@ -2027,9 +2397,23 @@ class FamilyClassifierApp(tk.Tk):
         if diameter_mm <= 0:
             messagebox.showerror("無法建立", "管徑必須大於 0")
             return
+        main_diameter_mm = float(self.fire_main_pipe.get("diameter_mm") or 0)
+        if main_diameter_mm > 0 and diameter_mm >= main_diameter_mm * 0.75:
+            if not messagebox.askyesno(
+                "確認支管管徑",
+                f"目前支管管徑為 {diameter_mm:g} mm，接近主管管徑 {main_diameter_mm:g} mm。\n\n"
+                "如果這是支管設計管徑可以繼續；如果不是，請取消後改成支管管徑。",
+            ):
+                return
+        if not self.fire_preview_group:
+            messagebox.showerror("無法建立", "請先按「產生螢光路徑預覽」，確認路徑正確後再建立。")
+            return
         if not messagebox.askyesno(
             "確認建立消防支管",
-            f"將建立 {len(self.fire_sprinklers)} 顆撒水頭的支管。\n第一版不做避障與變徑，是否繼續？",
+            "即將以目前主管建立消防支管：\n"
+            f"主管：ID {self.fire_main_pipe.get('element_id')}\n"
+            f"撒水頭：{len(self.fire_sprinklers)} 顆\n\n"
+            "第一版不做避障與變徑，請確認預覽路徑正確後再繼續。",
         ):
             return
         self.fire_branch_status_var.set("建立消防支管中…")
@@ -2085,23 +2469,45 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("fire_branch", "preview", "Preview fire branch", {"sprinkler_count": len(sprinklers)}):
                 payload = request_create_fire_branch_preview(
                     main_pipe_id=main_pipe.get("element_id"),
+                    main_pipe_ids=[
+                        item.get("element_id")
+                        for item in (getattr(self, "fire_main_pipes", []) or [main_pipe])
+                    ],
                     sprinkler_ids=[item.get("element_id") for item in sprinklers],
                     level_id=level.get("element_id"),
                     branch_offset_cm=branch_offset_cm,
                     height_reference=height_reference,
                 )
         except Exception as exc:
-            self.after(0, lambda: self._finish_fire_branch_error("預覽失敗", exc))
+            self.after(0, lambda exc=exc: self._finish_fire_branch_error("預覽失敗", exc))
             return
         self.after(0, lambda: self._finish_fire_branch_preview(payload))
 
     def _finish_fire_branch_preview(self, payload: dict) -> None:
+        skipped = list(payload.get("skipped", []) or [])
         self.fire_preview_group = {
             "group_id": payload.get("group_id"),
             "group_name": payload.get("group_name"),
             "batch_id": payload.get("batch_id"),
         }
-        self.fire_branch_status_var.set(f"已產生螢光路徑預覽｜{payload.get('segment_count', 0)} 段")
+        self.fire_branch_status_var.set(
+            "已產生螢光路徑預覽｜"
+            f"{payload.get('segment_count', 0)} 段｜"
+            f"有效主管 {payload.get('valid_main_count', '-')}｜"
+            f"排除主管 {payload.get('excluded_main_count', '-')}｜"
+            f"支管排數 {payload.get('row_count', '-')}｜"
+            f"預估管段 {payload.get('estimated_pipe_count', '-')}｜"
+            f"略過 {len(skipped)}"
+        )
+        if skipped:
+            messagebox.showwarning(
+                "部分撒水頭已略過",
+                "以下撒水頭無法投影到選取主管，預覽已先略過：\n"
+                + "\n".join(
+                    f"ID {item.get('sprinkler_id', '-')}: {item.get('reason', '')}"
+                    for item in skipped[:20]
+                ),
+            )
 
     def _create_fire_branch_pipes_worker(
         self,
@@ -2120,6 +2526,10 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("fire_branch", "create_pipes", "Create fire branch pipes", {"sprinkler_count": len(sprinklers), "diameter_mm": diameter_mm}):
                 payload = request_create_fire_branch_pipes(
                     main_pipe_id=main_pipe.get("element_id"),
+                    main_pipe_ids=[
+                        item.get("element_id")
+                        for item in (getattr(self, "fire_main_pipes", []) or [main_pipe])
+                    ],
                     sprinkler_ids=[item.get("element_id") for item in sprinklers],
                     pipe_type_id=pipe_type.get("element_id"),
                     system_type_id=system_type.get("element_id"),
@@ -2131,26 +2541,1568 @@ class FamilyClassifierApp(tk.Tk):
                     delete_preview_after_create=True,
                 )
         except Exception as exc:
-            self.after(0, lambda: self._finish_fire_branch_error("建立失敗", exc))
+            self.after(0, lambda exc=exc: self._finish_fire_branch_error("建立失敗", exc))
             return
         self.after(0, lambda: self._finish_fire_branch_created(payload))
 
     def _finish_fire_branch_created(self, payload: dict) -> None:
         created = list(payload.get("created", []))
         failed = list(payload.get("failed", []))
+        skipped = list(payload.get("skipped", []) or [])
         if payload.get("deleted_preview_group_id"):
             self.fire_preview_group = None
         self.fire_branch_status_var.set(
-            f"建立完成｜管段 {len(created)}｜失敗 {len(failed)}｜Batch {payload.get('batch_id', '')}"
+            f"建立完成｜管段 {len(created)}｜有效主管 {payload.get('valid_main_count', '-')}｜排除主管 {payload.get('excluded_main_count', '-')}｜支管排數 {payload.get('row_count', '-')}｜略過 {len(skipped)}｜失敗 {len(failed)}｜Batch {payload.get('batch_id', '')}"
         )
-        if failed:
+        if skipped or failed:
+            lines = []
+            if skipped:
+                lines.append("已略過撒水頭：")
+                lines.extend(
+                    f"ID {item.get('sprinkler_id', '-')}: {item.get('reason', '')}"
+                    for item in skipped[:10]
+                )
+            if failed:
+                if lines:
+                    lines.append("")
+                lines.append("建立失敗項目：")
+                lines.extend(str(item.get("reason", item)) for item in failed[:10])
             messagebox.showwarning(
                 "消防支管部分失敗",
-                "\n".join(str(item.get("reason", item)) for item in failed[:10]),
+                "\n".join(lines),
             )
 
     def _finish_fire_branch_error(self, title: str, exc: Exception) -> None:
         self.fire_branch_status_var.set(title)
+        messagebox.showerror(title, str(exc))
+
+    def _build_drainage_tab(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(3, weight=1)
+
+        context_frame = ttk.LabelFrame(parent, text="目前選取", padding=10)
+        context_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ttk.Button(
+            context_frame,
+            text="重新讀取目前選取",
+            command=self._load_drainage_workspace,
+        ).pack(side="left")
+        self.drainage_status_var = tk.StringVar(
+            value="正在讀取目前選取與專案設定…"
+        )
+        ttk.Label(context_frame, textvariable=self.drainage_status_var).pack(side="left", padx=(12, 0))
+
+        selection_frame = ttk.Frame(context_frame)
+        selection_frame.pack(side="right", padx=(12, 0))
+        self.drainage_main_var = tk.StringVar(value="主管：未讀取")
+        self.drainage_fixture_var = tk.StringVar(value="衛生器具：0")
+        ttk.Label(selection_frame, textvariable=self.drainage_main_var).grid(row=0, column=0, sticky="w")
+        ttk.Label(selection_frame, textvariable=self.drainage_fixture_var).grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        settings = ttk.LabelFrame(parent, text="完整排水配置", padding=10)
+        settings.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        settings.columnconfigure(1, weight=1)
+        settings.columnconfigure(3, weight=1)
+        self.drainage_system_var = tk.StringVar()
+        self.drainage_pipe_type_var = tk.StringVar()
+        self.drainage_level_var = tk.StringVar()
+        self.drainage_slope_percent_var = tk.StringVar(value="1")
+        self.drainage_diameter_var = tk.StringVar(value="100")
+        self.drainage_downstream_var = tk.StringVar(value="自動偵測")
+        self.drainage_junction_type_var = tk.StringVar()
+        self.drainage_elbow_type_var = tk.StringVar()
+        self.drainage_minimum_tangent_var = tk.StringVar(value="100")
+        self.drainage_junction_spacing_var = tk.StringVar(value="300")
+        self.drainage_collision_clearance_var = tk.StringVar(value="25")
+        self.drainage_radial_minimum_var = tk.StringVar(value="0")
+        self.drainage_radial_maximum_var = tk.StringVar(value="45")
+        self.drainage_angle_tolerance_var = tk.StringVar(value="5")
+        self.drainage_double45_lateral_offset_var = tk.StringVar(value="25")
+        ttk.Label(settings, text="系統類型").grid(row=0, column=0, sticky="w")
+        self.drainage_system_combo = ttk.Combobox(settings, textvariable=self.drainage_system_var, state="readonly")
+        self.drainage_system_combo.grid(row=0, column=1, sticky="ew", padx=(8, 12))
+        ttk.Label(settings, text="管類型").grid(row=0, column=2, sticky="w")
+        self.drainage_pipe_type_combo = ttk.Combobox(settings, textvariable=self.drainage_pipe_type_var, state="readonly")
+        self.drainage_pipe_type_combo.grid(row=0, column=3, sticky="ew", padx=(8, 0))
+        ttk.Label(settings, text="樓層").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self.drainage_level_combo = ttk.Combobox(settings, textvariable=self.drainage_level_var, state="readonly")
+        self.drainage_level_combo.grid(row=1, column=1, sticky="ew", padx=(8, 12), pady=(8, 0))
+        ttk.Label(settings, text="坡度 (%)").grid(row=1, column=2, sticky="w", pady=(8, 0))
+        ttk.Entry(settings, textvariable=self.drainage_slope_percent_var, width=10).grid(
+            row=1, column=3, sticky="w", padx=(8, 0), pady=(8, 0)
+        )
+        ttk.Label(settings, text="支管管徑 (mm)").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(settings, textvariable=self.drainage_diameter_var, width=10).grid(
+            row=2, column=1, sticky="w", padx=(8, 12), pady=(8, 0)
+        )
+        ttk.Label(settings, text="主管下游").grid(row=2, column=2, sticky="w", pady=(8, 0))
+        ttk.Combobox(
+            settings,
+            textvariable=self.drainage_downstream_var,
+            state="readonly",
+            width=16,
+            values=["自動偵測", "端點 0", "端點 1"],
+        ).grid(row=2, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
+        ttk.Label(settings, text="斜 T／Y 三通").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        self.drainage_junction_type_combo = ttk.Combobox(
+            settings,
+            textvariable=self.drainage_junction_type_var,
+            state="readonly",
+        )
+        self.drainage_junction_type_combo.grid(
+            row=3,
+            column=1,
+            sticky="ew",
+            padx=(8, 12),
+            pady=(8, 0),
+        )
+        ttk.Label(settings, text="45° 彎頭").grid(row=3, column=2, sticky="w", pady=(8, 0))
+        self.drainage_elbow_type_combo = ttk.Combobox(
+            settings,
+            textvariable=self.drainage_elbow_type_var,
+            state="readonly",
+        )
+        self.drainage_elbow_type_combo.grid(
+            row=3,
+            column=3,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(8, 0),
+        )
+        self.drainage_pipe_type_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._refresh_drainage_fitting_profiles(),
+        )
+        ttk.Label(settings, text="最短直段 (mm)").grid(row=4, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(settings, textvariable=self.drainage_minimum_tangent_var, width=10).grid(
+            row=4, column=1, sticky="w", padx=(8, 12), pady=(8, 0)
+        )
+        ttk.Label(settings, text="交接點間距 (mm)").grid(row=4, column=2, sticky="w", pady=(8, 0))
+        ttk.Entry(settings, textvariable=self.drainage_junction_spacing_var, width=10).grid(
+            row=4, column=3, sticky="w", padx=(8, 0), pady=(8, 0)
+        )
+        ttk.Label(settings, text="避讓淨距 (mm)").grid(row=5, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(settings, textvariable=self.drainage_collision_clearance_var, width=10).grid(
+            row=5, column=1, sticky="w", padx=(8, 12), pady=(8, 0)
+        )
+        ttk.Label(settings, text="周向仰角範圍").grid(row=5, column=2, sticky="w", pady=(8, 0))
+        radial_frame = ttk.Frame(settings)
+        radial_frame.grid(row=5, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
+        ttk.Entry(radial_frame, textvariable=self.drainage_radial_minimum_var, width=5).pack(side="left")
+        ttk.Label(radial_frame, text="–").pack(side="left", padx=4)
+        ttk.Entry(radial_frame, textvariable=self.drainage_radial_maximum_var, width=5).pack(side="left")
+        ttk.Label(radial_frame, text="°  公差").pack(side="left", padx=(6, 4))
+        ttk.Entry(radial_frame, textvariable=self.drainage_angle_tolerance_var, width=5).pack(side="left")
+        ttk.Label(radial_frame, text="°").pack(side="left", padx=(4, 0))
+        ttk.Label(settings, text="雙 45° 面外偏移上限 (mm)").grid(
+            row=6, column=0, sticky="w", pady=(8, 0)
+        )
+        ttk.Entry(
+            settings,
+            textvariable=self.drainage_double45_lateral_offset_var,
+            width=10,
+        ).grid(row=6, column=1, sticky="w", padx=(8, 12), pady=(8, 0))
+        ttk.Label(
+            settings,
+            text="安全閘門：零坡主管必須指定下游；壁掛式路徑需有實測 45° 彎頭／斜三通 takeout。",
+            foreground="#9a5b00",
+        ).grid(
+            row=7, column=0, columnspan=3, sticky="w", pady=(8, 0)
+        )
+        ttk.Button(
+            settings,
+            text="儲存設定",
+            command=self._save_drainage_settings,
+        ).grid(row=7, column=3, sticky="e", pady=(8, 0))
+        settings.grid_remove()
+
+        compact_settings = ttk.LabelFrame(
+            parent,
+            text="本次排水設定",
+            padding=10,
+        )
+        compact_settings.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        compact_settings.columnconfigure(1, weight=1)
+        self.drainage_configuration_summary_var = tk.StringVar(
+            value="配置：正在讀取…"
+        )
+        ttk.Label(
+            compact_settings,
+            textvariable=self.drainage_configuration_summary_var,
+        ).grid(row=0, column=0, columnspan=4, sticky="w")
+        ttk.Button(
+            compact_settings,
+            text="編輯配置",
+            command=self._show_drainage_configuration_dialog,
+        ).grid(row=0, column=4, sticky="e", padx=(12, 0))
+        ttk.Label(compact_settings, text="坡度 (%)").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(8, 0),
+        )
+        slope_entry = ttk.Entry(
+            compact_settings,
+            textvariable=self.drainage_slope_percent_var,
+            width=8,
+        )
+        slope_entry.grid(
+            row=1,
+            column=1,
+            sticky="w",
+            padx=(8, 20),
+            pady=(8, 0),
+        )
+        ttk.Label(compact_settings, text="支管管徑 (mm)").grid(
+            row=1,
+            column=2,
+            sticky="w",
+            pady=(8, 0),
+        )
+        diameter_entry = ttk.Entry(
+            compact_settings,
+            textvariable=self.drainage_diameter_var,
+            width=8,
+        )
+        diameter_entry.grid(
+            row=1,
+            column=3,
+            sticky="w",
+            padx=(8, 20),
+            pady=(8, 0),
+        )
+        self.drainage_downstream_summary_var = tk.StringVar(
+            value="主管下游：自動偵測"
+        )
+        ttk.Label(
+            compact_settings,
+            textvariable=self.drainage_downstream_summary_var,
+        ).grid(row=1, column=4, sticky="e", pady=(8, 0))
+        ttk.Button(
+            compact_settings,
+            text="翻轉下游",
+            command=self._flip_drainage_downstream,
+        ).grid(row=1, column=5, sticky="e", padx=(8, 0), pady=(8, 0))
+        for entry in (slope_entry, diameter_entry):
+            entry.bind(
+                "<FocusOut>",
+                lambda _event: self._invalidate_drainage_preview(),
+            )
+            entry.bind(
+                "<Return>",
+                lambda _event: self._invalidate_drainage_preview(),
+            )
+
+        preview_frame = ttk.LabelFrame(parent, text="路徑預覽與建立", padding=10)
+        preview_frame.grid(row=3, column=0, sticky="nsew")
+        preview_frame.columnconfigure(0, weight=1)
+        preview_frame.rowconfigure(1, weight=1)
+        actions = ttk.Frame(preview_frame)
+        actions.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ttk.Button(actions, text="預覽路徑", command=self._preview_drainage).pack(side="left")
+        self.drainage_detail_button = ttk.Button(
+            actions,
+            text="顯示工程明細",
+            command=self._toggle_drainage_details,
+        )
+        self.drainage_detail_button.pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="建立排水管", command=self._create_drainage).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="清除預覽",
+            command=self._clear_drainage_preview,
+        ).pack(side="right")
+        self.drainage_tree = ttk.Treeview(
+            preview_frame,
+            columns=(
+                "sequence",
+                "fixture",
+                "outlet",
+                "route",
+                "downstream",
+                "entry_angle",
+                "radial_angle",
+                "elbow_angles",
+                "lateral_offset",
+                "length",
+                "min_tangent",
+                "drop",
+                "slope",
+                "issues",
+            ),
+            show="headings",
+        )
+        self.drainage_tree.configure(
+            displaycolumns=("fixture", "slope", "issues")
+        )
+        for column, title, width in (
+            ("sequence", "順序", 60),
+            ("fixture", "器具 ID", 110),
+            ("outlet", "出口方向", 90),
+            ("route", "路徑類型", 190),
+            ("downstream", "主管下游", 110),
+            ("entry_angle", "接入角", 90),
+            ("radial_angle", "周向仰角", 90),
+            ("elbow_angles", "雙彎頭角度", 120),
+            ("lateral_offset", "面外偏移 (mm)", 120),
+            ("length", "水平長度 (m)", 150),
+            ("min_tangent", "最小 tangent (mm)", 150),
+            ("drop", "垂直落差 (mm)", 150),
+            ("slope", "坡度 (%)", 100),
+            ("issues", "安全閘門", 260),
+        ):
+            self.drainage_tree.heading(column, text=title)
+            self.drainage_tree.column(column, width=width, anchor="center")
+        self.drainage_tree.grid(row=1, column=0, sticky="nsew")
+
+        self.drainage_context = None
+        self.drainage_main_pipe = None
+        self.drainage_fixtures = []
+        self.drainage_preview = None
+        self.drainage_recommendation = None
+        self.drainage_configuration_confirmed = False
+        self.drainage_system_items = {}
+        self.drainage_pipe_type_items = {}
+        self.drainage_level_items = {}
+        self.drainage_junction_type_items = {}
+        self.drainage_elbow_type_items = {}
+
+    def _load_drainage_workspace(self) -> None:
+        try:
+            diameter_mm = float(self.drainage_diameter_var.get())
+        except ValueError:
+            messagebox.showerror(
+                "無法讀取排水設定",
+                "支管管徑必須是數字。",
+            )
+            return
+        self.drainage_status_var.set("讀取目前選取並帶入專案設定中…")
+        cached_context = (
+            dict(self.drainage_context)
+            if self.drainage_context
+            else None
+        )
+        threading.Thread(
+            target=self._load_drainage_workspace_worker,
+            args=(diameter_mm, cached_context),
+            daemon=True,
+        ).start()
+
+    def _load_drainage_workspace_worker(
+        self,
+        diameter_mm: float,
+        cached_context: dict | None,
+    ) -> None:
+        try:
+            with batch_context(
+                "drainage",
+                "load_workspace",
+                "Load drainage workspace",
+                {"diameter_mm": diameter_mm},
+            ):
+                payload = drainage_service.get_gui_workspace(
+                    diameter_mm=diameter_mm,
+                    cached_context=cached_context,
+                    history_limit=100,
+                )
+        except Exception as exc:
+            self.after(
+                0,
+                lambda exc=exc: self._finish_drainage_error(
+                    "排水工作區讀取失敗",
+                    exc,
+                ),
+            )
+            return
+        self.after(
+            0,
+            lambda: self._finish_drainage_workspace(payload),
+        )
+
+    def _finish_drainage_workspace(self, payload: dict) -> None:
+        self._finish_drainage_context(payload.get("context") or {})
+        self._finish_drainage_selection(payload.get("selection") or {})
+        recommendation = payload.get("recommendation")
+        if recommendation:
+            self._finish_drainage_configuration_recommendation(
+                recommendation,
+                show_review_warning=False,
+            )
+        elif not self.drainage_main_pipe:
+            self.drainage_status_var.set(
+                "請在 Revit 恰好選取 1 段主管及至少 1 個衛生器具，"
+                "再按「重新讀取目前選取」"
+            )
+
+    def _load_drainage_context(self) -> None:
+        self.drainage_status_var.set("讀取排水系統資料中…")
+        threading.Thread(target=self._load_drainage_context_worker, daemon=True).start()
+
+    def _load_drainage_context_worker(self) -> None:
+        try:
+            with batch_context("drainage", "list_context", "Drainage context"):
+                payload = request_drainage_context()
+        except Exception as exc:
+            self.after(0, lambda exc=exc: self._finish_drainage_error("讀取失敗", exc))
+            return
+        self.after(0, lambda: self._finish_drainage_context(payload))
+
+    def _finish_drainage_context(self, payload: dict) -> None:
+        self.drainage_context = payload
+        self.drainage_system_items = {
+            str(item.get("name")): item for item in payload.get("system_types", []) if item.get("name")
+        }
+        self.drainage_pipe_type_items = {
+            str(item.get("name")): item for item in payload.get("pipe_types", []) if item.get("name")
+        }
+        self.drainage_level_items = {
+            str(item.get("name")): item for item in payload.get("levels", []) if item.get("name")
+        }
+        self.drainage_system_combo.configure(values=list(self.drainage_system_items))
+        self.drainage_pipe_type_combo.configure(values=list(self.drainage_pipe_type_items))
+        self.drainage_level_combo.configure(values=list(self.drainage_level_items))
+        self._select_drainage_preferred(self.drainage_system_var, self.drainage_system_items, "SP_污水管")
+        self._select_drainage_preferred(self.drainage_pipe_type_var, self.drainage_pipe_type_items, "SP_污水管")
+        if self.drainage_level_items:
+            self.drainage_level_var.set(next(iter(self.drainage_level_items)))
+        self._refresh_drainage_fitting_profiles()
+        route_policy = payload.get("default_route_policy") or {}
+        self.drainage_minimum_tangent_var.set(
+            str(route_policy.get("minimum_tangent_mm", 100))
+        )
+        self.drainage_junction_spacing_var.set(
+            str(route_policy.get("minimum_junction_spacing_mm", 300))
+        )
+        self.drainage_collision_clearance_var.set(
+            str(route_policy.get("collision_clearance_mm", 25))
+        )
+        self.drainage_radial_minimum_var.set(
+            str(route_policy.get("radial_minimum_degrees", 0))
+        )
+        self.drainage_radial_maximum_var.set(
+            str(route_policy.get("radial_maximum_degrees", 45))
+        )
+        self.drainage_angle_tolerance_var.set(
+            str(route_policy.get("radial_tolerance_degrees", 5))
+        )
+        self.drainage_double45_lateral_offset_var.set(
+            str(
+                route_policy.get(
+                    "maximum_double45_lateral_offset_mm",
+                    25,
+                )
+            )
+        )
+        self._restore_drainage_settings()
+        self.drainage_status_var.set(
+            f"已讀取｜系統 {len(self.drainage_system_items)}｜管類型 {len(self.drainage_pipe_type_items)}"
+        )
+
+    def _refresh_drainage_fitting_profiles(self) -> None:
+        pipe_type = self.drainage_pipe_type_items.get(
+            self.drainage_pipe_type_var.get()
+        )
+        pipe_type_id = str((pipe_type or {}).get("element_id") or "")
+        routing_profiles = list(
+            (self.drainage_context or {}).get("routing_profiles") or []
+        )
+        profile = next(
+            (
+                item
+                for item in routing_profiles
+                if str(item.get("pipe_type_id") or "") == pipe_type_id
+            ),
+            {},
+        )
+
+        def index_rules(rules: list[dict]) -> dict[str, dict]:
+            indexed: dict[str, dict] = {}
+            for item in rules:
+                label = (
+                    f"{item.get('family_name') or '-'}｜"
+                    f"{item.get('name') or '-'}｜"
+                    f"ID {item.get('element_id')}"
+                )
+                indexed[label] = item
+            return indexed
+
+        self.drainage_junction_type_items = index_rules(
+            list(profile.get("junctions") or [])
+        )
+        self.drainage_elbow_type_items = index_rules(
+            list(profile.get("elbows") or [])
+        )
+        self.drainage_junction_type_combo.configure(
+            values=list(self.drainage_junction_type_items)
+        )
+        self.drainage_elbow_type_combo.configure(
+            values=list(self.drainage_elbow_type_items)
+        )
+        self.drainage_junction_type_var.set(
+            next(iter(self.drainage_junction_type_items), "")
+        )
+        self.drainage_elbow_type_var.set(
+            next(iter(self.drainage_elbow_type_items), "")
+        )
+        self._update_drainage_configuration_summary()
+
+    def _update_drainage_configuration_summary(self) -> None:
+        if not hasattr(self, "drainage_configuration_summary_var"):
+            return
+        junction = self.drainage_junction_type_items.get(
+            self.drainage_junction_type_var.get()
+        ) or {}
+        elbow = self.drainage_elbow_type_items.get(
+            self.drainage_elbow_type_var.get()
+        ) or {}
+        self.drainage_configuration_summary_var.set(
+            "配置："
+            f"{self.drainage_system_var.get() or '-'}｜"
+            f"{self.drainage_pipe_type_var.get() or '-'}｜"
+            f"斜 T/Y {junction.get('name') or '-'}｜"
+            f"45° {elbow.get('name') or '-'}"
+        )
+        self._update_drainage_downstream_summary()
+
+    def _update_drainage_downstream_summary(self) -> None:
+        if not hasattr(self, "drainage_downstream_summary_var"):
+            return
+        label = self.drainage_downstream_var.get() or "自動偵測"
+        if label == "自動偵測" and self.drainage_preview:
+            plans = list(self.drainage_preview.get("plans") or [])
+            if plans:
+                endpoint = int(
+                    plans[0].get("downstream_endpoint_index", -1)
+                )
+                if endpoint >= 0:
+                    label = f"自動 → 端點 {endpoint}"
+        self.drainage_downstream_summary_var.set(
+            f"主管下游：{label}"
+        )
+
+    def _show_drainage_configuration_dialog(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("排水配置")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.columnconfigure(1, weight=1)
+        dialog.columnconfigure(3, weight=1)
+        body = ttk.Frame(dialog, padding=14)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.columnconfigure(1, weight=1)
+        body.columnconfigure(3, weight=1)
+
+        ttk.Label(body, text="系統類型").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Combobox(
+            body,
+            textvariable=self.drainage_system_var,
+            values=list(self.drainage_system_items),
+            state="readonly",
+        ).grid(row=0, column=1, sticky="ew", padx=(8, 16))
+        ttk.Label(body, text="管類型").grid(
+            row=0, column=2, sticky="w"
+        )
+        pipe_combo = ttk.Combobox(
+            body,
+            textvariable=self.drainage_pipe_type_var,
+            values=list(self.drainage_pipe_type_items),
+            state="readonly",
+        )
+        pipe_combo.grid(row=0, column=3, sticky="ew", padx=(8, 0))
+
+        ttk.Label(body, text="斜 T／Y 三通").grid(
+            row=1, column=0, sticky="w", pady=(8, 0)
+        )
+        junction_combo = ttk.Combobox(
+            body,
+            textvariable=self.drainage_junction_type_var,
+            values=list(self.drainage_junction_type_items),
+            state="readonly",
+        )
+        junction_combo.grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=(8, 16),
+            pady=(8, 0),
+        )
+        ttk.Label(body, text="45° 彎頭").grid(
+            row=1, column=2, sticky="w", pady=(8, 0)
+        )
+        elbow_combo = ttk.Combobox(
+            body,
+            textvariable=self.drainage_elbow_type_var,
+            values=list(self.drainage_elbow_type_items),
+            state="readonly",
+        )
+        elbow_combo.grid(
+            row=1,
+            column=3,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(8, 0),
+        )
+        ttk.Label(body, text="樓層").grid(
+            row=2, column=0, sticky="w", pady=(8, 0)
+        )
+        ttk.Combobox(
+            body,
+            textvariable=self.drainage_level_var,
+            values=list(self.drainage_level_items),
+            state="readonly",
+        ).grid(
+            row=2,
+            column=1,
+            sticky="ew",
+            padx=(8, 16),
+            pady=(8, 0),
+        )
+
+        rules = ttk.LabelFrame(
+            body,
+            text="公司規則／進階設定",
+            padding=10,
+        )
+        rules.grid(
+            row=3,
+            column=0,
+            columnspan=4,
+            sticky="ew",
+            pady=(14, 0),
+        )
+        rule_bindings = (
+            ("最短直段 (mm)", self.drainage_minimum_tangent_var),
+            ("交接點間距 (mm)", self.drainage_junction_spacing_var),
+            ("避讓淨距 (mm)", self.drainage_collision_clearance_var),
+            ("周向最小角 (°)", self.drainage_radial_minimum_var),
+            ("周向最大角 (°)", self.drainage_radial_maximum_var),
+            ("角度公差 (°)", self.drainage_angle_tolerance_var),
+            (
+                "雙 45° 面外偏移上限 (mm)",
+                self.drainage_double45_lateral_offset_var,
+            ),
+        )
+        for index, (label, variable) in enumerate(rule_bindings):
+            row = index // 2
+            column = (index % 2) * 2
+            ttk.Label(rules, text=label).grid(
+                row=row,
+                column=column,
+                sticky="w",
+                pady=(6 if row else 0, 0),
+            )
+            ttk.Entry(
+                rules,
+                textvariable=variable,
+                width=10,
+            ).grid(
+                row=row,
+                column=column + 1,
+                sticky="w",
+                padx=(8, 18),
+                pady=(6 if row else 0, 0),
+            )
+
+        def refresh_fittings(_event=None) -> None:
+            self._refresh_drainage_fitting_profiles()
+            junction_combo.configure(
+                values=list(self.drainage_junction_type_items)
+            )
+            elbow_combo.configure(
+                values=list(self.drainage_elbow_type_items)
+            )
+
+        def save_and_close() -> None:
+            self._save_drainage_settings()
+            self.drainage_configuration_confirmed = True
+            self._update_drainage_configuration_summary()
+            self._invalidate_drainage_preview()
+            dialog.destroy()
+
+        pipe_combo.bind("<<ComboboxSelected>>", refresh_fittings)
+        actions = ttk.Frame(body)
+        actions.grid(
+            row=4,
+            column=0,
+            columnspan=4,
+            sticky="e",
+            pady=(14, 0),
+        )
+        ttk.Button(
+            actions,
+            text="取消",
+            command=dialog.destroy,
+        ).pack(side="left")
+        ttk.Button(
+            actions,
+            text="儲存並套用",
+            command=save_and_close,
+        ).pack(side="left", padx=(8, 0))
+
+    def _flip_drainage_downstream(self) -> None:
+        current = self.drainage_downstream_var.get()
+        if current == "端點 0":
+            next_value = "端點 1"
+        elif current == "端點 1":
+            next_value = "端點 0"
+        else:
+            plans = list(
+                (self.drainage_preview or {}).get("plans") or []
+            )
+            endpoint = (
+                int(plans[0].get("downstream_endpoint_index", -1))
+                if plans
+                else -1
+            )
+            if endpoint < 0:
+                messagebox.showinfo(
+                    "尚未判定主管下游",
+                    "請先按「預覽路徑」，畫布顯示下游箭頭後再翻轉。",
+                )
+                return
+            next_value = "端點 1" if endpoint == 0 else "端點 0"
+        self.drainage_downstream_var.set(next_value)
+        self._update_drainage_downstream_summary()
+        self._invalidate_drainage_preview()
+
+    def _toggle_drainage_details(self) -> None:
+        compact = tuple(self.drainage_tree["displaycolumns"]) == (
+            "fixture",
+            "slope",
+            "issues",
+        )
+        if compact:
+            self.drainage_tree.configure(displaycolumns="#all")
+            self.drainage_detail_button.configure(text="收合工程明細")
+        else:
+            self.drainage_tree.configure(
+                displaycolumns=("fixture", "slope", "issues")
+            )
+            self.drainage_detail_button.configure(text="顯示工程明細")
+
+    def _invalidate_drainage_preview(self) -> None:
+        self._update_drainage_configuration_summary()
+        if self.drainage_preview:
+            self._clear_drainage_preview()
+
+    @staticmethod
+    def _select_drainage_item_by_unique_id(
+        variable: tk.StringVar,
+        items: dict[str, dict],
+        unique_id: str,
+    ) -> bool:
+        for label, item in items.items():
+            if str(item.get("unique_id") or "") == unique_id:
+                variable.set(label)
+                return True
+        return False
+
+    def _restore_drainage_settings(self) -> None:
+        saved = load_settings().get("drainage") or {}
+        if not isinstance(saved, dict):
+            return
+        self._select_drainage_item_by_unique_id(
+            self.drainage_pipe_type_var,
+            self.drainage_pipe_type_items,
+            str(saved.get("pipe_type_unique_id") or ""),
+        )
+        self._refresh_drainage_fitting_profiles()
+        self._select_drainage_item_by_unique_id(
+            self.drainage_system_var,
+            self.drainage_system_items,
+            str(saved.get("system_type_unique_id") or ""),
+        )
+        self._select_drainage_item_by_unique_id(
+            self.drainage_level_var,
+            self.drainage_level_items,
+            str(saved.get("level_unique_id") or ""),
+        )
+        self._select_drainage_item_by_unique_id(
+            self.drainage_junction_type_var,
+            self.drainage_junction_type_items,
+            str(saved.get("junction_type_unique_id") or ""),
+        )
+        self._select_drainage_item_by_unique_id(
+            self.drainage_elbow_type_var,
+            self.drainage_elbow_type_items,
+            str(saved.get("elbow_type_unique_id") or ""),
+        )
+        value_bindings = (
+            ("slope_percent", self.drainage_slope_percent_var),
+            ("diameter_mm", self.drainage_diameter_var),
+            ("downstream_label", self.drainage_downstream_var),
+            ("minimum_tangent_mm", self.drainage_minimum_tangent_var),
+            (
+                "minimum_junction_spacing_mm",
+                self.drainage_junction_spacing_var,
+            ),
+            (
+                "collision_clearance_mm",
+                self.drainage_collision_clearance_var,
+            ),
+            ("radial_minimum_degrees", self.drainage_radial_minimum_var),
+            ("radial_maximum_degrees", self.drainage_radial_maximum_var),
+            ("angle_tolerance_degrees", self.drainage_angle_tolerance_var),
+            (
+                "maximum_double45_lateral_offset_mm",
+                self.drainage_double45_lateral_offset_var,
+            ),
+        )
+        for key, variable in value_bindings:
+            if key in saved:
+                variable.set(str(saved[key]))
+
+    def _save_drainage_settings(self) -> None:
+        try:
+            (
+                pipe_type,
+                system_type,
+                level,
+                junction_type,
+                elbow_type,
+                _slope_ratio,
+                _diameter_mm,
+                _downstream_mode,
+                _route_policy,
+            ) = self._read_drainage_settings()
+        except ValueError as exc:
+            messagebox.showerror("無法儲存排水設定", str(exc))
+            return
+        save_drainage_settings(
+            {
+                "schema_version": "sc.drainage.settings.v1",
+                "document_fingerprint": str(
+                    (
+                        (self.drainage_context or {}).get("document")
+                        or {}
+                    ).get("fingerprint")
+                    or ""
+                ),
+                "pipe_type_unique_id": pipe_type.get("unique_id"),
+                "system_type_unique_id": system_type.get("unique_id"),
+                "level_unique_id": level.get("unique_id"),
+                "junction_type_unique_id": junction_type.get(
+                    "unique_id"
+                ),
+                "elbow_type_unique_id": elbow_type.get("unique_id"),
+                "slope_percent": self.drainage_slope_percent_var.get(),
+                "diameter_mm": self.drainage_diameter_var.get(),
+                "downstream_label": self.drainage_downstream_var.get(),
+                "minimum_tangent_mm":
+                    self.drainage_minimum_tangent_var.get(),
+                "minimum_junction_spacing_mm":
+                    self.drainage_junction_spacing_var.get(),
+                "collision_clearance_mm":
+                    self.drainage_collision_clearance_var.get(),
+                "radial_minimum_degrees":
+                    self.drainage_radial_minimum_var.get(),
+                "radial_maximum_degrees":
+                    self.drainage_radial_maximum_var.get(),
+                "angle_tolerance_degrees":
+                    self.drainage_angle_tolerance_var.get(),
+                "maximum_double45_lateral_offset_mm":
+                    self.drainage_double45_lateral_offset_var.get(),
+            }
+        )
+        self.drainage_status_var.set("排水設定已儲存")
+
+    @staticmethod
+    def _select_drainage_preferred(variable: tk.StringVar, items: dict, preferred: str) -> None:
+        if preferred in items:
+            variable.set(preferred)
+        elif items:
+            variable.set(next(iter(items)))
+
+    def _load_drainage_selection(self) -> None:
+        self.drainage_status_var.set("讀取 Revit 選取中…")
+        threading.Thread(target=self._load_drainage_selection_worker, daemon=True).start()
+
+    def _load_drainage_selection_worker(self) -> None:
+        try:
+            with batch_context("drainage", "read_selection", "Drainage selection"):
+                payload = request_drainage_selection()
+        except Exception as exc:
+            self.after(0, lambda exc=exc: self._finish_drainage_error("選取讀取失敗", exc))
+            return
+        self.after(0, lambda: self._finish_drainage_selection(payload))
+
+    def _finish_drainage_selection(self, payload: dict) -> None:
+        pipes = list(payload.get("pipes", []))
+        fixtures = list(payload.get("fixtures", []))
+        self.drainage_main_pipe = pipes[0] if len(pipes) == 1 else None
+        self.drainage_fixtures = fixtures
+        self.drainage_preview = None
+        self.drainage_configuration_confirmed = False
+        if len(pipes) == 1:
+            pipe = pipes[0]
+            self.drainage_main_var.set(
+                f"主管：ID {pipe.get('element_id')}｜{pipe.get('name')}｜{float(pipe.get('diameter_mm') or 0):g} mm"
+            )
+            for name, item in self.drainage_pipe_type_items.items():
+                if str(item.get("element_id")) == str(pipe.get("pipe_type_id")):
+                    self.drainage_pipe_type_var.set(name)
+                    self._refresh_drainage_fitting_profiles()
+                    break
+            for name, item in self.drainage_system_items.items():
+                if str(item.get("element_id")) == str(pipe.get("system_type_id")):
+                    self.drainage_system_var.set(name)
+                    break
+            for name, item in self.drainage_level_items.items():
+                if str(item.get("element_id")) == str(pipe.get("level_id")):
+                    self.drainage_level_var.set(name)
+                    break
+        else:
+            self.drainage_main_var.set(f"主管：需恰好選取 1 段（目前 {len(pipes)}）")
+        self.drainage_fixture_var.set(f"衛生器具：{len(fixtures)}")
+        self.drainage_status_var.set(f"已讀取｜主管 {len(pipes)}｜衛生器具 {len(fixtures)}")
+        self._update_drainage_configuration_summary()
+
+    def _recommend_drainage_configuration(self) -> None:
+        if not self.drainage_context:
+            messagebox.showerror(
+                "無法套用專案慣例",
+                "請先按「讀取專案資料」。",
+            )
+            return
+        if not self.drainage_main_pipe:
+            messagebox.showerror(
+                "無法套用專案慣例",
+                "請在 Revit 恰好選取一段主管，再按「讀取 Revit 選取」。",
+            )
+            return
+        try:
+            diameter_mm = float(self.drainage_diameter_var.get())
+        except ValueError:
+            messagebox.showerror(
+                "無法套用專案慣例",
+                "支管管徑必須是數字。",
+            )
+            return
+        self.drainage_status_var.set("比對 Routing Preference 與近期成功紀錄中…")
+        threading.Thread(
+            target=self._recommend_drainage_configuration_worker,
+            args=(diameter_mm,),
+            daemon=True,
+        ).start()
+
+    def _recommend_drainage_configuration_worker(
+        self,
+        diameter_mm: float,
+    ) -> None:
+        try:
+            document = (self.drainage_context or {}).get("document") or {}
+            with batch_context(
+                "drainage",
+                "recommend_configuration",
+                "Recommend drainage configuration",
+                {"diameter_mm": diameter_mm},
+            ):
+                payload = drainage_service.recommend_configuration(
+                    document_fingerprint=str(
+                        document.get("fingerprint") or ""
+                    ),
+                    document_revision=int(
+                        document.get("revision") or 0
+                    ),
+                    main_pipe_id=str(
+                        self.drainage_main_pipe.get("element_id") or ""
+                    ),
+                    main_pipe_unique_id=str(
+                        self.drainage_main_pipe.get("unique_id") or ""
+                    ),
+                    diameter_mm=diameter_mm,
+                    history_limit=100,
+                )
+        except Exception as exc:
+            self.after(
+                0,
+                lambda exc=exc: self._finish_drainage_error(
+                    "專案慣例比對失敗",
+                    exc,
+                ),
+            )
+            return
+        self.after(
+            0,
+            lambda: self._finish_drainage_configuration_recommendation(
+                payload
+            ),
+        )
+
+    def _finish_drainage_configuration_recommendation(
+        self,
+        payload: dict,
+        *,
+        show_review_warning: bool = True,
+    ) -> None:
+        self.drainage_recommendation = payload
+        recommendation = payload.get("recommended_configuration") or {}
+        pipe_type = recommendation.get("pipe_type") or {}
+        system_type = recommendation.get("system_type") or {}
+        level = recommendation.get("level") or {}
+        junction = recommendation.get("junction") or {}
+        elbow = recommendation.get("elbow") or {}
+
+        self._select_drainage_item_by_unique_id(
+            self.drainage_pipe_type_var,
+            self.drainage_pipe_type_items,
+            str(pipe_type.get("unique_id") or ""),
+        )
+        self._refresh_drainage_fitting_profiles()
+        self._select_drainage_item_by_unique_id(
+            self.drainage_system_var,
+            self.drainage_system_items,
+            str(system_type.get("unique_id") or ""),
+        )
+        self._select_drainage_item_by_unique_id(
+            self.drainage_level_var,
+            self.drainage_level_items,
+            str(level.get("unique_id") or ""),
+        )
+        auto_select_allowed = bool(
+            payload.get("auto_select_allowed")
+        )
+        if auto_select_allowed:
+            self._select_drainage_item_by_unique_id(
+                self.drainage_junction_type_var,
+                self.drainage_junction_type_items,
+                str(junction.get("unique_id") or ""),
+            )
+            self._select_drainage_item_by_unique_id(
+                self.drainage_elbow_type_var,
+                self.drainage_elbow_type_items,
+                str(elbow.get("unique_id") or ""),
+            )
+        else:
+            self.drainage_junction_type_var.set("")
+            self.drainage_elbow_type_var.set("")
+        self.drainage_configuration_confirmed = auto_select_allowed
+        self.drainage_preview = None
+
+        confidence = payload.get("confidence") or {}
+        history = payload.get("history_evidence") or {}
+        overall = str(confidence.get("overall") or "review")
+        self.drainage_status_var.set(
+            "專案慣例已套用｜"
+            f"三通 {junction.get('name') or '-'}｜"
+            f"彎頭 {elbow.get('name') or '-'}｜"
+            f"紀錄 {history.get('matching_operations', 0)} 筆｜"
+            f"{'可自動採用' if payload.get('auto_select_allowed') else '需人工確認'}"
+        )
+        self._update_drainage_configuration_summary()
+        if payload.get("blocking_issues"):
+            messagebox.showerror(
+                "專案慣例無法完整套用",
+                "\n".join(payload.get("blocking_issues") or []),
+            )
+        elif overall != "high" and show_review_warning:
+            messagebox.showwarning(
+                "請確認管件選擇",
+                "目前只有 Routing Preference 順序或不足量的使用紀錄，"
+                "系統已填入排名第一的候選，但不允許 Agent 自動建立。"
+                "請在下拉選單確認三通與 45° 彎頭後再分析路徑。",
+            )
+
+    def _read_drainage_settings(
+        self,
+    ) -> tuple[
+        dict,
+        dict,
+        dict,
+        dict,
+        dict,
+        float,
+        float,
+        str,
+        DrainageRoutePolicy,
+    ]:
+        pipe_type = self.drainage_pipe_type_items.get(self.drainage_pipe_type_var.get())
+        system_type = self.drainage_system_items.get(self.drainage_system_var.get())
+        level = self.drainage_level_items.get(self.drainage_level_var.get())
+        junction_type = self.drainage_junction_type_items.get(
+            self.drainage_junction_type_var.get()
+        )
+        elbow_type = self.drainage_elbow_type_items.get(
+            self.drainage_elbow_type_var.get()
+        )
+        if (
+            not pipe_type
+            or not system_type
+            or not level
+            or not junction_type
+            or not elbow_type
+        ):
+            raise ValueError("請先讀取專案資料並選擇系統、管類型與樓層")
+        slope_ratio = float(self.drainage_slope_percent_var.get()) / 100.0
+        diameter_mm = float(self.drainage_diameter_var.get())
+        if slope_ratio < 0.001 or slope_ratio > 0.10:
+            raise ValueError("坡度必須介於 0.1% 與 10% 之間")
+        if diameter_mm < 25 or diameter_mm > 300:
+            raise ValueError("管徑必須介於 25 mm 與 300 mm 之間")
+        downstream_modes = {"自動偵測": "auto", "端點 0": "end0", "端點 1": "end1"}
+        downstream_mode = downstream_modes.get(self.drainage_downstream_var.get())
+        if not downstream_mode:
+            raise ValueError("請指定主管下游方向")
+        route_policy = DrainageRoutePolicy(
+            side_entry_angle_degrees=45,
+            side_entry_tolerance_degrees=float(
+                self.drainage_angle_tolerance_var.get()
+            ),
+            radial_minimum_degrees=float(
+                self.drainage_radial_minimum_var.get()
+            ),
+            radial_maximum_degrees=float(
+                self.drainage_radial_maximum_var.get()
+            ),
+            radial_tolerance_degrees=float(
+                self.drainage_angle_tolerance_var.get()
+            ),
+            minimum_tangent_mm=float(
+                self.drainage_minimum_tangent_var.get()
+            ),
+            minimum_junction_spacing_mm=float(
+                self.drainage_junction_spacing_var.get()
+            ),
+            collision_clearance_mm=float(
+                self.drainage_collision_clearance_var.get()
+            ),
+            maximum_double45_lateral_offset_mm=float(
+                self.drainage_double45_lateral_offset_var.get()
+            ),
+        )
+        route_policy.validate()
+        return (
+            pipe_type,
+            system_type,
+            level,
+            junction_type,
+            elbow_type,
+            slope_ratio,
+            diameter_mm,
+            downstream_mode,
+            route_policy,
+        )
+
+    def _preview_drainage(self) -> None:
+        if not self.drainage_main_pipe or not self.drainage_fixtures:
+            messagebox.showerror("無法分析", "請在 Revit 恰好選取一段主管及至少一個衛生器具，再讀取選取。")
+            return
+        if not self.drainage_configuration_confirmed:
+            messagebox.showerror(
+                "請先確認排水配置",
+                "目前管件候選沒有足夠證據可自動採用。"
+                "請按「編輯配置」，明確選擇斜 T／Y 與 45° 彎頭，"
+                "再按「儲存並套用」。",
+            )
+            return
+        try:
+            (
+                _pipe_type,
+                _system_type,
+                _level,
+                _junction_type,
+                _elbow_type,
+                slope_ratio,
+                diameter_mm,
+                downstream_mode,
+                route_policy,
+            ) = self._read_drainage_settings()
+        except ValueError as exc:
+            messagebox.showerror("無法分析", str(exc))
+            return
+        self.drainage_status_var.set("分析 1% 排水路徑中…")
+        threading.Thread(
+            target=self._preview_drainage_worker,
+            args=(
+                _pipe_type,
+                _system_type,
+                _level,
+                _junction_type,
+                _elbow_type,
+                slope_ratio,
+                diameter_mm,
+                downstream_mode,
+                route_policy,
+            ),
+            daemon=True,
+        ).start()
+
+    def _preview_drainage_worker(
+        self,
+        pipe_type: dict,
+        system_type: dict,
+        level: dict,
+        junction_type: dict,
+        elbow_type: dict,
+        slope_ratio: float,
+        diameter_mm: float,
+        downstream_mode: str,
+        route_policy: DrainageRoutePolicy,
+    ) -> None:
+        try:
+            document = (self.drainage_context or {}).get("document") or {}
+            with batch_context("drainage", "preview", "Drainage preview", {"slope_ratio": slope_ratio}):
+                payload, _snapshot = drainage_service.preview(
+                    DrainageIntent(
+                        document_fingerprint=str(
+                            document.get("fingerprint") or ""
+                        ),
+                        document_revision=int(
+                            document.get("revision") or 0
+                        ),
+                        main_pipe_id=str(self.drainage_main_pipe.get("element_id") or ""),
+                        main_pipe_unique_id=str(
+                            self.drainage_main_pipe.get("unique_id")
+                            or ""
+                        ),
+                        fixture_ids=tuple(
+                            str(item.get("element_id") or "")
+                            for item in self.drainage_fixtures
+                        ),
+                        fixture_unique_ids=tuple(
+                            str(item.get("unique_id") or "")
+                            for item in self.drainage_fixtures
+                        ),
+                        selection_source="current_selection",
+                        main_candidate_count=1,
+                        pipe_type_id=str(pipe_type.get("element_id") or ""),
+                        pipe_type_unique_id=str(
+                            pipe_type.get("unique_id") or ""
+                        ),
+                        system_type_id=str(system_type.get("element_id") or ""),
+                        system_type_unique_id=str(
+                            system_type.get("unique_id") or ""
+                        ),
+                        level_id=str(level.get("element_id") or ""),
+                        level_unique_id=str(
+                            level.get("unique_id") or ""
+                        ),
+                        junction_type_id=str(
+                            junction_type.get("element_id") or ""
+                        ),
+                        junction_type_unique_id=str(
+                            junction_type.get("unique_id") or ""
+                        ),
+                        elbow_type_id=str(
+                            elbow_type.get("element_id") or ""
+                        ),
+                        elbow_type_unique_id=str(
+                            elbow_type.get("unique_id") or ""
+                        ),
+                        slope_ratio=slope_ratio,
+                        diameter_mm=diameter_mm,
+                        downstream_mode=downstream_mode,
+                        route_policy=route_policy,
+                    )
+                )
+        except Exception as exc:
+            self.after(0, lambda exc=exc: self._finish_drainage_error("路徑分析失敗", exc))
+            return
+        self.after(0, lambda: self._finish_drainage_preview(payload))
+
+    def _finish_drainage_preview(self, payload: dict) -> None:
+        self.drainage_preview = payload
+        self._update_drainage_downstream_summary()
+        for item in self.drainage_tree.get_children():
+            self.drainage_tree.delete(item)
+        for plan in payload.get("plans", []):
+            tangent_values = [
+                float(value)
+                for value in (
+                    plan.get("stub_tangent_mm"),
+                    plan.get("middle_tangent_mm"),
+                    plan.get("branch_tangent_mm"),
+                )
+                if value is not None
+            ]
+            self.drainage_tree.insert(
+                "",
+                "end",
+                values=(
+                    plan.get("sequence_index", ""),
+                    plan.get("fixture_id"),
+                    plan.get("outlet_orientation", ""),
+                    plan.get("route_kind", ""),
+                    (
+                        f"端點 {plan.get('downstream_endpoint_index')}"
+                        if int(plan.get("downstream_endpoint_index", -1)) >= 0
+                        else "未解析"
+                    ),
+                    (
+                        f"{float(plan.get('side_entry_angle_degrees')):.1f}°"
+                        if plan.get("side_entry_angle_degrees") is not None
+                        else "-"
+                    ),
+                    (
+                        f"{float(plan.get('radial_entry_angle_degrees')):.1f}°"
+                        if plan.get("radial_entry_angle_degrees") is not None
+                        else "-"
+                    ),
+                    (
+                        f"{float(plan.get('first_elbow_angle_degrees')):.1f}° / "
+                        f"{float(plan.get('second_elbow_angle_degrees')):.1f}°"
+                        if (
+                            plan.get("first_elbow_angle_degrees") is not None
+                            and plan.get("second_elbow_angle_degrees") is not None
+                        )
+                        else "-"
+                    ),
+                    (
+                        f"{float(plan.get('middle_lateral_offset_mm')):.1f}"
+                        if plan.get("middle_lateral_offset_mm") is not None
+                        else "-"
+                    ),
+                    f"{float(plan.get('horizontal_length_m') or 0):.3f}",
+                    (
+                        f"{min(tangent_values):.1f}"
+                        if tangent_values
+                        else "-"
+                    ),
+                    f"{float(plan.get('vertical_drop_mm') or 0):.1f}",
+                    f"{float(plan.get('slope_percent') or 0):.3f}",
+                    ", ".join(plan.get("issues", [])),
+                ),
+            )
+        self.drainage_status_var.set(
+            f"路徑分析完成｜{payload.get('fixture_count', 0)} 組｜坡度 {float(payload.get('slope_percent') or 0):g}%｜"
+            f"{'可建立' if payload.get('ready_to_create') else '安全閘門阻擋'}"
+        )
+        issues = list(payload.get("issues", []))
+        if issues:
+            messagebox.showwarning(
+                "排水 preflight 未通過",
+                "\n".join(
+                    f"器具 {item.get('fixture_id', '-')}: {item.get('code', '')}"
+                    for item in issues[:20]
+                ),
+            )
+
+    def _clear_drainage_preview(self) -> None:
+        if not self.drainage_preview:
+            self.drainage_status_var.set("目前沒有可清除的排水預覽")
+            return
+        try:
+            snapshot = SnapshotRef.from_preview(self.drainage_preview)
+        except ValueError as exc:
+            self._finish_drainage_error("清除預覽失敗", exc)
+            return
+        self.drainage_status_var.set("清除 Revit 畫布預覽中…")
+        threading.Thread(
+            target=self._clear_drainage_preview_worker,
+            args=(snapshot,),
+            daemon=True,
+        ).start()
+
+    def _clear_drainage_preview_worker(
+        self,
+        snapshot: SnapshotRef,
+    ) -> None:
+        try:
+            with batch_context(
+                "drainage",
+                "clear_preview",
+                "Clear drainage preview",
+            ):
+                drainage_service.clear_preview(
+                    snapshot_id=snapshot.snapshot_id,
+                    snapshot_hash=snapshot.snapshot_hash,
+                    document_fingerprint=snapshot.document_fingerprint,
+                    document_revision=snapshot.document_revision,
+                    timeout_seconds=30,
+                )
+        except Exception as exc:
+            self.after(
+                0,
+                lambda exc=exc: self._finish_drainage_error(
+                    "清除預覽失敗",
+                    exc,
+                ),
+            )
+            return
+        self.after(0, self._finish_drainage_preview_cleared)
+
+    def _finish_drainage_preview_cleared(self) -> None:
+        self.drainage_preview = None
+        for item in self.drainage_tree.get_children():
+            self.drainage_tree.delete(item)
+        self.drainage_status_var.set("排水預覽已清除")
+
+    def _create_drainage(self) -> None:
+        if not self.drainage_preview:
+            messagebox.showerror("無法建立", "請先按「分析路徑」，確認每組水平長度與落差。")
+            return
+        if not self.drainage_preview.get("ready_to_create"):
+            messagebox.showerror("禁止建立", "目前 preflight 有未解決的 P0 問題，不能進入 Revit 建模。")
+            return
+        try:
+            (
+                pipe_type,
+                system_type,
+                level,
+                junction_type,
+                elbow_type,
+                slope_ratio,
+                diameter_mm,
+                downstream_mode,
+                route_policy,
+            ) = self._read_drainage_settings()
+        except ValueError as exc:
+            messagebox.showerror("無法建立", str(exc))
+            return
+        if abs(float(self.drainage_preview.get("slope_ratio") or 0) - slope_ratio) > 0.000001:
+            messagebox.showerror("無法建立", "坡度已在預覽後變更，請重新分析路徑。")
+            return
+        if abs(float(self.drainage_preview.get("diameter_mm") or 0) - diameter_mm) > 0.01:
+            messagebox.showerror("無法建立", "管徑已在預覽後變更，請重新分析路徑。")
+            return
+        if str(self.drainage_preview.get("pipe_type_id") or "") != str(pipe_type.get("element_id") or ""):
+            messagebox.showerror("無法建立", "管類型已在預覽後變更，請重新分析路徑。")
+            return
+        if str(self.drainage_preview.get("system_type_id") or "") != str(system_type.get("element_id") or ""):
+            messagebox.showerror("無法建立", "系統類型已在預覽後變更，請重新分析路徑。")
+            return
+        if str(self.drainage_preview.get("level_id") or "") != str(level.get("element_id") or ""):
+            messagebox.showerror("無法建立", "樓層已在預覽後變更，請重新分析路徑。")
+            return
+        if str(
+            (self.drainage_preview.get("junction_profile") or {}).get(
+                "element_id"
+            )
+            or ""
+        ) != str(junction_type.get("element_id") or ""):
+            messagebox.showerror("無法建立", "斜 T／Y 三通已在預覽後變更，請重新分析路徑。")
+            return
+        if str(
+            (self.drainage_preview.get("elbow_profile") or {}).get(
+                "element_id"
+            )
+            or ""
+        ) != str(elbow_type.get("element_id") or ""):
+            messagebox.showerror("無法建立", "45° 彎頭已在預覽後變更，請重新分析路徑。")
+            return
+        if str(self.drainage_preview.get("downstream_mode") or "") != downstream_mode:
+            messagebox.showerror("無法建立", "主管下游方向已在預覽後變更，請重新分析路徑。")
+            return
+        if (
+            self.drainage_preview.get("route_policy") or {}
+        ) != route_policy.as_payload():
+            messagebox.showerror("無法建立", "安全政策已在預覽後變更，請重新分析路徑。")
+            return
+        if not messagebox.askyesno(
+            "確認建立排水管",
+            f"即將建立 {len(self.drainage_fixtures)} 組排水支管。\n"
+            f"坡度：{slope_ratio * 100:g}%\n管徑：{diameter_mm:g} mm\n\n"
+            "此操作會切分主管並建立三通／彎頭，可用一次 Revit Undo 回復。",
+        ):
+            return
+        self.drainage_status_var.set("建立排水管中…")
+        operation_id = "DOP-" + uuid.uuid4().hex
+        idempotency_key = "DIK-" + uuid.uuid4().hex
+        threading.Thread(
+            target=self._create_drainage_worker,
+            args=(
+                dict(self.drainage_preview),
+                slope_ratio,
+                operation_id,
+                idempotency_key,
+            ),
+            daemon=True,
+        ).start()
+
+    def _create_drainage_worker(
+        self,
+        preview: dict,
+        slope_ratio: float,
+        operation_id: str,
+        idempotency_key: str,
+    ) -> None:
+        try:
+            with batch_context(
+                "drainage",
+                "create_pipes",
+                "Create drainage pipes",
+                {"fixture_count": len(self.drainage_fixtures), "slope_ratio": slope_ratio},
+            ):
+                snapshot = SnapshotRef.from_preview(preview)
+                confirmation = drainage_service.confirm(
+                    snapshot,
+                    actor_kind="human",
+                )
+                payload, _operation = drainage_service.commit(
+                    snapshot,
+                    confirmation,
+                    operation=OperationRef(
+                        operation_id=operation_id,
+                        idempotency_key=idempotency_key,
+                    ),
+                )
+                validation = drainage_service.validate_commit(
+                    payload,
+                    expected_slope_ratio=slope_ratio,
+                )
+                try:
+                    drainage_service.clear_preview(
+                        snapshot_id=snapshot.snapshot_id,
+                        snapshot_hash=snapshot.snapshot_hash,
+                        document_fingerprint=
+                            snapshot.document_fingerprint,
+                        document_revision=
+                            snapshot.document_revision,
+                        timeout_seconds=30,
+                    )
+                except Exception:
+                    pass
+        except Exception as exc:
+            try:
+                operation = drainage_service.get_operation(
+                    operation_id,
+                    timeout_seconds=30,
+                )
+                if operation.get("status") == "committed" and operation.get("result"):
+                    payload = dict(operation["result"])
+                    validation = drainage_service.validate_commit(
+                        payload,
+                        expected_slope_ratio=slope_ratio,
+                    )
+                    try:
+                        recovery_snapshot = SnapshotRef.from_preview(
+                            preview
+                        )
+                        drainage_service.clear_preview(
+                            snapshot_id=
+                                recovery_snapshot.snapshot_id,
+                            snapshot_hash=
+                                recovery_snapshot.snapshot_hash,
+                            document_fingerprint=
+                                recovery_snapshot.document_fingerprint,
+                            document_revision=
+                                recovery_snapshot.document_revision,
+                            timeout_seconds=30,
+                        )
+                    except Exception:
+                        pass
+                    self.after(0, lambda: self._finish_drainage_created(payload, validation))
+                    return
+            except Exception:
+                pass
+            self.after(0, lambda exc=exc: self._finish_drainage_error("建立失敗", exc))
+            return
+        self.after(0, lambda: self._finish_drainage_created(payload, validation))
+
+    def _finish_drainage_created(self, payload: dict, validation: dict) -> None:
+        created = list(payload.get("created", []))
+        self.drainage_preview = None
+        self.drainage_status_var.set(
+            f"建立完成｜管段 {len(created)}｜坡度 {float(payload.get('slope_percent') or 0):g}%｜"
+            f"驗證 {'通過' if validation.get('valid') else '未通過'}｜Batch {payload.get('batch_id', '')}"
+        )
+        if not validation.get("valid"):
+            messagebox.showwarning("排水驗證未通過", "部分斜支管坡度或連接狀態不符合預期，請檢查驗證結果。")
+
+    def _finish_drainage_error(self, title: str, exc: Exception) -> None:
+        self.drainage_status_var.set(title)
         messagebox.showerror(title, str(exc))
 
     def _build_project_recovery_tab(self, parent: ttk.Frame) -> None:
@@ -2496,7 +4448,7 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("cad_points", "list_context", "CAD point placement context"):
                 payload = request_point_placement_context()
         except Exception as exc:
-            self.after(0, lambda: self._finish_point_placement_context_error(exc))
+            self.after(0, lambda exc=exc: self._finish_point_placement_context_error(exc))
             return
         self.after(0, lambda: self._finish_point_placement_context(payload))
 
@@ -2784,7 +4736,7 @@ class FamilyClassifierApp(tk.Tk):
                 payload = read_dwg_blocks(dwg_path, timeout_seconds=30)
                 payload["dwg_path"] = dwg_path
         except Exception as exc:
-            self.after(0, lambda: self._finish_cad_block_names_error(exc))
+            self.after(0, lambda exc=exc: self._finish_cad_block_names_error(exc))
             return
         self.after(0, lambda: self._finish_cad_block_names(payload))
 
@@ -3035,7 +4987,7 @@ class FamilyClassifierApp(tk.Tk):
                     marker_size_mm=180,
                 )
         except Exception as exc:
-            self.after(0, lambda: self._finish_cad_preview_error(exc))
+            self.after(0, lambda exc=exc: self._finish_cad_preview_error(exc))
             return
         self.after(0, lambda: self._finish_cad_preview(payload))
 
@@ -3151,7 +5103,7 @@ class FamilyClassifierApp(tk.Tk):
                     delete_preview_after_place=True,
                 )
         except Exception as exc:
-            self.after(0, lambda: self._finish_place_preview_error(exc))
+            self.after(0, lambda exc=exc: self._finish_place_preview_error(exc))
             return
         self.after(0, lambda: self._finish_place_preview(payload))
 
@@ -3193,7 +5145,7 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("project_recovery", "scan_families", "Scan project families"):
                 payload = request_project_family_scan()
         except Exception as exc:
-            self.after(0, lambda: self._finish_project_scan_error(exc))
+            self.after(0, lambda exc=exc: self._finish_project_scan_error(exc))
             return
         self.after(0, lambda: self._finish_project_scan(payload))
 
@@ -3279,7 +5231,7 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("project_recovery", "export_families", "Export project families", {"family_count": len(family_ids)}):
                 payload = request_project_family_export(family_ids, output_dir)
         except Exception as exc:
-            self.after(0, lambda: self._finish_project_export_error(exc))
+            self.after(0, lambda exc=exc: self._finish_project_export_error(exc))
             return
         self.after(0, lambda: self._finish_project_export(payload))
 

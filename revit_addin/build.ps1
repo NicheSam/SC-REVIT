@@ -11,7 +11,9 @@ $revitApi = "C:\Program Files\Autodesk\Revit 2024\RevitAPI.dll"
 $revitApiUi = "C:\Program Files\Autodesk\Revit 2024\RevitAPIUI.dll"
 $webExtensions = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Web.Extensions.dll"
 $presentationCore = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\WPF\PresentationCore.dll"
+$presentationFramework = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\WPF\PresentationFramework.dll"
 $windowsBase = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\WPF\WindowsBase.dll"
+$systemXaml = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Xaml.dll"
 $outputDll = Join-Path $bin "RfaMetadataAddin.dll"
 $tmpOutputDll = Join-Path $tmpBin "RfaMetadataAddin.dll"
 $sourceFiles = Get-ChildItem -LiteralPath (Join-Path $root "src") -Filter "*.cs" -Recurse | Sort-Object FullName | ForEach-Object { $_.FullName }
@@ -25,7 +27,9 @@ try {
     /reference:$revitApiUi `
     /reference:$webExtensions `
     /reference:$presentationCore `
+    /reference:$presentationFramework `
     /reference:$windowsBase `
+    /reference:$systemXaml `
     "/out:$tmpOutputDll" `
     $sourceFiles
 
