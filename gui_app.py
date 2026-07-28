@@ -119,6 +119,7 @@ class FamilyClassifierApp(tk.Tk):
             self.geometry("1100x700")
             self.minsize(980, 620)
         self._configure_fonts()
+        self._configure_visual_identity()
 
         self.library_root: str | None = None
         self.tasks: dict[str, RfaTask] = {}
@@ -172,6 +173,49 @@ class FamilyClassifierApp(tk.Tk):
         style.configure(".", font=("Microsoft JhengHei UI", 10))
         style.configure("Treeview.Heading", font=("Microsoft JhengHei UI", 10, "bold"))
 
+    def _configure_visual_identity(self) -> None:
+        icon_names = {
+            "archive": "family_archive",
+            "recovery": "project_recovery",
+            "placement": "point_placement",
+            "fire_branch": "fire_branch",
+            "drainage": "drainage_connect",
+            "opening_check": "opening_locator",
+            "backstage": "backstage",
+            "element_inspector": "element_inspector",
+            "parameter_audit": "parameter_audit",
+            "connect_fitting": "breakpoint_check",
+            "piping_support": "piping_support",
+        }
+        runtime_root = Path(
+            getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
+        )
+        icon_path = (
+            runtime_root
+            / "assets"
+            / "ui-icons"
+            / f"{icon_names.get(self.app_mode, 'family_archive')}.png"
+        )
+        self._mode_icon = None
+        if icon_path.is_file():
+            try:
+                self._mode_icon = tk.PhotoImage(file=str(icon_path))
+                self.iconphoto(True, self._mode_icon)
+            except tk.TclError:
+                self._mode_icon = None
+
+        style = ttk.Style(self)
+        style.configure(
+            "SC.Title.TLabel",
+            font=("Microsoft JhengHei UI", 12, "bold"),
+            foreground="#1b5d74",
+        )
+        style.configure(
+            "SC.Primary.TButton",
+            font=("Microsoft JhengHei UI", 10, "bold"),
+            padding=(10, 6),
+        )
+
     def _ensure_addin_installed(self) -> None:
         try:
             result = ensure_revit_addin_installed()
@@ -203,7 +247,9 @@ class FamilyClassifierApp(tk.Tk):
             ttk.Label(
                 top,
                 text="SC REVIT｜1% 排水建模",
-                font=("Microsoft JhengHei UI", 12, "bold"),
+                image=self._mode_icon,
+                compound="left",
+                style="SC.Title.TLabel",
             ).grid(row=0, column=0, sticky="w")
             ttk.Label(
                 top,
@@ -214,7 +260,13 @@ class FamilyClassifierApp(tk.Tk):
                 textvariable=self.listener_var,
             ).grid(row=0, column=2, padx=(8, 0))
         else:
-            ttk.Label(top, text="族群庫位置").grid(
+            ttk.Label(
+                top,
+                text="族群庫位置",
+                image=self._mode_icon,
+                compound="left",
+                style="SC.Title.TLabel",
+            ).grid(
                 row=0, column=0, sticky="w"
             )
             ttk.Label(

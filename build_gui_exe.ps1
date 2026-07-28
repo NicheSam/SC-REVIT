@@ -14,6 +14,7 @@ Remove-Item -LiteralPath (Join-Path $distPath "RevitFamilyClassifier") -Recurse 
 $rulesPath = Join-Path $root "rules.json"
 $parameterTemplatesPath = Join-Path $root "parameter_templates"
 $addinBinPath = Join-Path $root "revit_addin\bin"
+$uiIconsPath = Join-Path $root "assets\ui-icons"
 
 python -m PyInstaller `
   --noconfirm `
@@ -28,6 +29,7 @@ python -m PyInstaller `
   --add-data "$rulesPath;." `
   --add-data "$parameterTemplatesPath;parameter_templates" `
   --add-data "$addinBinPath;revit_addin\bin" `
+  --add-data "$uiIconsPath;assets\ui-icons" `
   "gui_app.py"
 
 $tempExe = Join-Path $distPath "RevitFamilyClassifier\RevitFamilyClassifier.exe"

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="520" viewBox="0 0 1000 520">
+  <rect width="1000" height="520" rx="20" fill="#142231"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M120 430 L830 70" stroke="#d86138" stroke-width="28"/>
+    <path d="M120 430 L830 70" stroke="#ff8756" stroke-width="4"/>
+    <path d="M790 105 L790 235" stroke="#d86138" stroke-width="24"/>
+    <path d="M790 105 L790 235" stroke="#ff8756" stroke-width="4"/>
+    <path d="M790 235 L715 310" stroke="#d86138" stroke-width="24"/>
+    <path d="M790 235 L715 310" stroke="#ff8756" stroke-width="4"/>
+    <path d="M715 310 L520 345" stroke="#d86138" stroke-width="24"/>
+    <path d="M715 310 L520 345" stroke="#ff8756" stroke-width="4"/>
+    <path d="M520 345 L385 415" stroke="#d86138" stroke-width="24"/>
+    <path d="M520 345 L385 415" stroke="#ff8756" stroke-width="4"/>
+  </g>
+  <g fill="#ffbf57" stroke="#142231" stroke-width="3">
+    <circle cx="790" cy="235" r="16"/>
+    <circle cx="715" cy="310" r="16"/>
+    <circle cx="520" cy="345" r="16"/>
+    <circle cx="385" cy="415" r="18"/>
+  </g>
+  <g font-family="Segoe UI, Microsoft JhengHei, sans-serif">
+    <g fill="#f1f6fa" font-size="21" font-weight="700">
+      <text x="805" y="150">來源垂直段</text>
+      <text x="735" y="265">來源側雙 45°</text>
+      <text x="565" y="325">徑向支管</text>
+      <text x="435" y="390">平面 45° 接入</text>
+      <text x="135" y="470">坡度主管</text>
+    </g>
+    <g fill="#9ed8eb" font-size="18">
+      <text x="585" y="370">沿排水方向下降 1%</text>
+      <text x="400" y="445">斜 T／Y 支口朝主管下游</text>
+    </g>
+    <g fill="#ffbf57" font-size="17">
+      <text x="650" y="495">示意圖：實際長度依管件 takeout、最短直管及模型幾何計算</text>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1">
+      <stop offset="0" stop-color="#102033"/>
+      <stop offset="1" stop-color="#172b3e"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#66c7e8"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="300" rx="20" fill="url(#bg)"/>
+  <g font-family="Segoe UI, Microsoft JhengHei, sans-serif" text-anchor="middle">
+    <g fill="#18354b" stroke="#66c7e8" stroke-width="3">
+      <rect x="40" y="70" width="190" height="150" rx="16"/>
+      <rect x="280" y="70" width="190" height="150" rx="16"/>
+      <rect x="520" y="70" width="190" height="150" rx="16"/>
+      <rect x="760" y="70" width="190" height="150" rx="16"/>
+      <rect x="1000" y="70" width="160" height="150" rx="16"/>
+    </g>
+    <g fill="#f2f6fa" font-size="24" font-weight="700">
+      <text x="135" y="115">首次設定</text>
+      <text x="375" y="115">1/2 選來源</text>
+      <text x="615" y="115">2/2 選主管</text>
+      <text x="855" y="115">規劃與建立</text>
+      <text x="1080" y="115">繼續或結束</text>
+    </g>
+    <g fill="#bed2df" font-size="18">
+      <text x="135" y="150">Pipe Type、System</text>
+      <text x="135" y="177">管件、1% 坡度</text>
+      <text x="375" y="150">設備接口或</text>
+      <text x="375" y="177">任意開放管端</text>
+      <text x="615" y="150">明確點選本支</text>
+      <text x="615" y="177">要接入的主管</text>
+      <text x="855" y="150">管段、彎頭、斜 T</text>
+      <text x="855" y="177">建立後立即驗證</text>
+      <text x="1080" y="150">再選下一支</text>
+      <text x="1080" y="177">Esc 結束批次</text>
+    </g>
+    <g stroke="#66c7e8" stroke-width="4" marker-end="url(#arrow)">
+      <line x1="235" y1="145" x2="270" y2="145"/>
+      <line x1="475" y1="145" x2="510" y2="145"/>
+      <line x1="715" y1="145" x2="750" y2="145"/>
+      <line x1="955" y1="145" x2="990" y2="145"/>
+    </g>
+    <text x="600" y="266" fill="#ffbf57" font-size="18">一支失敗不會留下半成品；成功支管可在同一輪操作中保留</text>
+  </g>
+</svg>

@@ -5,7 +5,7 @@ a = Analysis(
     ['gui_app.py'],
     pathex=[],
     binaries=[],
-    datas=[('rules.json', '.'), ('parameter_templates', 'parameter_templates'), ('revit_addin\\bin', 'revit_addin\\bin')],
+    datas=[('rules.json', '.'), ('parameter_templates', 'parameter_templates'), ('revit_addin\\bin', 'revit_addin\\bin'), ('assets\\ui-icons', 'assets\\ui-icons')],
     hiddenimports=[],
     hookspath=['build_hooks'],
     hooksconfig={},

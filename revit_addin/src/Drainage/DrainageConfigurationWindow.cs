@@ -58,6 +58,9 @@ namespace RfaMetadataAddin.Drainage
             MinHeight = 420;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ResizeMode = ResizeMode.CanResize;
+            Icon = RfaMetadataAddin.ScIconFactory.Create(
+                "drainage_settings",
+                32);
 
             var root = new WpfGrid { Margin = new Thickness(12) };
             root.RowDefinitions.Add(
@@ -103,11 +106,15 @@ namespace RfaMetadataAddin.Drainage
             }
             toolbar.Children.Add(_systemTypePicker);
 
-            Button addButton = CreateButton("新增設定列");
+            Button addButton = CreateButton(
+                "新增設定列",
+                "drainage_connect");
             addButton.Click += delegate { AddProfile(); };
             toolbar.Children.Add(addButton);
 
-            Button removeButton = CreateButton("移除選取列");
+            Button removeButton = CreateButton(
+                "移除選取列",
+                "breakpoint_check");
             removeButton.Click += delegate { RemoveSelectedProfile(); };
             toolbar.Children.Add(removeButton);
 
@@ -136,7 +143,10 @@ namespace RfaMetadataAddin.Drainage
 
             Button saveButton = new Button
             {
-                Content = "儲存設定",
+                Content = CreateButtonContent(
+                    "儲存設定",
+                    "drainage_settings",
+                    20),
                 Height = 34,
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
@@ -151,15 +161,46 @@ namespace RfaMetadataAddin.Drainage
             }
         }
 
-        private static Button CreateButton(string text)
+        private static Button CreateButton(
+            string text,
+            string iconName)
         {
             return new Button
             {
-                Content = text,
+                Content = CreateButtonContent(
+                    text,
+                    iconName,
+                    18),
                 MinWidth = 96,
                 Height = 28,
                 Margin = new Thickness(0, 0, 8, 8)
             };
+        }
+
+        private static object CreateButtonContent(
+            string text,
+            string iconName,
+            int iconSize)
+        {
+            var content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal
+            };
+            content.Children.Add(new Image
+            {
+                Source = RfaMetadataAddin.ScIconFactory.Create(
+                    iconName,
+                    iconSize),
+                Width = iconSize,
+                Height = iconSize,
+                Margin = new Thickness(0, 0, 6, 0)
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = text,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            return content;
         }
 
         private void BuildColumns()

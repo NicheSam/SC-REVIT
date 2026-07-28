@@ -309,8 +309,8 @@ namespace RfaMetadataAddin
             {
                 archiveButton.ToolTip = "開啟族群歸檔工具";
                 archiveButton.LongDescription = "Classify, rename, standardize and ingest external RFA files.";
-                archiveButton.Image = CreateRibbonIcon("archive", 16);
-                archiveButton.LargeImage = CreateRibbonIcon("archive", 32);
+                archiveButton.Image = ScIconFactory.Create("family_archive", 16);
+                archiveButton.LargeImage = ScIconFactory.Create("family_archive", 32);
             }
 
             PushButton recoveryButton = panel.AddItem(recoveryButtonData) as PushButton;
@@ -318,8 +318,8 @@ namespace RfaMetadataAddin
             {
                 recoveryButton.ToolTip = "開啟專案族群回收工具";
                 recoveryButton.LongDescription = "Scan loaded and used families in the active Revit project.";
-                recoveryButton.Image = CreateRibbonIcon("recovery", 16);
-                recoveryButton.LargeImage = CreateRibbonIcon("recovery", 32);
+                recoveryButton.Image = ScIconFactory.Create("project_recovery", 16);
+                recoveryButton.LargeImage = ScIconFactory.Create("project_recovery", 32);
             }
 
             PushButton placementButton = panel.AddItem(placementButtonData) as PushButton;
@@ -327,8 +327,8 @@ namespace RfaMetadataAddin
             {
                 placementButton.ToolTip = "開啟批量點位放置工具";
                 placementButton.LongDescription = "Batch place Revit point families from CAD/DWG block points.";
-                placementButton.Image = CreateRibbonIcon("placement", 16);
-                placementButton.LargeImage = CreateRibbonIcon("placement", 32);
+                placementButton.Image = ScIconFactory.Create("point_placement", 16);
+                placementButton.LargeImage = ScIconFactory.Create("point_placement", 32);
             }
 
             PushButton backstageButton = panel.AddItem(backstageButtonData) as PushButton;
@@ -336,8 +336,8 @@ namespace RfaMetadataAddin
             {
                 backstageButton.ToolTip = "\u958b\u555f SC \u5f8c\u53f0\u7ba1\u7406";
                 backstageButton.LongDescription = "Open SC REVIT backstage for batch records and managed cleanup actions.";
-                backstageButton.Image = CreateRibbonIcon("archive", 16);
-                backstageButton.LargeImage = CreateRibbonIcon("archive", 32);
+                backstageButton.Image = ScIconFactory.Create("backstage", 16);
+                backstageButton.LargeImage = ScIconFactory.Create("backstage", 32);
             }
 
             RibbonPanel firePanel = application
@@ -349,8 +349,8 @@ namespace RfaMetadataAddin
             {
                 fireBranchButton.ToolTip = "開啟消防支管建立工具";
                 fireBranchButton.LongDescription = "Create first-pass sprinkler branch pipes from selected main pipe and sprinklers.";
-                fireBranchButton.Image = CreateRibbonIcon("placement", 16);
-                fireBranchButton.LargeImage = CreateRibbonIcon("placement", 32);
+                fireBranchButton.Image = ScIconFactory.Create("fire_branch", 16);
+                fireBranchButton.LargeImage = ScIconFactory.Create("fire_branch", 32);
             }
 
             RibbonPanel drainagePanel = application
@@ -371,15 +371,15 @@ namespace RfaMetadataAddin
                     "\u9023\u7e8c\u9078\u53d6\u5668\u5177\u6216\u7acb\u7ba1\uff0c\u81ea\u52d5\u63a5\u5165\u6392\u6c34\u5e79\u7ba1";
                 drainageConnectButton.LongDescription =
                     "Continuously connect sanitary sources to a ranked main pipe. Press Esc to finish the batch.";
-                drainageConnectButton.Image = CreateRibbonIcon("placement", 16);
-                drainageConnectButton.LargeImage = CreateRibbonIcon("placement", 32);
+                drainageConnectButton.Image = ScIconFactory.Create("drainage_connect", 16);
+                drainageConnectButton.LargeImage = ScIconFactory.Create("drainage_connect", 32);
 
                 PushButton drainageSettingsButton =
                     drainageSplitButton.AddPushButton(drainageSettingsButtonData);
                 drainageSettingsButton.ToolTip =
                     "\u4f9d Pipe Type \u8a2d\u5b9a\u659cT\u3001Y\u300145\u5ea6\u5f4e\u982d\u8207\u652f\u7ba1\u5761\u5ea6";
-                drainageSettingsButton.Image = CreateRibbonIcon("settings", 16);
-                drainageSettingsButton.LargeImage = CreateRibbonIcon("settings", 32);
+                drainageSettingsButton.Image = ScIconFactory.Create("drainage_settings", 16);
+                drainageSettingsButton.LargeImage = ScIconFactory.Create("drainage_settings", 32);
             }
 
             SplitButtonData drainageRepairSplitButtonData =
@@ -400,9 +400,9 @@ namespace RfaMetadataAddin
                 alignPipeCenterlineButton.ToolTip =
                     "\u5148\u9ede\u9ad8\u7a0b\u57fa\u6e96\u7ba1\uff0c\u518d\u9023\u7e8c\u5c07\u7368\u7acb\u7ba1\u6bb5\u7684\u4e2d\u5fc3\u7dda\u5c0d\u9f4a\u81f3\u57fa\u6e96\u7ba1\u5c40\u90e8\u9ad8\u7a0b";
                 alignPipeCenterlineButton.Image =
-                    CreateRibbonIcon("placement", 16);
+                    ScIconFactory.Create("align_centerline", 16);
                 alignPipeCenterlineButton.LargeImage =
-                    CreateRibbonIcon("placement", 32);
+                    ScIconFactory.Create("align_centerline", 32);
 
                 PushButton connectPipeFortyFiveButton =
                     drainageRepairSplitButton.AddPushButton(
@@ -410,9 +410,9 @@ namespace RfaMetadataAddin
                 connectPipeFortyFiveButton.ToolTip =
                     "\u9078\u53d6\u5169\u500b\u958b\u653e\u7ba1\u7aef\uff0c\u4ee5\u4e00\u6bb545\u00b0\u659c\u7ba1\u8207\u5169\u500b45\u00b0\u5f4e\u982d\u5c0d\u63a5";
                 connectPipeFortyFiveButton.Image =
-                    CreateRibbonIcon("placement", 16);
+                    ScIconFactory.Create("connect_45", 16);
                 connectPipeFortyFiveButton.LargeImage =
-                    CreateRibbonIcon("placement", 32);
+                    ScIconFactory.Create("connect_45", 32);
 
                 PushButton extendPipeDown45Button =
                     drainageRepairSplitButton.AddPushButton(
@@ -420,9 +420,9 @@ namespace RfaMetadataAddin
                 extendPipeDown45Button.ToolTip =
                     "\u9078\u53d6\u8a2d\u5099\u63a5\u53e3\u6216\u958b\u653e\u7ba1\u7aef\uff0c\u518d\u9078\u76ee\u6a19\u4e3b\u7ba1\uff1b\u53ea\u6709\u53ef\u4ee5\u55ae45\u00b0\u8def\u5f91\u5efa\u7acb\u6642\u624d\u6703\u5be6\u969b\u63a5\u5165";
                 extendPipeDown45Button.Image =
-                    CreateRibbonIcon("placement", 16);
+                    ScIconFactory.Create("down_45", 16);
                 extendPipeDown45Button.LargeImage =
-                    CreateRibbonIcon("placement", 32);
+                    ScIconFactory.Create("down_45", 32);
 
                 PushButton extendPipeVerticalDownButton =
                     drainageRepairSplitButton.AddPushButton(
@@ -430,9 +430,9 @@ namespace RfaMetadataAddin
                 extendPipeVerticalDownButton.ToolTip =
                     "\u5c07\u5782\u76f4\u7ba1\u7684\u4e0b\u65b9\u958b\u653e\u7aef\u5ef6\u4f38\u5230\u9ad8\u5ea6\u57fa\u6e96\u7ba1\u7684\u5c40\u90e8\u4e2d\u5fc3\u7dda\u9ad8\u7a0b";
                 extendPipeVerticalDownButton.Image =
-                    CreateRibbonIcon("placement", 16);
+                    ScIconFactory.Create("vertical_down", 16);
                 extendPipeVerticalDownButton.LargeImage =
-                    CreateRibbonIcon("placement", 32);
+                    ScIconFactory.Create("vertical_down", 32);
 
             }
 
@@ -445,8 +445,8 @@ namespace RfaMetadataAddin
             {
                 openingButton.ToolTip = "開啟套管 / 開孔定位工具";
                 openingButton.LongDescription = "Scan MEP elements against linked architectural elements and list opening candidates.";
-                openingButton.Image = CreateRibbonIcon("placement", 16);
-                openingButton.LargeImage = CreateRibbonIcon("placement", 32);
+                openingButton.Image = ScIconFactory.Create("opening_locator", 16);
+                openingButton.LargeImage = ScIconFactory.Create("opening_locator", 32);
             }
 
             RibbonPanel mepCheckPanel = application
@@ -458,16 +458,16 @@ namespace RfaMetadataAddin
             {
                 elementInspectorButton.ToolTip = "\u5224\u65b7\u9078\u53d6\u5143\u4ef6\u80fd\u5426\u88ab SC \u5f8c\u53f0\u8ffd\u8e64\u3001\u5831\u8868\u6216\u540c\u6b65\u7ba1\u7406";
                 elementInspectorButton.LongDescription = "Check whether selected elements have usable identity data for SC REVIT management.";
-                elementInspectorButton.Image = CreateRibbonIcon("archive", 16);
-                elementInspectorButton.LargeImage = CreateRibbonIcon("archive", 32);
+                elementInspectorButton.Image = ScIconFactory.Create("element_inspector", 16);
+                elementInspectorButton.LargeImage = ScIconFactory.Create("element_inspector", 32);
             }
             PushButton parameterAuditButton = mepCheckPanel.AddItem(parameterAuditButtonData) as PushButton;
             if (parameterAuditButton != null)
             {
                 parameterAuditButton.ToolTip = "\u6aa2\u67e5\u9078\u53d6\u6216\u76ee\u524d\u8996\u5716\u5167\u5143\u4ef6\u7684 SC_ \u53c3\u6578\u662f\u5426\u7f3a\u5c11\u6216\u7a7a\u503c";
                 parameterAuditButton.LongDescription = "Check SC-prefixed parameters and explain missing or empty values.";
-                parameterAuditButton.Image = CreateRibbonIcon("archive", 16);
-                parameterAuditButton.LargeImage = CreateRibbonIcon("archive", 32);
+                parameterAuditButton.Image = ScIconFactory.Create("parameter_audit", 16);
+                parameterAuditButton.LargeImage = ScIconFactory.Create("parameter_audit", 32);
             }
 
             RibbonPanel mepAssistPanel = application
@@ -479,177 +479,17 @@ namespace RfaMetadataAddin
             {
                 connectFittingButton.ToolTip = "\u627e\u51fa pipe / duct / conduit \u65b7\u9ede\uff0c\u4e26\u53ea\u5c0d\u53ef\u4fee\u5fa9\u7684 pipe \u57f7\u884c\u81ea\u52d5\u4fee\u5fa9";
                 connectFittingButton.LongDescription = "Find disconnected MEP endpoints and repair only eligible pipe endpoint pairs.";
-                connectFittingButton.Image = CreateRibbonIcon("placement", 16);
-                connectFittingButton.LargeImage = CreateRibbonIcon("placement", 32);
+                connectFittingButton.Image = ScIconFactory.Create("breakpoint_check", 16);
+                connectFittingButton.LargeImage = ScIconFactory.Create("breakpoint_check", 32);
             }
             PushButton pipingSupportButton = mepAssistPanel.AddItem(pipingSupportButtonData) as PushButton;
             if (pipingSupportButton != null)
             {
                 pipingSupportButton.ToolTip = "\u4f9d\u9078\u53d6 pipe \u7522\u751f\u652f\u6490\u5019\u9078\u9ede\u8207\u9810\u89bd\u6a19\u8a18";
                 pipingSupportButton.LongDescription = "Create preview markers for candidate pipe support points. Family placement is reserved for the next phase.";
-                pipingSupportButton.Image = CreateRibbonIcon("placement", 16);
-                pipingSupportButton.LargeImage = CreateRibbonIcon("placement", 32);
+                pipingSupportButton.Image = ScIconFactory.Create("piping_support", 16);
+                pipingSupportButton.LargeImage = ScIconFactory.Create("piping_support", 32);
             }
-        }
-
-        private static ImageSource CreateRibbonIcon(string iconName, int size)
-        {
-            DrawingVisual visual = new DrawingVisual();
-            using (DrawingContext context = visual.RenderOpen())
-            {
-                DrawRibbonIcon(context, iconName, size);
-            }
-
-            RenderTargetBitmap bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
-            bitmap.Render(visual);
-            bitmap.Freeze();
-            return bitmap;
-        }
-
-        private static void DrawRibbonIcon(DrawingContext context, string iconName, int size)
-        {
-            double scale = size / 32.0;
-            Pen cyanPen = new Pen(new SolidColorBrush(System.Windows.Media.Color.FromRgb(108, 190, 230)), 2.0 * scale);
-            Pen whitePen = new Pen(new SolidColorBrush(System.Windows.Media.Color.FromRgb(236, 242, 248)), 1.6 * scale);
-            Pen amberPen = new Pen(new SolidColorBrush(System.Windows.Media.Color.FromRgb(255, 188, 72)), 2.0 * scale);
-            Pen redPen = new Pen(new SolidColorBrush(System.Windows.Media.Color.FromRgb(232, 82, 82)), 2.2 * scale);
-            Brush cyanBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(108, 190, 230));
-            Brush amberBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(255, 188, 72));
-
-            context.DrawRectangle(
-                new SolidColorBrush(System.Windows.Media.Color.FromArgb(0, 0, 0, 0)),
-                null,
-                new System.Windows.Rect(0, 0, size, size)
-            );
-
-            if (iconName == "recovery")
-            {
-                DrawRecoveryIcon(context, cyanPen, whitePen, amberPen, cyanBrush, amberBrush, scale);
-            }
-            else if (iconName == "placement")
-            {
-                DrawPlacementIcon(context, cyanPen, whitePen, amberPen, cyanBrush, amberBrush, scale);
-            }
-            else
-            {
-                DrawArchiveIcon(context, cyanPen, whitePen, amberPen, redPen, cyanBrush, amberBrush, scale);
-            }
-        }
-
-        private static void DrawArchiveIcon(
-            DrawingContext context,
-            Pen cyanPen,
-            Pen whitePen,
-            Pen amberPen,
-            Pen redPen,
-            Brush cyanBrush,
-            Brush amberBrush,
-            double scale)
-        {
-            // Folder / archive box
-            context.DrawLine(whitePen, Point(5, 11, scale), Point(12, 11, scale));
-            context.DrawLine(whitePen, Point(12, 11, scale), Point(14, 14, scale));
-            context.DrawRectangle(null, whitePen, Rect(5, 14, 21, 12, scale));
-
-            // RFA family cube, kept abstract so it reads at 16px.
-            context.DrawRectangle(null, cyanPen, Rect(10, 9, 10, 10, scale));
-            context.DrawLine(cyanPen, Point(10, 9, scale), Point(15, 5, scale));
-            context.DrawLine(cyanPen, Point(20, 9, scale), Point(25, 5, scale));
-            context.DrawLine(cyanPen, Point(15, 5, scale), Point(25, 5, scale));
-            context.DrawLine(cyanPen, Point(20, 19, scale), Point(25, 15, scale));
-            context.DrawLine(cyanPen, Point(25, 5, scale), Point(25, 15, scale));
-
-            // Into-library cue.
-            context.DrawLine(amberPen, Point(13, 24, scale), Point(22, 24, scale));
-            context.DrawLine(amberPen, Point(22, 24, scale), Point(19, 21, scale));
-            context.DrawLine(amberPen, Point(22, 24, scale), Point(19, 27, scale));
-            context.DrawEllipse(amberBrush, null, Point(7, 25, scale), 2.2 * scale, 2.2 * scale);
-        }
-
-        private static void DrawRecoveryIcon(
-            DrawingContext context,
-            Pen cyanPen,
-            Pen whitePen,
-            Pen amberPen,
-            Brush cyanBrush,
-            Brush amberBrush,
-            double scale)
-        {
-            // Project sheet.
-            context.DrawRectangle(null, whitePen, Rect(7, 6, 14, 19, scale));
-            context.DrawLine(cyanPen, Point(10, 11, scale), Point(18, 11, scale));
-            context.DrawLine(cyanPen, Point(10, 16, scale), Point(18, 16, scale));
-            context.DrawLine(cyanPen, Point(10, 21, scale), Point(15, 21, scale));
-
-            // Recover arrow.
-            DrawArc(context, amberPen, Point(21, 10, scale), Point(25, 22, scale), 7 * scale, 7 * scale);
-            context.DrawLine(amberPen, Point(25, 22, scale), Point(22, 20, scale));
-            context.DrawLine(amberPen, Point(25, 22, scale), Point(27, 18, scale));
-
-            // Extracted family cube.
-            context.DrawRectangle(null, cyanPen, Rect(17, 19, 8, 7, scale));
-            context.DrawLine(cyanPen, Point(17, 19, scale), Point(21, 16, scale));
-            context.DrawLine(cyanPen, Point(25, 19, scale), Point(28, 16, scale));
-            context.DrawLine(cyanPen, Point(21, 16, scale), Point(28, 16, scale));
-            context.DrawEllipse(amberBrush, null, Point(25, 26, scale), 2.0 * scale, 2.0 * scale);
-        }
-
-        private static void DrawPlacementIcon(
-            DrawingContext context,
-            Pen cyanPen,
-            Pen whitePen,
-            Pen amberPen,
-            Brush cyanBrush,
-            Brush amberBrush,
-            double scale)
-        {
-            context.DrawRectangle(null, whitePen, Rect(5, 6, 22, 20, scale));
-            context.DrawLine(whitePen, Point(5, 16, scale), Point(27, 16, scale));
-            context.DrawLine(whitePen, Point(16, 6, scale), Point(16, 26, scale));
-
-            context.DrawEllipse(null, cyanPen, Point(10, 11, scale), 3.2 * scale, 3.2 * scale);
-            context.DrawEllipse(cyanBrush, null, Point(10, 11, scale), 1.3 * scale, 1.3 * scale);
-            context.DrawEllipse(null, cyanPen, Point(21, 11, scale), 3.2 * scale, 3.2 * scale);
-            context.DrawEllipse(cyanBrush, null, Point(21, 11, scale), 1.3 * scale, 1.3 * scale);
-            context.DrawEllipse(null, cyanPen, Point(10, 21, scale), 3.2 * scale, 3.2 * scale);
-            context.DrawEllipse(cyanBrush, null, Point(10, 21, scale), 1.3 * scale, 1.3 * scale);
-
-            context.DrawLine(amberPen, Point(20, 23, scale), Point(28, 23, scale));
-            context.DrawLine(amberPen, Point(28, 23, scale), Point(25, 20, scale));
-            context.DrawLine(amberPen, Point(28, 23, scale), Point(25, 26, scale));
-            context.DrawEllipse(amberBrush, null, Point(22, 23, scale), 2.2 * scale, 2.2 * scale);
-        }
-
-        private static System.Windows.Point Point(double x, double y, double scale)
-        {
-            return new System.Windows.Point(x * scale, y * scale);
-        }
-
-        private static System.Windows.Rect Rect(double x, double y, double width, double height, double scale)
-        {
-            return new System.Windows.Rect(x * scale, y * scale, width * scale, height * scale);
-        }
-
-        private static void DrawArc(
-            DrawingContext context,
-            Pen pen,
-            System.Windows.Point start,
-            System.Windows.Point end,
-            double radiusX,
-            double radiusY)
-        {
-            PathFigure figure = new PathFigure { StartPoint = start, IsClosed = false, IsFilled = false };
-            figure.Segments.Add(new ArcSegment(
-                end,
-                new System.Windows.Size(radiusX, radiusY),
-                0,
-                false,
-                SweepDirection.Clockwise,
-                true
-            ));
-            PathGeometry geometry = new PathGeometry();
-            geometry.Figures.Add(figure);
-            context.DrawGeometry(null, pen, geometry);
         }
 
         private static void DeleteNumberedBackups(string inputPath)

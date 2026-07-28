@@ -58,6 +58,10 @@ New-Item -ItemType Directory -Force -Path (Join-Path $payloadRoot "revit_addin\b
 Copy-Item -LiteralPath (Join-Path $root "revit_addin\bin\RfaMetadataAddin.dll") -Destination (Join-Path $payloadRoot "revit_addin\bin\RfaMetadataAddin.dll") -Force
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination (Join-Path $payloadRoot "README.md") -Force
 Copy-Item -LiteralPath (Join-Path $root "VERSION.txt") -Destination (Join-Path $payloadRoot "VERSION.txt") -Force
+$docsPath = Join-Path $root "docs"
+if (Test-Path -LiteralPath $docsPath) {
+  Copy-Item -LiteralPath $docsPath -Destination (Join-Path $payloadRoot "docs") -Recurse -Force
+}
 
 Write-Host "[5/5] Create ZIP..."
 if (Test-Path -LiteralPath $zipPath) {
@@ -80,6 +84,11 @@ try {
     if ($entryNames -notcontains $entry) {
       throw "Release ZIP is missing required entry: $entry"
     }
+  }
+  if (-not ($entryNames | Where-Object {
+    $_ -like "payload/docs/*.html"
+  })) {
+    throw "Release ZIP is missing the HTML user guide."
   }
 }
 finally {
