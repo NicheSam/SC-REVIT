@@ -16,7 +16,7 @@ namespace RfaMetadataAddin.Drainage
 
         public DrainageConfigurationDocument()
         {
-            SchemaVersion = "sc.drainage.configuration.v2";
+            SchemaVersion = "sc.drainage.configuration.v3";
             Profiles = new List<DrainageConfigurationProfile>();
         }
     }
@@ -73,6 +73,7 @@ namespace RfaMetadataAddin.Drainage
                     result.Profiles =
                         new List<DrainageConfigurationProfile>();
                 }
+                NormalizeConfiguration(document, result);
                 return result;
             }
             catch
@@ -115,7 +116,7 @@ namespace RfaMetadataAddin.Drainage
             }
 
             configuration.SchemaVersion =
-                "sc.drainage.configuration.v2";
+                "sc.drainage.configuration.v3";
             Entity entity = new Entity(schema);
             entity.Set(
                 schema.GetField(JsonFieldName),
@@ -128,18 +129,54 @@ namespace RfaMetadataAddin.Drainage
             Pipe pipe,
             double diameterMm)
         {
+            return ResolveForPipe(
+                document,
+                pipe,
+                diameterMm,
+                null);
+        }
+
+        public static DrainageConfigurationProfile ResolveForPipe(
+            Document document,
+            Pipe pipe,
+            double diameterMm,
+            DrainageSourceRef source)
+        {
             if (document == null || pipe == null)
             {
                 return null;
             }
             long pipeTypeId = pipe.GetTypeId().Value;
+            ElementId targetSystemTypeId =
+                ReadSystemTypeId(pipe);
+            string targetSystemTypeUniqueId =
+                ReadUniqueId(document, targetSystemTypeId);
+            string targetClassification =
+                ReadSystemClassification(
+                    document,
+                    targetSystemTypeId);
             return Load(document).Profiles
                 .Where(profile => profile != null
                     && profile.PipeTypeId == pipeTypeId
-                    && profile.SupportsDiameter(diameterMm))
+                    && profile.SupportsDiameter(diameterMm)
+                    && string.Equals(
+                        profile.ProfileKind,
+                        "GravityDrainage",
+                        StringComparison.Ordinal)
+                    && TargetSystemMatches(
+                        profile,
+                        targetSystemTypeId,
+                        targetSystemTypeUniqueId)
+                    && SourceMatches(
+                        profile,
+                        source,
+                        targetClassification))
                 .OrderBy(profile =>
                     profile.MaximumDiameterMm
                     - profile.MinimumDiameterMm)
+                .ThenBy(profile =>
+                    profile.TargetSystemTypeId > 0 ? 0 : 1)
+                .ThenBy(profile => profile.ProfileId)
                 .FirstOrDefault();
         }
 
@@ -148,7 +185,8 @@ namespace RfaMetadataAddin.Drainage
             DrainageConfigurationDocument configuration)
         {
             var errors = new List<string>();
-            var pipeTypeIds = new HashSet<long>();
+            var profileKeys = new HashSet<string>(
+                StringComparer.Ordinal);
             foreach (DrainageConfigurationProfile profile in
                 configuration.Profiles
                     ?? new List<DrainageConfigurationProfile>())
@@ -170,11 +208,43 @@ namespace RfaMetadataAddin.Drainage
                         "管類型設定已失效：" + profile.PipeTypeName);
                     continue;
                 }
-                if (!pipeTypeIds.Add(profile.PipeTypeId))
+                string profileKey = string.Join(
+                    "|",
+                    profile.PipeTypeId,
+                    profile.TargetSystemTypeId,
+                    profile.ProfileKind ?? "");
+                if (!profileKeys.Add(profileKey))
                 {
                     errors.Add(
-                        "同一管類型只能有一列設定："
+                        "同一管類型、系統類型與 Profile 類型只能有一列設定："
                         + pipeType.Name);
+                }
+                if (!string.Equals(
+                    profile.ProfileKind,
+                    "GravityDrainage",
+                    StringComparison.Ordinal))
+                {
+                    errors.Add(
+                        pipeType.Name
+                        + " 目前只支援 GravityDrainage Profile。");
+                }
+                if (profile.TargetSystemTypeId > 0)
+                {
+                    PipingSystemType targetSystemType =
+                        document.GetElement(
+                            new ElementId(
+                                profile.TargetSystemTypeId))
+                            as PipingSystemType;
+                    if (targetSystemType == null
+                        || !string.Equals(
+                            targetSystemType.UniqueId,
+                            profile.TargetSystemTypeUniqueId,
+                            StringComparison.Ordinal))
+                    {
+                        errors.Add(
+                            pipeType.Name
+                            + " 的目標系統類型設定已失效。");
+                    }
                 }
                 if (profile.SlopePercent < 0.1
                     || profile.SlopePercent > 10.0)
@@ -189,6 +259,13 @@ namespace RfaMetadataAddin.Drainage
                 {
                     errors.Add(
                         pipeType.Name + " 的適用管徑範圍無效。");
+                }
+                if (profile.MinimumTangentMm < 25
+                    || profile.MinimumTangentMm > 3000)
+                {
+                    errors.Add(
+                        pipeType.Name
+                        + " 的最短直管必須介於 25–3000 mm。");
                 }
                 ValidateFitting(
                     document,
@@ -216,6 +293,13 @@ namespace RfaMetadataAddin.Drainage
                     profile.VerticalToHorizontalElbowTypeId,
                     profile.VerticalToHorizontalElbowTypeUniqueId,
                     pipeType.Name + " 的立管轉水平彎頭",
+                    false,
+                    errors);
+                ValidateFitting(
+                    document,
+                    profile.ReducerTypeId,
+                    profile.ReducerTypeUniqueId,
+                    pipeType.Name + " 的變徑",
                     false,
                     errors);
             }
@@ -247,6 +331,8 @@ namespace RfaMetadataAddin.Drainage
                     profile.WyeTypeId,
                     profile.PipeTypeName + " 的 Y／斜三通",
                     3,
+                    45,
+                    false,
                     profile.MinimumDiameterMm,
                     profile.MaximumDiameterMm,
                     errors);
@@ -255,6 +341,8 @@ namespace RfaMetadataAddin.Drainage
                     profile.OffsetElbowTypeId,
                     profile.PipeTypeName + " 的 45°／錯層彎頭",
                     2,
+                    45,
+                    false,
                     profile.MinimumDiameterMm,
                     profile.MaximumDiameterMm,
                     errors);
@@ -265,6 +353,8 @@ namespace RfaMetadataAddin.Drainage
                         profile.SanitaryTeeTypeId,
                         profile.PipeTypeName + " 的斜 T 三通",
                         3,
+                        45,
+                        false,
                         profile.MinimumDiameterMm,
                         profile.MaximumDiameterMm,
                         errors);
@@ -276,6 +366,21 @@ namespace RfaMetadataAddin.Drainage
                         profile.VerticalToHorizontalElbowTypeId,
                         profile.PipeTypeName + " 的立管轉水平彎頭",
                         2,
+                        45,
+                        false,
+                        profile.MinimumDiameterMm,
+                        profile.MaximumDiameterMm,
+                        errors);
+                }
+                if (profile.ReducerTypeId > 0)
+                {
+                    ProbeFitting(
+                        document,
+                        profile.ReducerTypeId,
+                        profile.PipeTypeName + " 的變徑",
+                        2,
+                        0,
+                        true,
                         profile.MinimumDiameterMm,
                         profile.MaximumDiameterMm,
                         errors);
@@ -284,11 +389,212 @@ namespace RfaMetadataAddin.Drainage
             return errors;
         }
 
+        private static void NormalizeConfiguration(
+            Document document,
+            DrainageConfigurationDocument configuration)
+        {
+            bool migratedFromV2 = !string.Equals(
+                configuration.SchemaVersion,
+                "sc.drainage.configuration.v3",
+                StringComparison.Ordinal);
+            foreach (DrainageConfigurationProfile profile in
+                configuration.Profiles
+                    ?? new List<DrainageConfigurationProfile>())
+            {
+                if (profile == null)
+                {
+                    continue;
+                }
+                if (string.IsNullOrWhiteSpace(profile.ProfileId))
+                {
+                    profile.ProfileId =
+                        "DCP-" + Guid.NewGuid().ToString("N");
+                }
+                if (string.IsNullOrWhiteSpace(profile.ProfileKind))
+                {
+                    profile.ProfileKind = "GravityDrainage";
+                }
+                if (string.IsNullOrWhiteSpace(profile.RoutePreference))
+                {
+                    profile.RoutePreference =
+                        "PreserveOutletThenFewestFittings";
+                }
+                if (profile.MinimumTangentMm <= 0)
+                {
+                    profile.MinimumTangentMm = 80.0;
+                }
+                if (profile.MinimumDiameterMm <= 0)
+                {
+                    profile.MinimumDiameterMm = 25.0;
+                }
+                if (profile.MaximumDiameterMm <= 0)
+                {
+                    profile.MaximumDiameterMm = 300.0;
+                }
+                if (profile.SlopePercent <= 0)
+                {
+                    profile.SlopePercent = 1.0;
+                }
+                if (profile.AllowedSourceSystemClassifications == null)
+                {
+                    profile.AllowedSourceSystemClassifications = "";
+                }
+                if (profile.AllowedSourceSystemTypeUniqueIds == null)
+                {
+                    profile.AllowedSourceSystemTypeUniqueIds = "";
+                }
+                if (migratedFromV2)
+                {
+                    profile.AllowBidirectionalFlow = true;
+                    profile.AllowUndefinedFlow = true;
+                    profile.AllowInFlow = false;
+                }
+                PipeType pipeType = document.GetElement(
+                    new ElementId(profile.PipeTypeId)) as PipeType;
+                if (pipeType != null)
+                {
+                    profile.PipeTypeUniqueId = pipeType.UniqueId;
+                    profile.PipeTypeName = pipeType.Name;
+                }
+            }
+            configuration.SchemaVersion =
+                "sc.drainage.configuration.v3";
+        }
+
+        private static bool TargetSystemMatches(
+            DrainageConfigurationProfile profile,
+            ElementId targetSystemTypeId,
+            string targetSystemTypeUniqueId)
+        {
+            if (profile.TargetSystemTypeId <= 0
+                && string.IsNullOrWhiteSpace(
+                    profile.TargetSystemTypeUniqueId))
+            {
+                return true;
+            }
+            return targetSystemTypeId != null
+                && targetSystemTypeId
+                    != ElementId.InvalidElementId
+                && profile.TargetSystemTypeId
+                    == targetSystemTypeId.Value
+                && string.Equals(
+                    profile.TargetSystemTypeUniqueId,
+                    targetSystemTypeUniqueId,
+                    StringComparison.Ordinal);
+        }
+
+        private static bool SourceMatches(
+            DrainageConfigurationProfile profile,
+            DrainageSourceRef source,
+            string targetClassification)
+        {
+            if (source == null || source.ConnectorRef == null)
+            {
+                return true;
+            }
+            DrainageConnectorRef connector = source.ConnectorRef;
+            if (connector.FlowDirection == FlowDirectionType.In
+                && !profile.AllowInFlow)
+            {
+                return false;
+            }
+            if (connector.FlowDirection
+                    == FlowDirectionType.Bidirectional
+                && !profile.AllowBidirectionalFlow)
+            {
+                return false;
+            }
+            if (!connector.FlowDirectionKnown
+                && !profile.AllowUndefinedFlow)
+            {
+                return false;
+            }
+
+            ISet<string> allowedSystemTypes =
+                ParseList(
+                    profile.AllowedSourceSystemTypeUniqueIds);
+            if (allowedSystemTypes.Count > 0
+                && !allowedSystemTypes.Contains(
+                    connector.SystemTypeUniqueId ?? ""))
+            {
+                return false;
+            }
+
+            ISet<string> allowedClassifications =
+                ParseList(
+                    profile.AllowedSourceSystemClassifications);
+            if (allowedClassifications.Count > 0)
+            {
+                return allowedClassifications.Contains(
+                    connector.SystemClassification ?? "");
+            }
+
+            return string.IsNullOrWhiteSpace(
+                    connector.SystemClassification)
+                || string.IsNullOrWhiteSpace(targetClassification)
+                || string.Equals(
+                    connector.SystemClassification,
+                    targetClassification,
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static ISet<string> ParseList(string value)
+        {
+            return new HashSet<string>(
+                (value ?? "")
+                    .Split(new[] { ',', ';', '\r', '\n' },
+                        StringSplitOptions.RemoveEmptyEntries)
+                    .Select(item => item.Trim())
+                    .Where(item => item.Length > 0),
+                StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static ElementId ReadSystemTypeId(Element element)
+        {
+            Parameter parameter = element == null
+                ? null
+                : element.get_Parameter(
+                    BuiltInParameter
+                        .RBS_PIPING_SYSTEM_TYPE_PARAM);
+            return parameter == null
+                ? ElementId.InvalidElementId
+                : parameter.AsElementId();
+        }
+
+        private static string ReadUniqueId(
+            Document document,
+            ElementId elementId)
+        {
+            Element element = document == null
+                || elementId == null
+                || elementId == ElementId.InvalidElementId
+                    ? null
+                    : document.GetElement(elementId);
+            return element == null ? "" : element.UniqueId;
+        }
+
+        private static string ReadSystemClassification(
+            Document document,
+            ElementId systemTypeId)
+        {
+            PipingSystemType systemType = document == null
+                || systemTypeId == null
+                || systemTypeId == ElementId.InvalidElementId
+                    ? null
+                    : document.GetElement(systemTypeId)
+                        as PipingSystemType;
+            return systemType == null
+                ? ""
+                : systemType.SystemClassification.ToString();
+        }
+
         private static void ProbeFitting(
             Document document,
             long elementId,
             string label,
             int expectedConnectorCount,
+            double expectedAngleDegrees,
+            bool isReducer,
             double minimumDiameterMm,
             double maximumDiameterMm,
             IList<string> errors)
@@ -338,22 +644,32 @@ namespace RfaMetadataAddin.Drainage
                         return;
                     }
                     if (!HasExpectedAngles(
-                        connectors,
-                        expectedConnectorCount))
+                            connectors,
+                            expectedConnectorCount,
+                            expectedAngleDegrees))
                     {
                         errors.Add(
                             label
-                            + "的連接器角度不是 45° 排水接管幾何。");
+                            + "的連接器角度不是 "
+                            + expectedAngleDegrees.ToString("0.#")
+                            + "° 設定幾何。");
                         return;
                     }
-                    if (!SupportsDiameter(
-                        document,
-                        connectors,
-                        minimumDiameterMm)
-                        || !SupportsDiameter(
+                    bool supportsRange = isReducer
+                        ? SupportsReducerDiameterRange(
                             document,
                             connectors,
-                            maximumDiameterMm))
+                            minimumDiameterMm,
+                            maximumDiameterMm)
+                        : SupportsDiameter(
+                                document,
+                                connectors,
+                                minimumDiameterMm)
+                            && SupportsDiameter(
+                                document,
+                                connectors,
+                                maximumDiameterMm);
+                    if (!supportsRange)
                     {
                         errors.Add(
                             label
@@ -400,14 +716,15 @@ namespace RfaMetadataAddin.Drainage
 
         private static bool HasExpectedAngles(
             IList<Connector> connectors,
-            int expectedConnectorCount)
+            int expectedConnectorCount,
+            double expectedAngleDegrees)
         {
             if (expectedConnectorCount == 2)
             {
                 return IsAngleNear(
                     connectors[0],
                     connectors[1],
-                    45,
+                    expectedAngleDegrees,
                     2);
             }
             for (int first = 0; first < connectors.Count; first++)
@@ -428,7 +745,7 @@ namespace RfaMetadataAddin.Drainage
                     if (IsAngleNear(
                         connectors[first],
                         connectors[branch],
-                        45,
+                        expectedAngleDegrees,
                         2))
                     {
                         return true;
@@ -436,6 +753,46 @@ namespace RfaMetadataAddin.Drainage
                 }
             }
             return false;
+        }
+
+        private static bool SupportsReducerDiameterRange(
+            Document document,
+            IList<Connector> connectors,
+            double minimumDiameterMm,
+            double maximumDiameterMm)
+        {
+            if (connectors == null || connectors.Count != 2)
+            {
+                return false;
+            }
+            double minimumRadius =
+                UnitUtils.ConvertToInternalUnits(
+                    minimumDiameterMm / 2.0,
+                    UnitTypeId.Millimeters);
+            double maximumRadius =
+                UnitUtils.ConvertToInternalUnits(
+                    maximumDiameterMm / 2.0,
+                    UnitTypeId.Millimeters);
+            try
+            {
+                connectors[0].Radius = maximumRadius;
+                connectors[1].Radius = minimumRadius;
+                document.Regenerate();
+                double tolerance =
+                    UnitUtils.ConvertToInternalUnits(
+                        0.5,
+                        UnitTypeId.Millimeters);
+                return Math.Abs(
+                        connectors[0].Radius
+                            - maximumRadius) <= tolerance
+                    && Math.Abs(
+                        connectors[1].Radius
+                            - minimumRadius) <= tolerance;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool IsAngleNear(

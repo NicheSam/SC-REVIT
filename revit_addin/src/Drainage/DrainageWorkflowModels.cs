@@ -5,6 +5,12 @@ using System.Collections.Generic;
 
 namespace RfaMetadataAddin.Drainage
 {
+    internal static class DrainageActorKinds
+    {
+        public const string Agent = "agent";
+        public const string HumanGui = "human_gui";
+    }
+
     internal enum DrainageFailureCode
     {
         None,
@@ -12,6 +18,12 @@ namespace RfaMetadataAddin.Drainage
         SourceConnectorMissing,
         SourceConnectorAmbiguous,
         SourceConnectorConnected,
+        SourceFlowIncompatible,
+        ProfileNotMatched,
+        SourceBelowTargetMain,
+        SourceAxisRouteUnresolved,
+        SingleFortyFiveNotFeasible,
+        NoFeasibleRoute,
         TargetNotFound,
         TargetAmbiguous,
         TargetDownstreamUnresolved,
@@ -30,13 +42,42 @@ namespace RfaMetadataAddin.Drainage
     internal enum DrainageSourceKind
     {
         PlumbingFixture,
-        Standpipe
+        Standpipe,
+        PipeOpenEnd,
+        FamilyConnector
+    }
+
+    internal sealed class DrainageConnectorRef
+    {
+        public Connector Connector { get; set; }
+        public string ConnectorKey { get; set; }
+        public int ConnectorIndex { get; set; }
+        public XYZ Origin { get; set; }
+        public XYZ Axis { get; set; }
+        public double DiameterMm { get; set; }
+        public ConnectorProfileType Shape { get; set; }
+        public FlowDirectionType FlowDirection { get; set; }
+        public bool FlowDirectionKnown { get; set; }
+        public string SystemClassification { get; set; }
+        public string SystemTypeUniqueId { get; set; }
+        public bool IsConnected { get; set; }
+        public double Score { get; set; }
+        public IList<string> Evidence { get; set; }
+
+        public DrainageConnectorRef()
+        {
+            ConnectorKey = "";
+            SystemClassification = "";
+            SystemTypeUniqueId = "";
+            Evidence = new List<string>();
+        }
     }
 
     internal sealed class DrainageSourceRef
     {
         public Element SourceElement { get; set; }
         public Connector SourceConnector { get; set; }
+        public DrainageConnectorRef ConnectorRef { get; set; }
         public DrainageSourceKind Kind { get; set; }
         public XYZ PickPoint { get; set; }
 
@@ -72,6 +113,15 @@ namespace RfaMetadataAddin.Drainage
         public long PipeTypeId { get; set; }
         public string PipeTypeUniqueId { get; set; }
         public string PipeTypeName { get; set; }
+        public string ProfileKind { get; set; }
+        public long TargetSystemTypeId { get; set; }
+        public string TargetSystemTypeUniqueId { get; set; }
+        public string TargetSystemTypeName { get; set; }
+        public string AllowedSourceSystemClassifications { get; set; }
+        public string AllowedSourceSystemTypeUniqueIds { get; set; }
+        public bool AllowBidirectionalFlow { get; set; }
+        public bool AllowUndefinedFlow { get; set; }
+        public bool AllowInFlow { get; set; }
         public long SanitaryTeeTypeId { get; set; }
         public string SanitaryTeeTypeUniqueId { get; set; }
         public long WyeTypeId { get; set; }
@@ -80,17 +130,29 @@ namespace RfaMetadataAddin.Drainage
         public string VerticalToHorizontalElbowTypeUniqueId { get; set; }
         public long OffsetElbowTypeId { get; set; }
         public string OffsetElbowTypeUniqueId { get; set; }
+        public long ReducerTypeId { get; set; }
+        public string ReducerTypeUniqueId { get; set; }
         public double SlopePercent { get; set; }
         public double MinimumDiameterMm { get; set; }
         public double MaximumDiameterMm { get; set; }
+        public double MinimumTangentMm { get; set; }
+        public string RoutePreference { get; set; }
         public bool Enabled { get; set; }
 
         public DrainageConfigurationProfile()
         {
             ProfileId = "DCP-" + Guid.NewGuid().ToString("N");
+            ProfileKind = "GravityDrainage";
+            AllowedSourceSystemClassifications = "";
+            AllowedSourceSystemTypeUniqueIds = "";
+            AllowBidirectionalFlow = true;
+            AllowUndefinedFlow = true;
+            AllowInFlow = false;
             SlopePercent = 1.0;
             MinimumDiameterMm = 25.0;
             MaximumDiameterMm = 300.0;
+            MinimumTangentMm = 80.0;
+            RoutePreference = "PreserveOutletThenFewestFittings";
             Enabled = true;
         }
 
@@ -108,6 +170,7 @@ namespace RfaMetadataAddin.Drainage
         public DrainageTargetRef Target { get; set; }
         public DrainageConfigurationProfile Configuration { get; set; }
         public double DiameterMm { get; set; }
+        public double MainDiameterMm { get; set; }
         public string DownstreamMode { get; set; }
         public string ActorKind { get; set; }
         public string IdempotencyKey { get; set; }

@@ -10,6 +10,24 @@ from sc_revit.drainage.agent_cli import _error_code
 
 
 class DrainageContractTests(unittest.TestCase):
+    def test_revit_human_workflow_uses_supported_operation_actor(self) -> None:
+        source_root = Path(__file__).parent / "revit_addin" / "src"
+        workflow = (
+            source_root / "Drainage" / "DrainageWorkflowService.cs"
+        ).read_text(encoding="utf-8")
+        command = (
+            source_root / "Drainage" / "DrainageInteractiveCommands.cs"
+        ).read_text(encoding="utf-8")
+        handler = (
+            source_root / "Handlers" / "DrainageHandler.cs"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn('"human_interactive"', workflow)
+        self.assertNotIn('"human_interactive"', command)
+        self.assertIn("DrainageActorKinds.HumanGui", workflow)
+        self.assertIn("DrainageActorKinds.HumanGui", command)
+        self.assertIn("DrainageActorKinds.HumanGui", handler)
+
     def test_gateway_extracts_stable_domain_error_code(self) -> None:
         self.assertEqual(
             _error_code(

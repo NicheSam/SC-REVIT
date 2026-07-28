@@ -59,6 +59,63 @@ namespace RfaMetadataAddin.Drainage
         public double MiddleLateralOffset { get; set; }
     }
 
+    internal sealed class DrainageSingleFortyFiveSolution
+    {
+        public bool IsFeasible { get; set; }
+        public string FailureCode { get; set; }
+        public DrainageGeometryPoint StubEnd { get; set; }
+        public DrainageGeometryPoint MainTie { get; set; }
+        public double StubTangentLength { get; set; }
+        public double BranchTangentLength { get; set; }
+        public double ElbowAngleDegrees { get; set; }
+        public int SideSign { get; set; }
+    }
+
+    internal sealed class DrainageAxisDirectSolution
+    {
+        public bool IsFeasible { get; set; }
+        public string FailureCode { get; set; }
+        public DrainageGeometryPoint MainTie { get; set; }
+        public double BranchTangentLength { get; set; }
+        public double JunctionAngleDegrees { get; set; }
+    }
+
+    internal sealed class DrainageTerminalDropSolution
+    {
+        public bool IsFeasible { get; set; }
+        public string FailureCode { get; set; }
+        public DrainageGeometryPoint StubEnd { get; set; }
+        public DrainageGeometryPoint UpperBranchStart { get; set; }
+        public DrainageGeometryPoint TerminalDropStart { get; set; }
+        public DrainageGeometryPoint BranchStart { get; set; }
+        public DrainageGeometryPoint MainTie { get; set; }
+        public double OutletAdvance { get; set; }
+        public double SourceDiagonalTangentLength { get; set; }
+        public double UpperBranchTangentLength { get; set; }
+        public double TerminalDropTangentLength { get; set; }
+        public double BranchTangentLength { get; set; }
+        public double PlanTurnAngleDegrees { get; set; }
+        public int SideSign { get; set; }
+    }
+
+    internal sealed class DrainageVerticalPlanTurnSolution
+    {
+        public bool IsFeasible { get; set; }
+        public string FailureCode { get; set; }
+        public DrainageGeometryPoint StubEnd { get; set; }
+        public DrainageGeometryPoint RadialStart { get; set; }
+        public DrainageGeometryPoint PlanTurnStart { get; set; }
+        public DrainageGeometryPoint MainTie { get; set; }
+        public double OutletAdvance { get; set; }
+        public double SourceDiagonalTangentLength { get; set; }
+        public double RadialTangentLength { get; set; }
+        public double FinalBranchTangentLength { get; set; }
+        public double FirstElbowAngleDegrees { get; set; }
+        public double SecondElbowAngleDegrees { get; set; }
+        public double PlanTurnAngleDegrees { get; set; }
+        public int SideSign { get; set; }
+    }
+
     internal static class DrainageEngineeringCore
     {
         // Endpoint order is geometry storage, not drainage semantics. Flat or
@@ -98,6 +155,49 @@ namespace RfaMetadataAddin.Drainage
             return horizontalLength > 0
                 ? (sourceZ - sinkZ) / horizontalLength
                 : double.NaN;
+        }
+
+        public static bool IsSourceBelowTargetMainAtPlanProjection(
+            DrainageWallRouteInput input,
+            double tolerance)
+        {
+            if (input == null
+                || input.Source == null
+                || input.MainStart == null
+                || input.MainEnd == null)
+            {
+                return false;
+            }
+            double mainX = input.MainEnd.X - input.MainStart.X;
+            double mainY = input.MainEnd.Y - input.MainStart.Y;
+            double horizontalSquared = mainX * mainX + mainY * mainY;
+            if (horizontalSquared <= 0.000001)
+            {
+                return false;
+            }
+            double horizontalLength = Math.Sqrt(horizontalSquared);
+            double minimumParameter = Math.Max(
+                0,
+                input.MainEndClearance / horizontalLength);
+            double maximumParameter = Math.Min(
+                1,
+                1.0 - minimumParameter);
+            if (minimumParameter >= maximumParameter)
+            {
+                return false;
+            }
+            double parameter = (
+                (input.Source.X - input.MainStart.X) * mainX
+                + (input.Source.Y - input.MainStart.Y) * mainY)
+                / horizontalSquared;
+            parameter = Math.Max(
+                minimumParameter,
+                Math.Min(maximumParameter, parameter));
+            double targetElevation = input.MainStart.Z
+                + (input.MainEnd.Z - input.MainStart.Z)
+                * parameter;
+            return input.Source.Z + Math.Max(0, tolerance)
+                < targetElevation;
         }
 
         public static bool IsExpectedDescendingSlope(
@@ -292,6 +392,26 @@ namespace RfaMetadataAddin.Drainage
             dot = Math.Max(-1.0, Math.Min(1.0, dot));
             double degrees = Math.Acos(dot) * 180.0 / Math.PI;
             return Math.Min(degrees, 180.0 - degrees);
+        }
+
+        public static double DirectedAngleDegrees(
+            double ax,
+            double ay,
+            double az,
+            double bx,
+            double by,
+            double bz)
+        {
+            double aLength = Math.Sqrt(ax * ax + ay * ay + az * az);
+            double bLength = Math.Sqrt(bx * bx + by * by + bz * bz);
+            if (aLength <= 0.000001 || bLength <= 0.000001)
+            {
+                return double.NaN;
+            }
+            double dot = (ax * bx + ay * by + az * bz)
+                / (aLength * bLength);
+            dot = Math.Max(-1.0, Math.Min(1.0, dot));
+            return Math.Acos(dot) * 180.0 / Math.PI;
         }
 
         public static double RadialElevationAngleDegrees(
@@ -520,6 +640,36 @@ namespace RfaMetadataAddin.Drainage
             return Math.Sqrt(dx * dx + dy * dy + dz * dz);
         }
 
+        public static bool TryComputeBoundedElevationCompensation(
+            double sourceElevation,
+            double targetElevation,
+            double maximumAbsoluteAdjustment,
+            double ignoreTolerance,
+            out double adjustment)
+        {
+            adjustment = targetElevation - sourceElevation;
+            if (maximumAbsoluteAdjustment <= 0
+                || ignoreTolerance < 0
+                || double.IsNaN(adjustment)
+                || double.IsInfinity(adjustment))
+            {
+                adjustment = 0;
+                return false;
+            }
+            if (Math.Abs(adjustment) <= ignoreTolerance)
+            {
+                adjustment = 0;
+                return false;
+            }
+            if (Math.Abs(adjustment)
+                > maximumAbsoluteAdjustment + 0.000001)
+            {
+                adjustment = 0;
+                return false;
+            }
+            return true;
+        }
+
         public static DrainageWallRouteSolution SolveWallOutletDoubleFortyFive(
             DrainageWallRouteInput input)
         {
@@ -544,6 +694,14 @@ namespace RfaMetadataAddin.Drainage
                 || (input.DownstreamEndpointIndex != 0
                     && input.DownstreamEndpointIndex != 1))
             {
+                return noSolution;
+            }
+            if (IsSourceBelowTargetMainAtPlanProjection(
+                input,
+                0.000001))
+            {
+                noSolution.FailureCode =
+                    "SOURCE_BELOW_TARGET_MAIN";
                 return noSolution;
             }
             double outletLength = Math.Sqrt(
@@ -757,6 +915,14 @@ namespace RfaMetadataAddin.Drainage
             {
                 return noSolution;
             }
+            if (IsSourceBelowTargetMainAtPlanProjection(
+                input,
+                0.000001))
+            {
+                noSolution.FailureCode =
+                    "SOURCE_BELOW_TARGET_MAIN";
+                return noSolution;
+            }
             DrainageVector3 outlet = NormalizeVector(new DrainageVector3(
                 input.OutletX,
                 input.OutletY,
@@ -788,6 +954,8 @@ namespace RfaMetadataAddin.Drainage
             DrainageWallRouteSolution best = null;
             double bestMargin = double.NegativeInfinity;
             double bestTotalLength = double.PositiveInfinity;
+            bool preserveVerticalOutlet =
+                outlet.Z < -0.90;
             bool foundDirectionSolution = false;
             bool rejectedByLateralOffset = false;
             for (int sideSign = -1; sideSign <= 1; sideSign += 2)
@@ -990,11 +1158,37 @@ namespace RfaMetadataAddin.Drainage
                             noSolution.FailureCode = "LOCAL_RISE";
                             continue;
                         }
-                        if (best == null
-                            || minimumMargin > bestMargin + 0.000001
-                            || (Math.Abs(minimumMargin - bestMargin)
-                                    <= 0.000001
-                                && totalLength < bestTotalLength))
+                        bool preferCandidate = best == null;
+                        if (!preferCandidate
+                            && preserveVerticalOutlet)
+                        {
+                            preferCandidate = firstLength
+                                    > best.OutletAdvance + 0.000001
+                                || (Math.Abs(
+                                        firstLength
+                                        - best.OutletAdvance)
+                                        <= 0.000001
+                                    && (minimumMargin
+                                            > bestMargin + 0.000001
+                                        || (Math.Abs(
+                                                minimumMargin
+                                                - bestMargin)
+                                                <= 0.000001
+                                            && totalLength
+                                                < bestTotalLength)));
+                        }
+                        else if (!preferCandidate)
+                        {
+                            preferCandidate = minimumMargin
+                                    > bestMargin + 0.000001
+                                || (Math.Abs(
+                                        minimumMargin
+                                        - bestMargin)
+                                        <= 0.000001
+                                    && totalLength
+                                        < bestTotalLength);
+                        }
+                        if (preferCandidate)
                         {
                             bestMargin = minimumMargin;
                             bestTotalLength = totalLength;
@@ -1040,6 +1234,1457 @@ namespace RfaMetadataAddin.Drainage
                     "DOUBLE45_OUT_OF_PLANE_LIMIT";
             }
             return noSolution;
+        }
+
+        public static DrainageTerminalDropSolution
+            SolveVerticalTerminalDropRoute(
+                DrainageWallRouteInput input)
+        {
+            var noSolution = new DrainageTerminalDropSolution
+            {
+                IsFeasible = false,
+                FailureCode = "TERMINAL_DROP_INPUT_INVALID"
+            };
+            if (!IsGeneralRouteInputValid(input)
+                || input.SearchStep <= 0)
+            {
+                return noSolution;
+            }
+            DrainageVector3 outlet = NormalizeVector(
+                new DrainageVector3(
+                    input.OutletX,
+                    input.OutletY,
+                    input.OutletZ));
+            if (outlet == null
+                || outlet.Z >= -0.99
+                || Math.Sqrt(
+                    outlet.X * outlet.X
+                    + outlet.Y * outlet.Y) > 0.02)
+            {
+                noSolution.FailureCode =
+                    "TERMINAL_DROP_REQUIRES_VERTICAL_SOURCE";
+                return noSolution;
+            }
+            if (IsSourceBelowTargetMainAtPlanProjection(
+                input,
+                0.000001))
+            {
+                noSolution.FailureCode =
+                    "SOURCE_BELOW_TARGET_MAIN";
+                return noSolution;
+            }
+            double mainX =
+                input.MainEnd.X - input.MainStart.X;
+            double mainY =
+                input.MainEnd.Y - input.MainStart.Y;
+            double mainHorizontalLength = Math.Sqrt(
+                mainX * mainX + mainY * mainY);
+            if (mainHorizontalLength <= 0.000001)
+            {
+                noSolution.FailureCode =
+                    "MAIN_HORIZONTAL_LENGTH_ZERO";
+                return noSolution;
+            }
+            double downstreamX =
+                input.DownstreamEndpointIndex == 1
+                    ? mainX / mainHorizontalLength
+                    : -mainX / mainHorizontalLength;
+            double downstreamY =
+                input.DownstreamEndpointIndex == 1
+                    ? mainY / mainHorizontalLength
+                    : -mainY / mainHorizontalLength;
+            double minimumParameter =
+                input.MainEndClearance / mainHorizontalLength;
+            double maximumParameter =
+                1.0 - minimumParameter;
+            if (minimumParameter >= maximumParameter)
+            {
+                noSolution.FailureCode =
+                    "MAIN_TIE_INTERVAL_EMPTY";
+                return noSolution;
+            }
+            double slopeNorm = Math.Sqrt(
+                1.0 + input.SlopeRatio * input.SlopeRatio);
+            double branchHorizontalFactor =
+                1.0 / slopeNorm;
+            double branchVerticalFactor =
+                input.SlopeRatio / slopeNorm;
+            double diagonalFactor =
+                1.0 / Math.Sqrt(2.0);
+            double minimumOutletLength = Math.Max(
+                input.StubLength,
+                input.ElbowTakeout
+                    + input.MinimumTangentLength);
+            double minimumDiagonalLength =
+                2.0 * input.ElbowTakeout
+                + input.MinimumTangentLength;
+            double minimumUpperBranchLength =
+                2.0 * input.ElbowTakeout
+                + input.MinimumTangentLength;
+            double minimumLowerBranchLength =
+                input.ElbowTakeout
+                + input.JunctionBranchTakeout
+                + Math.Max(
+                    input.MinimumTangentLength,
+                    input.MainEndClearance);
+            double minimumRequiredVerticalDrop =
+                minimumOutletLength
+                + 2.0 * minimumDiagonalLength
+                    * diagonalFactor
+                + (minimumUpperBranchLength
+                    + minimumLowerBranchLength)
+                    * branchVerticalFactor;
+            bool rejectedByVerticalFall = false;
+            DrainageTerminalDropSolution best = null;
+            for (int sideSign = -1;
+                sideSign <= 1;
+                sideSign += 2)
+            {
+                double branchX = (
+                    downstreamX - sideSign * downstreamY)
+                    / Math.Sqrt(2.0);
+                double branchY = (
+                    downstreamY + sideSign * downstreamX)
+                    / Math.Sqrt(2.0);
+                double denominator =
+                    branchX * mainY - branchY * mainX;
+                if (Math.Abs(denominator) <= 0.000001)
+                {
+                    continue;
+                }
+                double deltaX =
+                    input.MainStart.X - input.Source.X;
+                double deltaY =
+                    input.MainStart.Y - input.Source.Y;
+                double routeHorizontalLength =
+                    (deltaX * mainY - deltaY * mainX)
+                    / denominator;
+                double mainParameter =
+                    (deltaX * branchY - deltaY * branchX)
+                    / denominator;
+                if (routeHorizontalLength <= 0.000001
+                    || mainParameter
+                        < minimumParameter - 0.000001
+                    || mainParameter
+                        > maximumParameter + 0.000001)
+                {
+                    continue;
+                }
+                DrainageGeometryPoint tie = Point(
+                    input.MainStart.X
+                        + mainX * mainParameter,
+                    input.MainStart.Y
+                        + mainY * mainParameter,
+                    input.MainStart.Z
+                        + (input.MainEnd.Z
+                            - input.MainStart.Z)
+                            * mainParameter);
+                double verticalDrop =
+                    input.Source.Z - tie.Z;
+                if (verticalDrop
+                    < minimumRequiredVerticalDrop - 0.000001)
+                {
+                    rejectedByVerticalFall = true;
+                    continue;
+                }
+                for (double outletLength =
+                        minimumOutletLength;
+                    outletLength
+                        <= input.MaximumOutletAdvance
+                            + 0.000001;
+                    outletLength += input.SearchStep)
+                {
+                    double totalBranchLength = (
+                        routeHorizontalLength
+                        - (verticalDrop - outletLength))
+                        / (branchHorizontalFactor
+                            - branchVerticalFactor);
+                    double totalDiagonalLength = (
+                        routeHorizontalLength
+                        - branchHorizontalFactor
+                            * totalBranchLength)
+                        / diagonalFactor;
+                    if (totalBranchLength
+                            < minimumUpperBranchLength
+                                + minimumLowerBranchLength
+                                - 0.000001
+                        || totalDiagonalLength
+                            < 2.0 * minimumDiagonalLength
+                                - 0.000001)
+                    {
+                        continue;
+                    }
+                    double sourceDiagonalLength =
+                        minimumDiagonalLength;
+                    double terminalDropLength =
+                        totalDiagonalLength
+                        - sourceDiagonalLength;
+                    double lowerBranchLength =
+                        minimumLowerBranchLength;
+                    double upperBranchLength =
+                        totalBranchLength
+                        - lowerBranchLength;
+                    if (upperBranchLength
+                        < lowerBranchLength
+                            + input.MinimumTangentLength
+                            - 0.000001)
+                    {
+                        continue;
+                    }
+                    DrainageVector3 diagonalDirection =
+                        new DrainageVector3(
+                            branchX * diagonalFactor,
+                            branchY * diagonalFactor,
+                            -diagonalFactor);
+                    DrainageVector3 branchDirection =
+                        new DrainageVector3(
+                            branchX
+                                * branchHorizontalFactor,
+                            branchY
+                                * branchHorizontalFactor,
+                            -branchVerticalFactor);
+                    DrainageGeometryPoint stubEnd = AddScaled(
+                        input.Source,
+                        outlet,
+                        outletLength);
+                    DrainageGeometryPoint upperBranchStart =
+                        AddScaled(
+                            stubEnd,
+                            diagonalDirection,
+                            sourceDiagonalLength);
+                    DrainageGeometryPoint terminalDropStart =
+                        AddScaled(
+                            upperBranchStart,
+                            branchDirection,
+                            upperBranchLength);
+                    DrainageGeometryPoint branchStart =
+                        AddScaled(
+                            terminalDropStart,
+                            diagonalDirection,
+                            terminalDropLength);
+                    DrainageGeometryPoint calculatedTie =
+                        AddScaled(
+                            branchStart,
+                            branchDirection,
+                            lowerBranchLength);
+                    double closureError = Math.Sqrt(
+                        Math.Pow(
+                            calculatedTie.X - tie.X,
+                            2)
+                        + Math.Pow(
+                            calculatedTie.Y - tie.Y,
+                            2)
+                        + Math.Pow(
+                            calculatedTie.Z - tie.Z,
+                            2));
+                    if (closureError > Math.Max(
+                        0.00001,
+                        input.SearchStep * 0.001))
+                    {
+                        continue;
+                    }
+                    best = new DrainageTerminalDropSolution
+                    {
+                        IsFeasible = true,
+                        FailureCode = "",
+                        StubEnd = stubEnd,
+                        UpperBranchStart =
+                            upperBranchStart,
+                        TerminalDropStart =
+                            terminalDropStart,
+                        BranchStart = branchStart,
+                        MainTie = tie,
+                        OutletAdvance = outletLength,
+                        SourceDiagonalTangentLength =
+                            sourceDiagonalLength
+                            - 2.0 * input.ElbowTakeout,
+                        UpperBranchTangentLength =
+                            upperBranchLength
+                            - 2.0 * input.ElbowTakeout,
+                        TerminalDropTangentLength =
+                            terminalDropLength
+                            - 2.0 * input.ElbowTakeout,
+                        BranchTangentLength =
+                            lowerBranchLength
+                            - input.ElbowTakeout
+                            - input.JunctionBranchTakeout,
+                        PlanTurnAngleDegrees = 0,
+                        SideSign = sideSign
+                    };
+                    break;
+                }
+                if (best != null)
+                {
+                    break;
+                }
+            }
+            if (best == null)
+            {
+                noSolution.FailureCode =
+                    rejectedByVerticalFall
+                        ? "TERMINAL_DROP_INSUFFICIENT_VERTICAL_FALL"
+                        : "TERMINAL_DROP_NO_FEASIBLE_ROUTE";
+            }
+            return best ?? noSolution;
+        }
+
+        public static DrainageVerticalPlanTurnSolution
+            SolveVerticalPlanTurnRoute(
+                DrainageWallRouteInput input)
+        {
+            var noSolution = new DrainageVerticalPlanTurnSolution
+            {
+                IsFeasible = false,
+                FailureCode = "VERTICAL_PLAN_TURN_INPUT_INVALID"
+            };
+            if (!IsGeneralRouteInputValid(input))
+            {
+                return noSolution;
+            }
+            DrainageVector3 outlet = NormalizeVector(
+                new DrainageVector3(
+                    input.OutletX,
+                    input.OutletY,
+                    input.OutletZ));
+            if (outlet == null
+                || outlet.Z >= -0.99
+                || Math.Sqrt(
+                    outlet.X * outlet.X
+                    + outlet.Y * outlet.Y) > 0.02)
+            {
+                noSolution.FailureCode =
+                    "VERTICAL_PLAN_TURN_REQUIRES_VERTICAL_SOURCE";
+                return noSolution;
+            }
+            if (IsSourceBelowTargetMainAtPlanProjection(
+                input,
+                0.000001))
+            {
+                noSolution.FailureCode =
+                    "SOURCE_BELOW_TARGET_MAIN";
+                return noSolution;
+            }
+            double mainX =
+                input.MainEnd.X - input.MainStart.X;
+            double mainY =
+                input.MainEnd.Y - input.MainStart.Y;
+            double mainHorizontalLength = Math.Sqrt(
+                mainX * mainX + mainY * mainY);
+            if (mainHorizontalLength <= 0.000001)
+            {
+                noSolution.FailureCode =
+                    "MAIN_HORIZONTAL_LENGTH_ZERO";
+                return noSolution;
+            }
+            double mainUnitX = mainX / mainHorizontalLength;
+            double mainUnitY = mainY / mainHorizontalLength;
+            double projectedParameter = (
+                (input.Source.X - input.MainStart.X) * mainX
+                + (input.Source.Y - input.MainStart.Y) * mainY)
+                / (mainHorizontalLength * mainHorizontalLength);
+            double projectedX =
+                input.MainStart.X + mainX * projectedParameter;
+            double projectedY =
+                input.MainStart.Y + mainY * projectedParameter;
+            double radialDeltaX =
+                projectedX - input.Source.X;
+            double radialDeltaY =
+                projectedY - input.Source.Y;
+            double lateralDistance = Math.Sqrt(
+                radialDeltaX * radialDeltaX
+                + radialDeltaY * radialDeltaY);
+            if (lateralDistance <= 0.000001)
+            {
+                noSolution.FailureCode =
+                    "VERTICAL_PLAN_TURN_LATERAL_DISTANCE_ZERO";
+                return noSolution;
+            }
+            double radialPlanX =
+                radialDeltaX / lateralDistance;
+            double radialPlanY =
+                radialDeltaY / lateralDistance;
+            double downstreamX =
+                input.DownstreamEndpointIndex == 1
+                    ? mainUnitX
+                    : -mainUnitX;
+            double downstreamY =
+                input.DownstreamEndpointIndex == 1
+                    ? mainUnitY
+                    : -mainUnitY;
+            double slopeNorm = Math.Sqrt(
+                1.0 + input.SlopeRatio * input.SlopeRatio);
+            double horizontalFactor = 1.0 / slopeNorm;
+            double verticalFactor =
+                input.SlopeRatio / slopeNorm;
+            DrainageVector3 radialDirection =
+                new DrainageVector3(
+                    radialPlanX * horizontalFactor,
+                    radialPlanY * horizontalFactor,
+                    -verticalFactor);
+            DrainageVector3 middleDirection = NormalizeVector(
+                new DrainageVector3(
+                    outlet.X + radialDirection.X,
+                    outlet.Y + radialDirection.Y,
+                    outlet.Z + radialDirection.Z));
+            if (middleDirection == null
+                || middleDirection.Z >= -0.000001)
+            {
+                noSolution.FailureCode =
+                    "VERTICAL_PLAN_TURN_SOURCE_BISECTOR_UNRESOLVED";
+                return noSolution;
+            }
+            double firstElbowAngle = AxialAngleDegrees(
+                outlet.X,
+                outlet.Y,
+                outlet.Z,
+                middleDirection.X,
+                middleDirection.Y,
+                middleDirection.Z);
+            double secondElbowAngle = AxialAngleDegrees(
+                middleDirection.X,
+                middleDirection.Y,
+                middleDirection.Z,
+                radialDirection.X,
+                radialDirection.Y,
+                radialDirection.Z);
+            if (Math.Abs(firstElbowAngle - 45.0) > 1.0
+                || Math.Abs(secondElbowAngle - 45.0) > 1.0)
+            {
+                noSolution.FailureCode =
+                    "VERTICAL_PLAN_TURN_SOURCE_45_UNRESOLVED";
+                return noSolution;
+            }
+            double sourceDiagonalLength =
+                2.0 * input.ElbowTakeout
+                + input.MinimumTangentLength;
+            double finalBranchLength =
+                input.ElbowTakeout
+                + input.JunctionBranchTakeout
+                + Math.Max(
+                    input.MinimumTangentLength,
+                    input.MainEndClearance);
+            double finalPlanX = (
+                downstreamX + radialPlanX)
+                / Math.Sqrt(2.0);
+            double finalPlanY = (
+                downstreamY + radialPlanY)
+                / Math.Sqrt(2.0);
+            DrainageVector3 finalDirection =
+                new DrainageVector3(
+                    finalPlanX * horizontalFactor,
+                    finalPlanY * horizontalFactor,
+                    -verticalFactor);
+            double downstreamAdvance =
+                finalBranchLength
+                * horizontalFactor
+                / Math.Sqrt(2.0);
+            double tieParameter = projectedParameter
+                + (input.DownstreamEndpointIndex == 1
+                    ? downstreamAdvance / mainHorizontalLength
+                    : -downstreamAdvance / mainHorizontalLength);
+            double minimumParameter =
+                input.MainEndClearance / mainHorizontalLength;
+            double maximumParameter =
+                1.0 - minimumParameter;
+            if (tieParameter
+                    < minimumParameter - 0.000001
+                || tieParameter
+                    > maximumParameter + 0.000001)
+            {
+                noSolution.FailureCode =
+                    "VERTICAL_PLAN_TURN_MAIN_TIE_OUTSIDE_INTERVAL";
+                return noSolution;
+            }
+            DrainageGeometryPoint tie = Point(
+                input.MainStart.X + mainX * tieParameter,
+                input.MainStart.Y + mainY * tieParameter,
+                input.MainStart.Z
+                    + (input.MainEnd.Z
+                        - input.MainStart.Z)
+                        * tieParameter);
+            DrainageGeometryPoint planTurnStart = AddScaled(
+                tie,
+                new DrainageVector3(
+                    -finalDirection.X,
+                    -finalDirection.Y,
+                    -finalDirection.Z),
+                finalBranchLength);
+            double sourceDiagonalHorizontal =
+                sourceDiagonalLength * Math.Sqrt(
+                    middleDirection.X * middleDirection.X
+                    + middleDirection.Y * middleDirection.Y);
+            double radialHorizontalLength =
+                lateralDistance
+                - downstreamAdvance
+                - sourceDiagonalHorizontal;
+            if (radialHorizontalLength <= 0.000001)
+            {
+                noSolution.FailureCode =
+                    "VERTICAL_PLAN_TURN_RADIAL_LENGTH_ZERO";
+                return noSolution;
+            }
+            double radialLength =
+                radialHorizontalLength / horizontalFactor;
+            if (!IsPipeSegmentLengthAllowed(
+                    radialLength,
+                    input.ElbowTakeout,
+                    input.ElbowTakeout,
+                    input.MinimumTangentLength))
+            {
+                noSolution.FailureCode =
+                    "VERTICAL_PLAN_TURN_RADIAL_TANGENT_TOO_SHORT";
+                return noSolution;
+            }
+            DrainageGeometryPoint radialStart = AddScaled(
+                planTurnStart,
+                new DrainageVector3(
+                    -radialDirection.X,
+                    -radialDirection.Y,
+                    -radialDirection.Z),
+                radialLength);
+            DrainageGeometryPoint stubEnd = AddScaled(
+                radialStart,
+                new DrainageVector3(
+                    -middleDirection.X,
+                    -middleDirection.Y,
+                    -middleDirection.Z),
+                sourceDiagonalLength);
+            double outletAdvance =
+                (stubEnd.Z - input.Source.Z) / outlet.Z;
+            if (outletAdvance
+                    < Math.Max(
+                        input.StubLength,
+                        input.ElbowTakeout
+                            + input.MinimumTangentLength)
+                        - 0.000001
+                || outletAdvance
+                    > input.MaximumOutletAdvance + 0.000001)
+            {
+                noSolution.FailureCode =
+                    "VERTICAL_PLAN_TURN_OUTLET_ADVANCE_UNRESOLVED";
+                return noSolution;
+            }
+            DrainageGeometryPoint calculatedStubEnd = AddScaled(
+                input.Source,
+                outlet,
+                outletAdvance);
+            double sourceClosure = Math.Sqrt(
+                Math.Pow(
+                    calculatedStubEnd.X - stubEnd.X,
+                    2)
+                + Math.Pow(
+                    calculatedStubEnd.Y - stubEnd.Y,
+                    2)
+                + Math.Pow(
+                    calculatedStubEnd.Z - stubEnd.Z,
+                    2));
+            if (sourceClosure > 0.001)
+            {
+                noSolution.FailureCode =
+                    "VERTICAL_PLAN_TURN_SOURCE_CLOSURE_FAILED";
+                return noSolution;
+            }
+            double planTurnAngle = AngleBetween2D(
+                radialDirection.X,
+                radialDirection.Y,
+                finalDirection.X,
+                finalDirection.Y);
+            if (!IsSideEntryAngleAllowed(
+                    planTurnAngle,
+                    45.0,
+                    1.0))
+            {
+                noSolution.FailureCode =
+                    "VERTICAL_PLAN_TURN_ANGLE_UNRESOLVED";
+                return noSolution;
+            }
+            return new DrainageVerticalPlanTurnSolution
+            {
+                IsFeasible = true,
+                FailureCode = "",
+                StubEnd = calculatedStubEnd,
+                RadialStart = radialStart,
+                PlanTurnStart = planTurnStart,
+                MainTie = tie,
+                OutletAdvance = outletAdvance,
+                SourceDiagonalTangentLength =
+                    sourceDiagonalLength
+                    - 2.0 * input.ElbowTakeout,
+                RadialTangentLength =
+                    radialLength
+                    - 2.0 * input.ElbowTakeout,
+                FinalBranchTangentLength =
+                    finalBranchLength
+                    - input.ElbowTakeout
+                    - input.JunctionBranchTakeout,
+                FirstElbowAngleDegrees = firstElbowAngle,
+                SecondElbowAngleDegrees = secondElbowAngle,
+                PlanTurnAngleDegrees = planTurnAngle,
+                SideSign = Cross2D(
+                        mainUnitX,
+                        mainUnitY,
+                        radialPlanX,
+                        radialPlanY) >= 0
+                    ? 1
+                    : -1
+            };
+        }
+
+        private static DrainageTerminalDropSolution
+            SolveVerticalTerminalDropTurnSearch(
+                DrainageWallRouteInput input)
+        {
+            var noSolution = new DrainageTerminalDropSolution
+            {
+                IsFeasible = false,
+                FailureCode = "TERMINAL_DROP_INPUT_INVALID"
+            };
+            if (!IsGeneralRouteInputValid(input)
+                || input.SearchStep <= 0)
+            {
+                return noSolution;
+            }
+            DrainageVector3 outlet = NormalizeVector(new DrainageVector3(
+                input.OutletX,
+                input.OutletY,
+                input.OutletZ));
+            if (outlet == null
+                || outlet.Z >= -0.99
+                || Math.Sqrt(
+                    outlet.X * outlet.X
+                    + outlet.Y * outlet.Y) > 0.02)
+            {
+                noSolution.FailureCode =
+                    "TERMINAL_DROP_REQUIRES_VERTICAL_SOURCE";
+                return noSolution;
+            }
+            if (IsSourceBelowTargetMainAtPlanProjection(
+                input,
+                0.000001))
+            {
+                noSolution.FailureCode =
+                    "SOURCE_BELOW_TARGET_MAIN";
+                return noSolution;
+            }
+            double mainX = input.MainEnd.X - input.MainStart.X;
+            double mainY = input.MainEnd.Y - input.MainStart.Y;
+            double mainHorizontalLength = Math.Sqrt(
+                mainX * mainX + mainY * mainY);
+            if (mainHorizontalLength <= 0.000001)
+            {
+                noSolution.FailureCode = "MAIN_HORIZONTAL_LENGTH_ZERO";
+                return noSolution;
+            }
+            double downstreamX = input.DownstreamEndpointIndex == 1
+                ? mainX / mainHorizontalLength
+                : -mainX / mainHorizontalLength;
+            double downstreamY = input.DownstreamEndpointIndex == 1
+                ? mainY / mainHorizontalLength
+                : -mainY / mainHorizontalLength;
+            double minimumParameter =
+                input.MainEndClearance / mainHorizontalLength;
+            double maximumParameter = 1.0 - minimumParameter;
+            if (minimumParameter >= maximumParameter)
+            {
+                noSolution.FailureCode = "MAIN_TIE_INTERVAL_EMPTY";
+                return noSolution;
+            }
+            double slopeNorm = Math.Sqrt(
+                1.0 + input.SlopeRatio * input.SlopeRatio);
+            double branchHorizontalFactor = 1.0 / slopeNorm;
+            double branchVerticalFactor =
+                input.SlopeRatio / slopeNorm;
+            double minimumOutletLength = Math.Max(
+                input.StubLength,
+                input.ElbowTakeout + input.MinimumTangentLength);
+            double sourceDiagonalLength =
+                2.0 * input.ElbowTakeout
+                + input.MinimumTangentLength;
+            double minimumUpperBranchLength =
+                2.0 * input.ElbowTakeout
+                + input.MinimumTangentLength;
+            double minimumLowerBranchLength =
+                input.ElbowTakeout
+                + input.JunctionBranchTakeout
+                + Math.Max(
+                    input.MinimumTangentLength,
+                    input.MainEndClearance);
+            double terminalDropLength = sourceDiagonalLength;
+            bool rejectedByVerticalFall = false;
+            DrainageTerminalDropSolution best = null;
+            double bestAngleDeviation = double.PositiveInfinity;
+            double bestFinalApproachLength = double.PositiveInfinity;
+            double bestMinimumMargin = double.NegativeInfinity;
+            double bestTotalLength = double.PositiveInfinity;
+            DrainageVector3 main = new DrainageVector3(
+                input.MainEnd.X - input.MainStart.X,
+                input.MainEnd.Y - input.MainStart.Y,
+                input.MainEnd.Z - input.MainStart.Z);
+            int[] planTurnAngles =
+            {
+                45, 40, 50, 35, 55, 30, 60, 65, 70, 75
+            };
+            for (int sideSign = -1; sideSign <= 1; sideSign += 2)
+            {
+                double terminalHorizontalX = (
+                    downstreamX - sideSign * downstreamY)
+                    / Math.Sqrt(2.0);
+                double terminalHorizontalY = (
+                    downstreamY + sideSign * downstreamX)
+                    / Math.Sqrt(2.0);
+                DrainageVector3 terminalDirection =
+                    NormalizeVector(new DrainageVector3(
+                        terminalHorizontalX
+                            * branchHorizontalFactor,
+                        terminalHorizontalY
+                            * branchHorizontalFactor,
+                        -branchVerticalFactor));
+                if (terminalDirection == null)
+                {
+                    continue;
+                }
+                double terminalAzimuth = Math.Atan2(
+                    terminalHorizontalY,
+                    terminalHorizontalX);
+                foreach (int planTurnAngle in planTurnAngles)
+                {
+                    for (int turnSign = -1;
+                        turnSign <= 1;
+                        turnSign += 2)
+                    {
+                        double upperAzimuth = terminalAzimuth
+                            + turnSign * planTurnAngle
+                                * Math.PI / 180.0;
+                        DrainageVector3 upperDirection =
+                            NormalizeVector(new DrainageVector3(
+                                Math.Cos(upperAzimuth)
+                                    * branchHorizontalFactor,
+                                Math.Sin(upperAzimuth)
+                                    * branchHorizontalFactor,
+                                -branchVerticalFactor));
+                        if (upperDirection == null)
+                        {
+                            continue;
+                        }
+                        IList<DrainageVector3>
+                            sourceMiddleDirections =
+                                SolveEqualAngleMiddleDirections(
+                                    outlet,
+                                    upperDirection,
+                                    45.0);
+                        IList<DrainageVector3>
+                            terminalMiddleDirections =
+                                SolveEqualAngleMiddleDirections(
+                                    upperDirection,
+                                    terminalDirection,
+                                    45.0);
+                        foreach (DrainageVector3 sourceMiddle
+                            in sourceMiddleDirections)
+                        {
+                            if (sourceMiddle.Z >= -0.000001)
+                            {
+                                continue;
+                            }
+                            foreach (DrainageVector3 terminalMiddle
+                                in terminalMiddleDirections)
+                            {
+                                if (terminalMiddle.Z >= -0.000001)
+                                {
+                                    continue;
+                                }
+                                double determinant = Dot(
+                                    outlet,
+                                    Cross(
+                                        upperDirection,
+                                        terminalDirection));
+                                if (Math.Abs(determinant)
+                                    <= 0.000001)
+                                {
+                                    continue;
+                                }
+                                DrainageGeometryPoint adjustedSource =
+                                    AddScaled(
+                                        AddScaled(
+                                            input.Source,
+                                            sourceMiddle,
+                                            sourceDiagonalLength),
+                                        terminalMiddle,
+                                        terminalDropLength);
+                                DrainageVector3 displacementAtZero =
+                                    new DrainageVector3(
+                                        input.MainStart.X
+                                            - adjustedSource.X,
+                                        input.MainStart.Y
+                                            - adjustedSource.Y,
+                                        input.MainStart.Z
+                                            - adjustedSource.Z);
+                                DrainageVector3 upperCrossTerminal =
+                                    Cross(
+                                        upperDirection,
+                                        terminalDirection);
+                                DrainageVector3 terminalCrossOutlet =
+                                    Cross(terminalDirection, outlet);
+                                DrainageVector3 outletCrossUpper =
+                                    Cross(outlet, upperDirection);
+                                var lengths =
+                                    new DrainageLengthCoefficients
+                                    {
+                                        FirstAtZero = Dot(
+                                            displacementAtZero,
+                                            upperCrossTerminal)
+                                            / determinant,
+                                        FirstDelta = Dot(
+                                            main,
+                                            upperCrossTerminal)
+                                            / determinant,
+                                        MiddleAtZero = Dot(
+                                            displacementAtZero,
+                                            terminalCrossOutlet)
+                                            / determinant,
+                                        MiddleDelta = Dot(
+                                            main,
+                                            terminalCrossOutlet)
+                                            / determinant,
+                                        TerminalAtZero = Dot(
+                                            displacementAtZero,
+                                            outletCrossUpper)
+                                            / determinant,
+                                        TerminalDelta = Dot(
+                                            main,
+                                            outletCrossUpper)
+                                            / determinant
+                                    };
+                                double feasibleMinimum =
+                                    minimumParameter;
+                                double feasibleMaximum =
+                                    maximumParameter;
+                                if (!ConstrainDrainageAffineAtLeast(
+                                        ref feasibleMinimum,
+                                        ref feasibleMaximum,
+                                        lengths.FirstAtZero,
+                                        lengths.FirstDelta,
+                                        minimumOutletLength)
+                                    || !ConstrainDrainageAffineAtMost(
+                                        ref feasibleMinimum,
+                                        ref feasibleMaximum,
+                                        lengths.FirstAtZero,
+                                        lengths.FirstDelta,
+                                        input.MaximumOutletAdvance)
+                                    || !ConstrainDrainageAffineAtLeast(
+                                        ref feasibleMinimum,
+                                        ref feasibleMaximum,
+                                        lengths.MiddleAtZero,
+                                        lengths.MiddleDelta,
+                                        minimumUpperBranchLength)
+                                    || !ConstrainDrainageAffineAtLeast(
+                                        ref feasibleMinimum,
+                                        ref feasibleMaximum,
+                                        lengths.TerminalAtZero,
+                                        lengths.TerminalDelta,
+                                        minimumLowerBranchLength))
+                                {
+                                    rejectedByVerticalFall = true;
+                                    continue;
+                                }
+                                var candidateParameters =
+                                    new List<double>();
+                                AddDrainageCandidateParameter(
+                                    candidateParameters,
+                                    feasibleMinimum,
+                                    feasibleMinimum,
+                                    feasibleMaximum);
+                                AddDrainageCandidateParameter(
+                                    candidateParameters,
+                                    feasibleMaximum,
+                                    feasibleMinimum,
+                                    feasibleMaximum);
+                                AddDrainageCandidateParameter(
+                                    candidateParameters,
+                                    ProjectDrainageParameterToMain(
+                                        input.Source,
+                                        input.MainStart,
+                                        main),
+                                    feasibleMinimum,
+                                    feasibleMaximum);
+                                foreach (double parameter
+                                    in candidateParameters)
+                                {
+                                    double outletLength =
+                                        lengths.FirstAtZero
+                                        + lengths.FirstDelta
+                                            * parameter;
+                                    double upperBranchLength =
+                                        lengths.MiddleAtZero
+                                        + lengths.MiddleDelta
+                                            * parameter;
+                                    double lowerBranchLength =
+                                        lengths.TerminalAtZero
+                                        + lengths.TerminalDelta
+                                            * parameter;
+                                    double outletTangent =
+                                        outletLength
+                                        - input.ElbowTakeout;
+                                    double upperTangent =
+                                        upperBranchLength
+                                        - 2.0
+                                            * input.ElbowTakeout;
+                                    double lowerTangent =
+                                        lowerBranchLength
+                                        - input.ElbowTakeout
+                                        - input.JunctionBranchTakeout;
+                                    double minimumMargin = Math.Min(
+                                        outletTangent,
+                                        Math.Min(
+                                            upperTangent,
+                                            lowerTangent))
+                                        - input.MinimumTangentLength;
+                                    if (minimumMargin < -0.000001
+                                        || upperTangent
+                                            < lowerTangent
+                                                + input.MinimumTangentLength
+                                                - 0.000001)
+                                    {
+                                        continue;
+                                    }
+                                    DrainageGeometryPoint tie = Point(
+                                        input.MainStart.X
+                                            + main.X * parameter,
+                                        input.MainStart.Y
+                                            + main.Y * parameter,
+                                        input.MainStart.Z
+                                            + main.Z * parameter);
+                                    DrainageGeometryPoint stubEnd =
+                                        AddScaled(
+                                            input.Source,
+                                            outlet,
+                                            outletLength);
+                                    DrainageGeometryPoint
+                                        upperBranchStart = AddScaled(
+                                            stubEnd,
+                                            sourceMiddle,
+                                            sourceDiagonalLength);
+                                    DrainageGeometryPoint
+                                        terminalDropStart = AddScaled(
+                                            upperBranchStart,
+                                            upperDirection,
+                                            upperBranchLength);
+                                    DrainageGeometryPoint branchStart =
+                                        AddScaled(
+                                            terminalDropStart,
+                                            terminalMiddle,
+                                            terminalDropLength);
+                                    DrainageGeometryPoint
+                                        calculatedTie = AddScaled(
+                                            branchStart,
+                                            terminalDirection,
+                                            lowerBranchLength);
+                                    double closureError = Math.Sqrt(
+                                        Math.Pow(
+                                            calculatedTie.X - tie.X,
+                                            2)
+                                        + Math.Pow(
+                                            calculatedTie.Y - tie.Y,
+                                            2)
+                                        + Math.Pow(
+                                            calculatedTie.Z - tie.Z,
+                                            2));
+                                    if (closureError > Math.Max(
+                                        0.00001,
+                                        input.SearchStep * 0.001)
+                                        || stubEnd.Z
+                                            > input.Source.Z
+                                                + 0.000001
+                                        || upperBranchStart.Z
+                                            > stubEnd.Z + 0.000001
+                                        || terminalDropStart.Z
+                                            > upperBranchStart.Z
+                                                + 0.000001
+                                        || branchStart.Z
+                                            > terminalDropStart.Z
+                                                + 0.000001
+                                        || tie.Z
+                                            > branchStart.Z
+                                                + 0.000001)
+                                    {
+                                        continue;
+                                    }
+                                    double angleDeviation = Math.Abs(
+                                        planTurnAngle - 45.0);
+                                    double totalLength =
+                                        outletLength
+                                        + sourceDiagonalLength
+                                        + upperBranchLength
+                                        + terminalDropLength
+                                        + lowerBranchLength;
+                                    bool preferCandidate = best == null
+                                        || angleDeviation
+                                            < bestAngleDeviation
+                                                - 0.000001
+                                        || (Math.Abs(
+                                                angleDeviation
+                                                - bestAngleDeviation)
+                                                <= 0.000001
+                                            && (lowerTangent
+                                                    < bestFinalApproachLength
+                                                        - 0.000001
+                                                || (Math.Abs(
+                                                        lowerTangent
+                                                        - bestFinalApproachLength)
+                                                        <= 0.000001
+                                                    && (totalLength
+                                                            < bestTotalLength
+                                                                - 0.000001
+                                                        || (Math.Abs(
+                                                                totalLength
+                                                                - bestTotalLength)
+                                                                <= 0.000001
+                                                            && minimumMargin
+                                                                > bestMinimumMargin
+                                                                    + 0.000001)))));
+                                    if (!preferCandidate)
+                                    {
+                                        continue;
+                                    }
+                                    bestAngleDeviation =
+                                        angleDeviation;
+                                    bestFinalApproachLength =
+                                        lowerTangent;
+                                    bestMinimumMargin =
+                                        minimumMargin;
+                                    bestTotalLength = totalLength;
+                                    best =
+                                        new DrainageTerminalDropSolution
+                                        {
+                                            IsFeasible = true,
+                                            FailureCode = "",
+                                            StubEnd = stubEnd,
+                                            UpperBranchStart =
+                                                upperBranchStart,
+                                            TerminalDropStart =
+                                                terminalDropStart,
+                                            BranchStart = branchStart,
+                                            MainTie = tie,
+                                            OutletAdvance =
+                                                outletLength,
+                                            SourceDiagonalTangentLength =
+                                                sourceDiagonalLength
+                                                - 2.0
+                                                    * input.ElbowTakeout,
+                                            UpperBranchTangentLength =
+                                                upperTangent,
+                                            TerminalDropTangentLength =
+                                                terminalDropLength
+                                                - 2.0
+                                                    * input.ElbowTakeout,
+                                            BranchTangentLength =
+                                                lowerTangent,
+                                            PlanTurnAngleDegrees =
+                                                planTurnAngle,
+                                            SideSign = sideSign
+                                        };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (best == null)
+            {
+                noSolution.FailureCode =
+                    rejectedByVerticalFall
+                        ? "TERMINAL_DROP_INSUFFICIENT_VERTICAL_FALL"
+                        : "TERMINAL_DROP_NO_FEASIBLE_ROUTE";
+            }
+            return best ?? noSolution;
+        }
+
+        public static DrainageSingleFortyFiveSolution
+            SolveSingleFortyFive(
+                DrainageWallRouteInput input)
+        {
+            var noSolution =
+                new DrainageSingleFortyFiveSolution
+                {
+                    IsFeasible = false,
+                    FailureCode =
+                        "SINGLE45_INPUT_INVALID"
+                };
+            if (!IsGeneralRouteInputValid(input))
+            {
+                return noSolution;
+            }
+            if (IsSourceBelowTargetMainAtPlanProjection(
+                input,
+                0.000001))
+            {
+                noSolution.FailureCode =
+                    "SOURCE_BELOW_TARGET_MAIN";
+                return noSolution;
+            }
+            DrainageVector3 outlet = NormalizeVector(
+                new DrainageVector3(
+                    input.OutletX,
+                    input.OutletY,
+                    input.OutletZ));
+            DrainageVector3 main = new DrainageVector3(
+                input.MainEnd.X - input.MainStart.X,
+                input.MainEnd.Y - input.MainStart.Y,
+                input.MainEnd.Z - input.MainStart.Z);
+            double mainHorizontalLength = Math.Sqrt(
+                main.X * main.X + main.Y * main.Y);
+            if (outlet == null
+                || mainHorizontalLength <= 0.000001)
+            {
+                return noSolution;
+            }
+            double downstreamX =
+                input.DownstreamEndpointIndex == 1
+                    ? main.X / mainHorizontalLength
+                    : -main.X / mainHorizontalLength;
+            double downstreamY =
+                input.DownstreamEndpointIndex == 1
+                    ? main.Y / mainHorizontalLength
+                    : -main.Y / mainHorizontalLength;
+            double minimumParameter =
+                input.MainEndClearance
+                    / mainHorizontalLength;
+            double maximumParameter =
+                1.0 - minimumParameter;
+            if (minimumParameter >= maximumParameter)
+            {
+                noSolution.FailureCode =
+                    "MAIN_TIE_INTERVAL_EMPTY";
+                return noSolution;
+            }
+
+            DrainageSingleFortyFiveSolution best = null;
+            double bestLength = double.PositiveInfinity;
+            bool directionMatched = false;
+            bool reversedDirectionCandidate = false;
+            for (int sideSign = -1;
+                sideSign <= 1;
+                sideSign += 2)
+            {
+                DrainageVector3 terminal =
+                    NormalizeVector(new DrainageVector3(
+                        (downstreamX
+                            - sideSign * downstreamY)
+                            / Math.Sqrt(2.0),
+                        (downstreamY
+                            + sideSign * downstreamX)
+                            / Math.Sqrt(2.0),
+                        -input.SlopeRatio));
+                if (terminal == null)
+                {
+                    continue;
+                }
+                double elbowAngle =
+                    DirectedAngleDegrees(
+                        outlet.X,
+                        outlet.Y,
+                        outlet.Z,
+                        terminal.X,
+                        terminal.Y,
+                        terminal.Z);
+                if (double.IsNaN(elbowAngle)
+                    || Math.Abs(elbowAngle - 45.0) > 2.0)
+                {
+                    double axialAngle = AxialAngleDegrees(
+                        outlet.X,
+                        outlet.Y,
+                        outlet.Z,
+                        terminal.X,
+                        terminal.Y,
+                        terminal.Z);
+                    if (!double.IsNaN(axialAngle)
+                        && Math.Abs(axialAngle - 45.0) <= 2.0)
+                    {
+                        reversedDirectionCandidate = true;
+                    }
+                    continue;
+                }
+                directionMatched = true;
+                DrainageVector3 negativeMain =
+                    new DrainageVector3(
+                        -main.X,
+                        -main.Y,
+                        -main.Z);
+                double determinant = Dot(
+                    outlet,
+                    Cross(terminal, negativeMain));
+                if (Math.Abs(determinant) <= 0.000001)
+                {
+                    continue;
+                }
+                DrainageVector3 displacement =
+                    new DrainageVector3(
+                        input.MainStart.X
+                            - input.Source.X,
+                        input.MainStart.Y
+                            - input.Source.Y,
+                        input.MainStart.Z
+                            - input.Source.Z);
+                double firstLength = Dot(
+                    displacement,
+                    Cross(terminal, negativeMain))
+                    / determinant;
+                double terminalLength = Dot(
+                    outlet,
+                    Cross(displacement, negativeMain))
+                    / determinant;
+                double parameter = Dot(
+                    outlet,
+                    Cross(terminal, displacement))
+                    / determinant;
+                double minimumFirstLength = Math.Max(
+                    input.StubLength,
+                    input.ElbowTakeout
+                        + input.MinimumTangentLength);
+                double minimumTerminalLength =
+                    input.ElbowTakeout
+                    + input.JunctionBranchTakeout
+                    + input.MinimumTangentLength;
+                if (firstLength
+                        < minimumFirstLength - 0.000001
+                    || firstLength
+                        > input.MaximumOutletAdvance
+                            + 0.000001
+                    || terminalLength
+                        < minimumTerminalLength
+                            - 0.000001
+                    || parameter
+                        < minimumParameter - 0.000001
+                    || parameter
+                        > maximumParameter + 0.000001)
+                {
+                    noSolution.FailureCode =
+                        "SINGLE45_TANGENT_TOO_SHORT";
+                    continue;
+                }
+                DrainageGeometryPoint stubEnd = AddScaled(
+                    input.Source,
+                    outlet,
+                    firstLength);
+                DrainageGeometryPoint tie = Point(
+                    input.MainStart.X
+                        + main.X * parameter,
+                    input.MainStart.Y
+                        + main.Y * parameter,
+                    input.MainStart.Z
+                        + main.Z * parameter);
+                if (stubEnd.Z
+                        > input.Source.Z + 0.000001
+                    || tie.Z
+                        > stubEnd.Z + 0.000001)
+                {
+                    noSolution.FailureCode = "LOCAL_RISE";
+                    continue;
+                }
+                double totalLength =
+                    firstLength + terminalLength;
+                if (best == null
+                    || totalLength < bestLength)
+                {
+                    bestLength = totalLength;
+                    best =
+                        new DrainageSingleFortyFiveSolution
+                        {
+                            IsFeasible = true,
+                            FailureCode = "",
+                            StubEnd = stubEnd,
+                            MainTie = tie,
+                            StubTangentLength =
+                                firstLength
+                                - input.ElbowTakeout,
+                            BranchTangentLength =
+                                terminalLength
+                                - input.ElbowTakeout
+                                - input
+                                    .JunctionBranchTakeout,
+                            ElbowAngleDegrees =
+                                elbowAngle,
+                            SideSign = sideSign
+                        };
+                }
+            }
+            if (best != null)
+            {
+                return best;
+            }
+            if (!directionMatched)
+            {
+                noSolution.FailureCode =
+                    reversedDirectionCandidate
+                        ? "SINGLE45_REVERSES_FLOW"
+                        : "SINGLE45_DIRECTION_NO_SOLUTION";
+            }
+            return noSolution;
+        }
+
+        public static DrainageAxisDirectSolution
+            SolveAxisDirect(
+                DrainageWallRouteInput input)
+        {
+            var noSolution =
+                new DrainageAxisDirectSolution
+                {
+                    IsFeasible = false,
+                    FailureCode =
+                        "AXIS_DIRECT_INPUT_INVALID"
+                };
+            if (!IsGeneralRouteInputValid(input))
+            {
+                return noSolution;
+            }
+            if (IsSourceBelowTargetMainAtPlanProjection(
+                input,
+                0.000001))
+            {
+                noSolution.FailureCode =
+                    "SOURCE_BELOW_TARGET_MAIN";
+                return noSolution;
+            }
+            DrainageVector3 outlet = NormalizeVector(
+                new DrainageVector3(
+                    input.OutletX,
+                    input.OutletY,
+                    input.OutletZ));
+            DrainageVector3 main = new DrainageVector3(
+                input.MainEnd.X - input.MainStart.X,
+                input.MainEnd.Y - input.MainStart.Y,
+                input.MainEnd.Z - input.MainStart.Z);
+            double outletHorizontalLength = Math.Sqrt(
+                outlet == null
+                    ? 0
+                    : outlet.X * outlet.X
+                        + outlet.Y * outlet.Y);
+            double mainHorizontalLength = Math.Sqrt(
+                main.X * main.X + main.Y * main.Y);
+            if (outlet == null
+                || outletHorizontalLength <= 0.000001
+                || mainHorizontalLength <= 0.000001)
+            {
+                return noSolution;
+            }
+            double actualSlope =
+                -outlet.Z / outletHorizontalLength;
+            if (actualSlope <= 0
+                || Math.Abs(
+                    actualSlope - input.SlopeRatio) > 0.002)
+            {
+                noSolution.FailureCode =
+                    "AXIS_DIRECT_SLOPE_MISMATCH";
+                return noSolution;
+            }
+            double downstreamX =
+                input.DownstreamEndpointIndex == 1
+                    ? main.X / mainHorizontalLength
+                    : -main.X / mainHorizontalLength;
+            double downstreamY =
+                input.DownstreamEndpointIndex == 1
+                    ? main.Y / mainHorizontalLength
+                    : -main.Y / mainHorizontalLength;
+            double junctionAngle = AngleBetween2D(
+                outlet.X,
+                outlet.Y,
+                downstreamX,
+                downstreamY);
+            if (Math.Abs(junctionAngle - 45.0) > 2.0
+                || outlet.X * downstreamX
+                    + outlet.Y * downstreamY <= 0)
+            {
+                noSolution.FailureCode =
+                    "AXIS_DIRECT_JUNCTION_DIRECTION_INVALID";
+                return noSolution;
+            }
+            double determinant = Cross2D(
+                outlet.X,
+                outlet.Y,
+                -main.X,
+                -main.Y);
+            if (Math.Abs(determinant) <= 0.000001)
+            {
+                noSolution.FailureCode =
+                    "AXIS_DIRECT_PARALLEL";
+                return noSolution;
+            }
+            double displacementX =
+                input.MainStart.X - input.Source.X;
+            double displacementY =
+                input.MainStart.Y - input.Source.Y;
+            double routeLength = Cross2D(
+                displacementX,
+                displacementY,
+                -main.X,
+                -main.Y) / determinant;
+            double parameter = Cross2D(
+                outlet.X,
+                outlet.Y,
+                displacementX,
+                displacementY) / determinant;
+            double minimumParameter =
+                input.MainEndClearance
+                    / mainHorizontalLength;
+            double maximumParameter =
+                1.0 - minimumParameter;
+            if (routeLength
+                    < input.JunctionBranchTakeout
+                        + input.MinimumTangentLength
+                        - 0.000001
+                || routeLength
+                    > input.MaximumOutletAdvance
+                        + 0.000001
+                || parameter
+                    < minimumParameter - 0.000001
+                || parameter
+                    > maximumParameter + 0.000001)
+            {
+                noSolution.FailureCode =
+                    "AXIS_DIRECT_TANGENT_TOO_SHORT";
+                return noSolution;
+            }
+            DrainageGeometryPoint tie = Point(
+                input.MainStart.X + main.X * parameter,
+                input.MainStart.Y + main.Y * parameter,
+                input.MainStart.Z + main.Z * parameter);
+            DrainageGeometryPoint routeEnd = AddScaled(
+                input.Source,
+                outlet,
+                routeLength);
+            if (Math.Abs(routeEnd.Z - tie.Z) > 0.001
+                || tie.Z > input.Source.Z + 0.000001)
+            {
+                noSolution.FailureCode =
+                    "AXIS_DIRECT_ELEVATION_MISMATCH";
+                return noSolution;
+            }
+            return new DrainageAxisDirectSolution
+            {
+                IsFeasible = true,
+                FailureCode = "",
+                MainTie = tie,
+                BranchTangentLength =
+                    routeLength
+                    - input.JunctionBranchTakeout,
+                JunctionAngleDegrees = junctionAngle
+            };
+        }
+
+        private static bool IsGeneralRouteInputValid(
+            DrainageWallRouteInput input)
+        {
+            return input != null
+                && input.Source != null
+                && input.MainStart != null
+                && input.MainEnd != null
+                && input.SlopeRatio > 0
+                && input.ElbowTakeout > 0
+                && input.JunctionBranchTakeout > 0
+                && input.MinimumTangentLength > 0
+                && input.MaximumOutletAdvance
+                    > input.StubLength
+                && (input.DownstreamEndpointIndex == 0
+                    || input.DownstreamEndpointIndex == 1);
         }
 
         private sealed class DrainageLengthCoefficients
@@ -1315,6 +2960,96 @@ namespace RfaMetadataAddin.Drainage
             double by)
         {
             return ax * by - ay * bx;
+        }
+
+        public static bool AreJunctionDiametersCompatible(
+            double mainADiameterMm,
+            double mainBDiameterMm,
+            double branchDiameterMm,
+            double expectedMainDiameterMm,
+            double expectedBranchDiameterMm,
+            double toleranceMm)
+        {
+            return expectedMainDiameterMm > 0
+                && expectedBranchDiameterMm > 0
+                && toleranceMm >= 0
+                && Math.Abs(
+                    mainADiameterMm
+                    - expectedMainDiameterMm) <= toleranceMm
+                && Math.Abs(
+                    mainBDiameterMm
+                    - expectedMainDiameterMm) <= toleranceMm
+                && Math.Abs(
+                    branchDiameterMm
+                    - expectedBranchDiameterMm) <= toleranceMm;
+        }
+
+        public static bool TryProjectPlanElevation(
+            DrainageGeometryPoint referenceStart,
+            DrainageGeometryPoint referenceEnd,
+            DrainageGeometryPoint point,
+            out double elevation,
+            out double parameter)
+        {
+            elevation = 0;
+            parameter = 0;
+            if (referenceStart == null
+                || referenceEnd == null
+                || point == null)
+            {
+                return false;
+            }
+            double dx = referenceEnd.X - referenceStart.X;
+            double dy = referenceEnd.Y - referenceStart.Y;
+            double denominator = dx * dx + dy * dy;
+            if (denominator <= 0.000001)
+            {
+                return false;
+            }
+            parameter = ((point.X - referenceStart.X) * dx
+                + (point.Y - referenceStart.Y) * dy)
+                / denominator;
+            parameter = Math.Max(0, Math.Min(1, parameter));
+            elevation = referenceStart.Z
+                + (referenceEnd.Z - referenceStart.Z) * parameter;
+            return true;
+        }
+
+        public static bool IsDownwardVerticalDisplacement(
+            double deltaX,
+            double deltaY,
+            double deltaZ,
+            double planTolerance,
+            double minimumDrop)
+        {
+            double horizontal = Math.Sqrt(
+                deltaX * deltaX + deltaY * deltaY);
+            return planTolerance >= 0
+                && minimumDrop >= 0
+                && horizontal <= planTolerance
+                && deltaZ <= -minimumDrop;
+        }
+
+        public static bool IsDownwardFortyFiveDisplacement(
+            double deltaX,
+            double deltaY,
+            double deltaZ,
+            double angleToleranceDegrees,
+            double minimumDrop)
+        {
+            double horizontal = Math.Sqrt(
+                deltaX * deltaX + deltaY * deltaY);
+            if (horizontal <= 0.000001
+                || deltaZ >= -minimumDrop
+                || angleToleranceDegrees < 0)
+            {
+                return false;
+            }
+            double angle = Math.Atan2(
+                Math.Abs(deltaZ),
+                horizontal) * 180.0 / Math.PI;
+            return Math.Abs(angle - 45.0)
+                <= angleToleranceDegrees;
         }
 
         private static DrainageGeometryPoint Point(

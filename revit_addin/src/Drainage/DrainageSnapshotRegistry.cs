@@ -289,6 +289,9 @@ namespace RfaMetadataAddin
                 material.Append(plan.MiddleLateralOffset.ToString(
                     "R",
                     CultureInfo.InvariantCulture)).Append(':');
+                material.Append(plan.SourceElevationAdjustment.ToString(
+                    "R",
+                    CultureInfo.InvariantCulture)).Append(':');
                 material.Append(plan.DownstreamEndpointIndex).Append(':');
                 material.Append(string.Join(
                     ",",

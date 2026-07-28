@@ -39,6 +39,10 @@ namespace RfaMetadataAddin
             public XYZ ConnectorStubEnd { get; set; }
             public bool HasConnectorStub { get; set; }
             public bool HasDoubleFortyFive { get; set; }
+            public bool HasTerminalDrop { get; set; }
+            public bool HasVerticalPlanTurn { get; set; }
+            public XYZ UpperBranchStart { get; set; }
+            public XYZ TerminalDropStart { get; set; }
             public XYZ BranchStart { get; set; }
             public XYZ MainTie { get; set; }
             public double HorizontalLength { get; set; }
@@ -55,9 +59,23 @@ namespace RfaMetadataAddin
             public double? StubTangentLength { get; set; }
             public double? MiddleTangentLength { get; set; }
             public double? BranchTangentLength { get; set; }
+            public double? TerminalPlanTurnAngleDegrees { get; set; }
             public double FirstElbowAngleDegrees { get; set; }
             public double SecondElbowAngleDegrees { get; set; }
             public double MiddleLateralOffset { get; set; }
+            public double SourceElevationAdjustment { get; set; }
+            public double SourceOppositeEndpointAdjustment { get; set; }
+            public bool HasSourceElevationAdjustment
+            {
+                get
+                {
+                    return Math.Abs(SourceElevationAdjustment)
+                            > 0.000001
+                        || Math.Abs(
+                            SourceOppositeEndpointAdjustment)
+                        > 0.000001;
+                }
+            }
             public int SequenceIndex { get; set; }
             public List<long> CollisionElementIds { get; set; }
             public List<string> Issues { get; set; }
@@ -551,6 +569,18 @@ namespace RfaMetadataAddin
                         "MAIN_PIPE_NOT_FOUND: "
                         + "\u627e\u4e0d\u5230\u9078\u53d6\u7684\u6c61\u6c34\u4e3b\u7ba1\u3002");
                 }
+                Parameter mainDiameterParameter = mainPipe.get_Parameter(
+                    BuiltInParameter.RBS_PIPE_DIAMETER_PARAM);
+                double mainDiameterMm = mainDiameterParameter == null
+                    ? 0
+                    : UnitUtils.ConvertFromInternalUnits(
+                        mainDiameterParameter.AsDouble(),
+                        UnitTypeId.Millimeters);
+                if (mainDiameterMm <= 0)
+                {
+                    throw new InvalidOperationException(
+                        "MAIN_DIAMETER_UNRESOLVED");
+                }
                 ValidateDrainageInputs(slopeRatio, diameterMm);
                 ValidateDrainageRoutePolicy(routePolicy);
                 List<Element> fixtures = commitSnapshot == null
@@ -562,8 +592,8 @@ namespace RfaMetadataAddin
                 if (fixtures.Count == 0)
                 {
                     throw new InvalidOperationException(
-                        "FIXTURE_SELECTION_REQUIRED: "
-                        + "\u8acb\u5728 Revit \u9078\u53d6\u81f3\u5c11\u4e00\u500b\u885b\u751f\u5668\u5177\u3002");
+                        "SOURCE_SELECTION_REQUIRED: "
+                        + "\u8acb\u9078\u53d6\u81f3\u5c11\u4e00\u500b\u5177\u6709\u958b\u653e piping end connector \u7684\u7ba1\u6216\u8a2d\u5099\u3002");
                 }
                 if (fixtures.Count > 20)
                 {
@@ -614,6 +644,7 @@ namespace RfaMetadataAddin
                         doc,
                         planPipeType,
                         RoutingPreferenceRuleGroupType.Junctions,
+                        mainDiameterMm,
                         diameterMm,
                         ReadLong(payload, "junction_type_id", 0),
                         ReadDrainageString(
@@ -625,6 +656,7 @@ namespace RfaMetadataAddin
                         doc,
                         planPipeType,
                         RoutingPreferenceRuleGroupType.Elbows,
+                        diameterMm,
                         diameterMm,
                         ReadLong(payload, "elbow_type_id", 0),
                         ReadDrainageString(
@@ -699,6 +731,7 @@ namespace RfaMetadataAddin
                         slope_ratio = slopeRatio,
                         slope_percent = slopeRatio * 100.0,
                         diameter_mm = diameterMm,
+                        main_diameter_mm = mainDiameterMm,
                         main_pipe_id = mainPipe.Id.Value,
                         pipe_type_id = planPipeType.Id.Value,
                         system_type_id = systemType.Id.Value,
@@ -745,6 +778,9 @@ namespace RfaMetadataAddin
                 }
 
                 double diameterFeet = UnitUtils.ConvertToInternalUnits(diameterMm, UnitTypeId.Millimeters);
+                double mainDiameterFeet = UnitUtils.ConvertToInternalUnits(
+                    mainDiameterMm,
+                    UnitTypeId.Millimeters);
                 string batchId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
                 var mainSegments = new List<Pipe> { mainPipe };
                 var created = new List<object>();
@@ -756,8 +792,10 @@ namespace RfaMetadataAddin
                 string operationActorKind = ReadDrainageString(
                     payload,
                     "actor_kind");
-                if (operationActorKind != "agent"
-                    && operationActorKind != "human_gui")
+                if (operationActorKind
+                        != DrainageActorKinds.Agent
+                    && operationActorKind
+                        != DrainageActorKinds.HumanGui)
                 {
                     throw new InvalidOperationException(
                         "OPERATION_ACTOR_INVALID");
@@ -801,6 +839,10 @@ namespace RfaMetadataAddin
                         {
                             try
                             {
+                                Connector sourceConnector =
+                                    ApplyDrainageSourceElevationAdjustment(
+                                        doc,
+                                        plan);
                                 Pipe branch = CreateFirePipe(
                                     doc,
                                     systemType.Id,
@@ -841,14 +883,362 @@ namespace RfaMetadataAddin
 
                                 Pipe connectorStub = null;
                                 Pipe drop = null;
-                                if (plan.HasConnectorStub)
+                                if (plan.HasVerticalPlanTurn)
+                                {
+                                    connectorStub =
+                                        CreateFirePipeFromConnector(
+                                            doc,
+                                            systemType.Id,
+                                            pipeType.Id,
+                                            levelId,
+                                            sourceConnector,
+                                            plan.ConnectorStubEnd,
+                                            diameterFeet);
+                                    Pipe sourceDiagonal = CreateFirePipe(
+                                        doc,
+                                        systemType.Id,
+                                        pipeType.Id,
+                                        levelId,
+                                        plan.ConnectorStubEnd,
+                                        plan.UpperBranchStart,
+                                        diameterFeet);
+                                    Pipe radialBranch = CreateFirePipe(
+                                        doc,
+                                        systemType.Id,
+                                        pipeType.Id,
+                                        levelId,
+                                        plan.UpperBranchStart,
+                                        plan.BranchStart,
+                                        diameterFeet);
+                                    if (connectorStub == null
+                                        || sourceDiagonal == null
+                                        || radialBranch == null)
+                                    {
+                                        throw new InvalidOperationException(
+                                            "VERTICAL_PLAN_TURN_PIPE_CREATE_FAILED");
+                                    }
+                                    var verticalPlanTurnPipes = new[]
+                                    {
+                                        new
+                                        {
+                                            Pipe = connectorStub,
+                                            Kind = "stub",
+                                            Source = plan.ConnectorPoint,
+                                            Sink = plan.ConnectorStubEnd,
+                                            SignedSlope = false
+                                        },
+                                        new
+                                        {
+                                            Pipe = sourceDiagonal,
+                                            Kind = "source_double45_diagonal",
+                                            Source = plan.ConnectorStubEnd,
+                                            Sink = plan.UpperBranchStart,
+                                            SignedSlope = false
+                                        },
+                                        new
+                                        {
+                                            Pipe = radialBranch,
+                                            Kind = "radial_branch",
+                                            Source = plan.UpperBranchStart,
+                                            Sink = plan.BranchStart,
+                                            SignedSlope = true
+                                        }
+                                    };
+                                    foreach (var item
+                                        in verticalPlanTurnPipes)
+                                    {
+                                        SetDrainageMetadata(
+                                            item.Pipe,
+                                            item.Kind,
+                                            batchId,
+                                            slopeRatio,
+                                            operation.OperationId);
+                                        createdIds.Add(item.Pipe.Id);
+                                        createdPipeChecks.Add(
+                                            new DrainageCreatedPipeCheck
+                                            {
+                                                Pipe = item.Pipe,
+                                                Source = item.Source,
+                                                Sink = item.Sink,
+                                                RequiresSignedSlope =
+                                                    item.SignedSlope,
+                                                RequiresDescending = true,
+                                                MinimumCenterlineLength =
+                                                    Math.Max(
+                                                        diameterFeet,
+                                                        UnitUtils
+                                                            .ConvertToInternalUnits(
+                                                                routePolicy
+                                                                    .MinimumTangentMm,
+                                                                UnitTypeId
+                                                                    .Millimeters))
+                                            });
+                                        created.Add(new
+                                        {
+                                            element_id =
+                                                item.Pipe.Id.Value,
+                                            kind = item.Kind,
+                                            fixture_id =
+                                                plan.SourceElement.Id.Value,
+                                            source = SerializePoint(
+                                                item.Source),
+                                            sink = SerializePoint(
+                                                item.Sink)
+                                        });
+                                    }
+                                    var verticalPlanTurnConnections =
+                                        new[]
+                                        {
+                                            new
+                                            {
+                                                First = connectorStub,
+                                                Second = sourceDiagonal,
+                                                Point =
+                                                    plan.ConnectorStubEnd,
+                                                Role =
+                                                    "source_double45_elbow_1"
+                                            },
+                                            new
+                                            {
+                                                First = sourceDiagonal,
+                                                Second = radialBranch,
+                                                Point =
+                                                    plan.UpperBranchStart,
+                                                Role =
+                                                    "source_double45_elbow_2"
+                                            },
+                                            new
+                                            {
+                                                First = radialBranch,
+                                                Second = branch,
+                                                Point = plan.BranchStart,
+                                                Role = "plan_45_elbow"
+                                            }
+                                        };
+                                    foreach (var connection
+                                        in verticalPlanTurnConnections)
+                                    {
+                                        FamilyInstance elbow =
+                                            CreateAndValidateDrainageElbow(
+                                                doc,
+                                                connection.First,
+                                                connection.Second,
+                                                connection.Point,
+                                                elbowPart);
+                                        createdFittingIds.Add(elbow.Id);
+                                        SetDrainageElementMetadata(
+                                            elbow,
+                                            "elbow",
+                                            batchId,
+                                            slopeRatio,
+                                            operation.OperationId);
+                                        createdFittings.Add(new
+                                        {
+                                            element_id = elbow.Id.Value,
+                                            kind = "elbow",
+                                            role = connection.Role,
+                                            type_id =
+                                                elbow.GetTypeId().Value,
+                                            first_pipe_id =
+                                                connection.First.Id.Value,
+                                            second_pipe_id =
+                                                connection.Second.Id.Value,
+                                            fixture_id =
+                                                plan.SourceElement.Id.Value
+                                        });
+                                    }
+                                }
+                                else if (plan.HasTerminalDrop)
+                                {
+                                    connectorStub =
+                                        CreateFirePipeFromConnector(
+                                            doc,
+                                            systemType.Id,
+                                            pipeType.Id,
+                                            levelId,
+                                            sourceConnector,
+                                            plan.ConnectorStubEnd,
+                                            diameterFeet);
+                                    Pipe sourceDiagonal = CreateFirePipe(
+                                        doc,
+                                        systemType.Id,
+                                        pipeType.Id,
+                                        levelId,
+                                        plan.ConnectorStubEnd,
+                                        plan.UpperBranchStart,
+                                        diameterFeet);
+                                    Pipe upperBranch = CreateFirePipe(
+                                        doc,
+                                        systemType.Id,
+                                        pipeType.Id,
+                                        levelId,
+                                        plan.UpperBranchStart,
+                                        plan.TerminalDropStart,
+                                        diameterFeet);
+                                    Pipe terminalDrop = CreateFirePipe(
+                                        doc,
+                                        systemType.Id,
+                                        pipeType.Id,
+                                        levelId,
+                                        plan.TerminalDropStart,
+                                        plan.BranchStart,
+                                        diameterFeet);
+                                    if (connectorStub == null
+                                        || sourceDiagonal == null
+                                        || upperBranch == null
+                                        || terminalDrop == null)
+                                    {
+                                        throw new InvalidOperationException(
+                                            "TERMINAL_DOUBLE45_PIPE_CREATE_FAILED");
+                                    }
+                                    var terminalPipes = new[]
+                                    {
+                                        new
+                                        {
+                                            Pipe = connectorStub,
+                                            Kind = "stub",
+                                            Source = plan.ConnectorPoint,
+                                            Sink = plan.ConnectorStubEnd,
+                                            SignedSlope = false
+                                        },
+                                        new
+                                        {
+                                            Pipe = sourceDiagonal,
+                                            Kind = "source_double45_diagonal",
+                                            Source = plan.ConnectorStubEnd,
+                                            Sink = plan.UpperBranchStart,
+                                            SignedSlope = false
+                                        },
+                                        new
+                                        {
+                                            Pipe = upperBranch,
+                                            Kind = "upper_branch",
+                                            Source = plan.UpperBranchStart,
+                                            Sink = plan.TerminalDropStart,
+                                            SignedSlope = true
+                                        },
+                                        new
+                                        {
+                                            Pipe = terminalDrop,
+                                            Kind = "terminal_double45_diagonal",
+                                            Source = plan.TerminalDropStart,
+                                            Sink = plan.BranchStart,
+                                            SignedSlope = false
+                                        }
+                                    };
+                                    foreach (var item in terminalPipes)
+                                    {
+                                        SetDrainageMetadata(
+                                            item.Pipe,
+                                            item.Kind,
+                                            batchId,
+                                            slopeRatio,
+                                            operation.OperationId);
+                                        createdIds.Add(item.Pipe.Id);
+                                        createdPipeChecks.Add(
+                                            new DrainageCreatedPipeCheck
+                                            {
+                                                Pipe = item.Pipe,
+                                                Source = item.Source,
+                                                Sink = item.Sink,
+                                                RequiresSignedSlope =
+                                                    item.SignedSlope,
+                                                RequiresDescending = true,
+                                                MinimumCenterlineLength =
+                                                    Math.Max(
+                                                        diameterFeet,
+                                                        UnitUtils
+                                                            .ConvertToInternalUnits(
+                                                                routePolicy
+                                                                    .MinimumTangentMm,
+                                                                UnitTypeId
+                                                                    .Millimeters))
+                                            });
+                                        created.Add(new
+                                        {
+                                            element_id =
+                                                item.Pipe.Id.Value,
+                                            kind = item.Kind,
+                                            fixture_id =
+                                                plan.SourceElement.Id.Value,
+                                            source = SerializePoint(
+                                                item.Source),
+                                            sink = SerializePoint(
+                                                item.Sink)
+                                        });
+                                    }
+                                    var terminalConnections = new[]
+                                    {
+                                        new
+                                        {
+                                            First = connectorStub,
+                                            Second = sourceDiagonal,
+                                            Point = plan.ConnectorStubEnd,
+                                            Role = "source_double45_elbow_1"
+                                        },
+                                        new
+                                        {
+                                            First = sourceDiagonal,
+                                            Second = upperBranch,
+                                            Point = plan.UpperBranchStart,
+                                            Role = "source_double45_elbow_2"
+                                        },
+                                        new
+                                        {
+                                            First = upperBranch,
+                                            Second = terminalDrop,
+                                            Point = plan.TerminalDropStart,
+                                            Role = "terminal_double45_elbow_1"
+                                        },
+                                        new
+                                        {
+                                            First = terminalDrop,
+                                            Second = branch,
+                                            Point = plan.BranchStart,
+                                            Role = "terminal_double45_elbow_2"
+                                        }
+                                    };
+                                    foreach (var connection
+                                        in terminalConnections)
+                                    {
+                                        FamilyInstance elbow =
+                                            CreateAndValidateDrainageElbow(
+                                                doc,
+                                                connection.First,
+                                                connection.Second,
+                                                connection.Point,
+                                                elbowPart);
+                                        createdFittingIds.Add(elbow.Id);
+                                        SetDrainageElementMetadata(
+                                            elbow,
+                                            "elbow",
+                                            batchId,
+                                            slopeRatio,
+                                            operation.OperationId);
+                                        createdFittings.Add(new
+                                        {
+                                            element_id = elbow.Id.Value,
+                                            kind = "elbow",
+                                            role = connection.Role,
+                                            type_id =
+                                                elbow.GetTypeId().Value,
+                                            first_pipe_id =
+                                                connection.First.Id.Value,
+                                            second_pipe_id =
+                                                connection.Second.Id.Value,
+                                            fixture_id =
+                                                plan.SourceElement.Id.Value
+                                        });
+                                    }
+                                }
+                                else if (plan.HasConnectorStub)
                                 {
                                 connectorStub = CreateFirePipeFromConnector(
                                     doc,
                                     systemType.Id,
                                     pipeType.Id,
                                     levelId,
-                                    plan.FixtureConnector,
+                                    sourceConnector,
                                     plan.ConnectorStubEnd,
                                     diameterFeet);
                                 if (connectorStub == null)
@@ -991,7 +1381,7 @@ namespace RfaMetadataAddin
                                     systemType.Id,
                                     pipeType.Id,
                                     levelId,
-                                    plan.FixtureConnector,
+                                    sourceConnector,
                                     plan.BranchStart,
                                     diameterFeet);
                                 if (drop == null)
@@ -1061,6 +1451,7 @@ namespace RfaMetadataAddin
                                 plan.MainTie,
                                 plan.DownstreamPoint,
                                 junctionPart,
+                                mainDiameterFeet,
                                 diameterFeet);
                             if (junction == null)
                             {
@@ -1083,6 +1474,18 @@ namespace RfaMetadataAddin
                             {
                                 throw new InvalidOperationException(
                                     "JUNCTION_CONNECTIVITY_INVALID: fitting must connect the branch and two main segments");
+                            }
+                            if (!IsDrainageJunctionDiameterValid(
+                                junction,
+                                mainDiameterMm,
+                                diameterMm))
+                            {
+                                throw new InvalidOperationException(
+                                    "JUNCTION_DIAMETER_INVALID: expected "
+                                    + mainDiameterMm.ToString("0.#")
+                                    + "x"
+                                    + diameterMm.ToString("0.#")
+                                    + " mm");
                             }
                             double actualJunctionAngle;
                             double actualRadialAngle;
@@ -1647,7 +2050,7 @@ namespace RfaMetadataAddin
             return new DrainageRoutePolicy
             {
                 PolicyId = "sc-drainage-route-policy",
-                PolicyVersion = "1.1.0",
+                PolicyVersion = "1.2.0",
                 SideEntryAngleDegrees = 45,
                 SideEntryToleranceDegrees = 5,
                 RadialMinimumDegrees = 0,
@@ -1738,10 +2141,14 @@ namespace RfaMetadataAddin
                     policy.PolicyId,
                     "sc-drainage-route-policy",
                     StringComparison.Ordinal)
-                || !string.Equals(
-                    policy.PolicyVersion,
-                    "1.1.0",
-                    StringComparison.Ordinal))
+                || (!string.Equals(
+                        policy.PolicyVersion,
+                        "1.1.0",
+                        StringComparison.Ordinal)
+                    && !string.Equals(
+                        policy.PolicyVersion,
+                        "1.2.0",
+                        StringComparison.Ordinal)))
             {
                 throw new InvalidOperationException(
                     "ROUTE_POLICY_VERSION_UNSUPPORTED");
@@ -1978,6 +2385,19 @@ namespace RfaMetadataAddin
             {
                 points.Add(plan.ConnectorStubEnd);
             }
+            if ((plan.HasTerminalDrop
+                    || plan.HasVerticalPlanTurn)
+                && points.Last().DistanceTo(
+                    plan.UpperBranchStart) > 0.000001)
+            {
+                points.Add(plan.UpperBranchStart);
+            }
+            if (plan.HasTerminalDrop
+                && points.Last().DistanceTo(
+                    plan.TerminalDropStart) > 0.000001)
+            {
+                points.Add(plan.TerminalDropStart);
+            }
             if (points.Last().DistanceTo(
                 plan.BranchStart) > 0.000001)
             {
@@ -2017,6 +2437,12 @@ namespace RfaMetadataAddin
                 List<XYZ> routePoints = GetDrainagePlanPolyline(plan);
                 foreach (Pipe obstacle in obstacles)
                 {
+                    if (plan.SourceElement is Pipe
+                        && obstacle.Id.Value
+                            == plan.SourceElement.Id.Value)
+                    {
+                        continue;
+                    }
                     LocationCurve location =
                         obstacle.Location as LocationCurve;
                     if (location == null)
@@ -2166,7 +2592,8 @@ namespace RfaMetadataAddin
             Document doc,
             PipeType pipeType,
             RoutingPreferenceRuleGroupType groupType,
-            double diameterMm,
+            double mainDiameterMm,
+            double branchDiameterMm,
             long requestedPartId,
             string requestedPartUniqueId)
         {
@@ -2177,7 +2604,9 @@ namespace RfaMetadataAddin
             {
                 return null;
             }
-            double diameterFeet = UnitUtils.ConvertToInternalUnits(diameterMm, UnitTypeId.Millimeters);
+            double diameterFeet = UnitUtils.ConvertToInternalUnits(
+                mainDiameterMm,
+                UnitTypeId.Millimeters);
             RoutingPreferenceManager manager = pipeType.RoutingPreferenceManager;
             int count = manager.GetNumberOfRules(groupType);
             for (int index = 0; index < count; index++)
@@ -2238,7 +2667,8 @@ namespace RfaMetadataAddin
                     doc,
                     resolved.PartId,
                     groupType,
-                    diameterMm,
+                    mainDiameterMm,
+                    branchDiameterMm,
                     out measuredTakeoutMm,
                     out measuredRunTakeoutMm,
                     out evidenceElementId,
@@ -2282,7 +2712,8 @@ namespace RfaMetadataAddin
             Document doc,
             ElementId partTypeId,
             RoutingPreferenceRuleGroupType groupType,
-            double diameterMm,
+            double mainDiameterMm,
+            double branchDiameterMm,
             out double measuredTakeoutMm,
             out double measuredRunTakeoutMm,
             out long evidenceElementId,
@@ -2312,12 +2743,42 @@ namespace RfaMetadataAddin
                     .Connectors
                     .Cast<Connector>()
                     .Where(connector =>
-                        connector.ConnectorType == ConnectorType.End
-                        && SafeConnectorDiameterMm(connector).HasValue
-                        && Math.Abs(
-                            SafeConnectorDiameterMm(connector).Value
-                            - diameterMm) <= diameterToleranceMm)
+                        connector.ConnectorType == ConnectorType.End)
                     .ToList();
+                if (groupType == RoutingPreferenceRuleGroupType.Elbows)
+                {
+                    connectors = connectors
+                        .Where(connector =>
+                            SafeConnectorDiameterMm(connector).HasValue
+                            && Math.Abs(
+                                SafeConnectorDiameterMm(connector).Value
+                                - branchDiameterMm)
+                                <= diameterToleranceMm)
+                        .ToList();
+                }
+                else
+                {
+                    Connector branchPort;
+                    List<Connector> runPorts;
+                    if (!TryResolveDrainageJunctionPorts(
+                            connectors,
+                            out branchPort,
+                            out runPorts)
+                        || !DrainageEngineeringCore
+                            .AreJunctionDiametersCompatible(
+                                SafeConnectorDiameterMm(runPorts[0])
+                                    .GetValueOrDefault(),
+                                SafeConnectorDiameterMm(runPorts[1])
+                                    .GetValueOrDefault(),
+                                SafeConnectorDiameterMm(branchPort)
+                                    .GetValueOrDefault(),
+                                mainDiameterMm,
+                                branchDiameterMm,
+                                diameterToleranceMm))
+                    {
+                        continue;
+                    }
+                }
                 double takeoutFeet = double.NaN;
                 double runTakeoutFeet = double.NaN;
                 bool measured = groupType == RoutingPreferenceRuleGroupType.Elbows
@@ -2357,7 +2818,8 @@ namespace RfaMetadataAddin
                 doc,
                 partTypeId,
                 groupType,
-                diameterMm,
+                mainDiameterMm,
+                branchDiameterMm,
                 out measuredTakeoutMm,
                 out measuredRunTakeoutMm,
                 out evidenceKind,
@@ -2368,7 +2830,8 @@ namespace RfaMetadataAddin
             Document doc,
             ElementId partTypeId,
             RoutingPreferenceRuleGroupType groupType,
-            double diameterMm,
+            double mainDiameterMm,
+            double branchDiameterMm,
             out double measuredTakeoutMm,
             out double measuredRunTakeoutMm,
             out string evidenceKind,
@@ -2387,10 +2850,44 @@ namespace RfaMetadataAddin
                     != (long)BuiltInCategory.OST_PipeFitting
                 || (groupType != RoutingPreferenceRuleGroupType.Elbows
                     && groupType
-                        != RoutingPreferenceRuleGroupType.Junctions)
-                || doc.IsModifiable)
+                        != RoutingPreferenceRuleGroupType.Junctions))
             {
                 return false;
+            }
+            if (doc.IsModifiable)
+            {
+                using (SubTransaction probe = new SubTransaction(doc))
+                {
+                    try
+                    {
+                        if (probe.Start() != TransactionStatus.Started)
+                        {
+                            return false;
+                        }
+                        return TryMeasureTemporaryDrainageFitting(
+                            doc,
+                            symbol,
+                            groupType,
+                            mainDiameterMm,
+                            branchDiameterMm,
+                            out measuredTakeoutMm,
+                            out measuredRunTakeoutMm,
+                            out evidenceKind,
+                            out geometryHash);
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                    finally
+                    {
+                        if (probe.GetStatus()
+                            == TransactionStatus.Started)
+                        {
+                            probe.RollBack();
+                        }
+                    }
+                }
             }
             // Autodesk requires all temporary model changes to be enclosed in
             // a Transaction; rolling it back discards the probe completely.
@@ -2405,81 +2902,16 @@ namespace RfaMetadataAddin
                     {
                         return false;
                     }
-                    if (!symbol.IsActive)
-                    {
-                        symbol.Activate();
-                        doc.Regenerate();
-                    }
-                    FamilyInstance instance = doc.Create.NewFamilyInstance(
-                        XYZ.Zero,
+                    return TryMeasureTemporaryDrainageFitting(
+                        doc,
                         symbol,
-                        StructuralType.NonStructural);
-                    doc.Regenerate();
-                    List<Connector> connectors =
-                        GetDrainageFittingEndConnectors(instance);
-                    int expectedConnectorCount =
-                        groupType
-                            == RoutingPreferenceRuleGroupType.Elbows
-                            ? 2
-                            : 3;
-                    if (connectors.Count != expectedConnectorCount
-                        || connectors.Any(connector =>
-                            connector.Domain != Domain.DomainPiping
-                            || connector.Shape
-                                != ConnectorProfileType.Round))
-                    {
-                        return false;
-                    }
-                    double radius = UnitUtils.ConvertToInternalUnits(
-                        diameterMm / 2.0,
-                        UnitTypeId.Millimeters);
-                    foreach (Connector connector in connectors)
-                    {
-                        connector.Radius = radius;
-                    }
-                    doc.Regenerate();
-                    connectors = GetDrainageFittingEndConnectors(instance);
-                    double takeoutFeet;
-                    double runTakeoutFeet = double.NaN;
-                    double intersectionTolerance =
-                        UnitUtils.ConvertToInternalUnits(
-                            2,
-                            UnitTypeId.Millimeters);
-                    bool measured =
-                        groupType
-                            == RoutingPreferenceRuleGroupType.Elbows
-                            ? TryMeasureElbowTakeout(
-                                connectors,
-                                intersectionTolerance,
-                                out takeoutFeet)
-                            : TryMeasureJunctionBranchTakeout(
-                                connectors,
-                                intersectionTolerance,
-                                out takeoutFeet,
-                                out runTakeoutFeet);
-                    if (!measured || takeoutFeet <= 0)
-                    {
-                        return false;
-                    }
-                    measuredTakeoutMm =
-                        UnitUtils.ConvertFromInternalUnits(
-                            takeoutFeet,
-                            UnitTypeId.Millimeters);
-                    measuredRunTakeoutMm =
-                        groupType
-                            == RoutingPreferenceRuleGroupType.Junctions
-                            ? UnitUtils.ConvertFromInternalUnits(
-                                runTakeoutFeet,
-                                UnitTypeId.Millimeters)
-                            : measuredTakeoutMm;
-                    geometryHash =
-                        ComputeDrainageFittingGeometryHash(
-                            instance,
-                            connectors,
-                            measuredTakeoutMm,
-                            measuredRunTakeoutMm);
-                    evidenceKind = "rollback_probe";
-                    return true;
+                        groupType,
+                        mainDiameterMm,
+                        branchDiameterMm,
+                        out measuredTakeoutMm,
+                        out measuredRunTakeoutMm,
+                        out evidenceKind,
+                        out geometryHash);
                 }
                 catch
                 {
@@ -2493,6 +2925,153 @@ namespace RfaMetadataAddin
                     }
                 }
             }
+        }
+
+        private static bool TryMeasureTemporaryDrainageFitting(
+            Document doc,
+            FamilySymbol symbol,
+            RoutingPreferenceRuleGroupType groupType,
+            double mainDiameterMm,
+            double branchDiameterMm,
+            out double measuredTakeoutMm,
+            out double measuredRunTakeoutMm,
+            out string evidenceKind,
+            out string geometryHash)
+        {
+            measuredTakeoutMm = double.NaN;
+            measuredRunTakeoutMm = double.NaN;
+            evidenceKind = "unresolved";
+            geometryHash = "";
+            if (!symbol.IsActive)
+            {
+                symbol.Activate();
+                doc.Regenerate();
+            }
+            FamilyInstance instance = doc.Create.NewFamilyInstance(
+                XYZ.Zero,
+                symbol,
+                StructuralType.NonStructural);
+            doc.Regenerate();
+            List<Connector> connectors =
+                GetDrainageFittingEndConnectors(instance);
+            int expectedConnectorCount =
+                groupType == RoutingPreferenceRuleGroupType.Elbows
+                    ? 2
+                    : 3;
+            if (connectors.Count != expectedConnectorCount
+                || connectors.Any(connector =>
+                    connector.Domain != Domain.DomainPiping
+                    || connector.Shape
+                        != ConnectorProfileType.Round))
+            {
+                return false;
+            }
+            if (groupType == RoutingPreferenceRuleGroupType.Elbows)
+            {
+                double radius = UnitUtils.ConvertToInternalUnits(
+                    branchDiameterMm / 2.0,
+                    UnitTypeId.Millimeters);
+                foreach (Connector connector in connectors)
+                {
+                    connector.Radius = radius;
+                }
+                Parameter angleParameter =
+                    instance.LookupParameter("\u89d2\u5ea6")
+                    ?? instance.LookupParameter("Angle");
+                if (angleParameter != null
+                    && !angleParameter.IsReadOnly
+                    && angleParameter.StorageType
+                        == StorageType.Double)
+                {
+                    angleParameter.Set(Math.PI / 4.0);
+                }
+            }
+            else
+            {
+                Connector branchPort;
+                List<Connector> runPorts;
+                if (!TryResolveDrainageJunctionPorts(
+                    connectors,
+                    out branchPort,
+                    out runPorts))
+                {
+                    return false;
+                }
+                double mainRadius = UnitUtils.ConvertToInternalUnits(
+                    mainDiameterMm / 2.0,
+                    UnitTypeId.Millimeters);
+                double branchRadius = UnitUtils.ConvertToInternalUnits(
+                    branchDiameterMm / 2.0,
+                    UnitTypeId.Millimeters);
+                foreach (Connector runPort in runPorts)
+                {
+                    runPort.Radius = mainRadius;
+                }
+                branchPort.Radius = branchRadius;
+            }
+            doc.Regenerate();
+            connectors = GetDrainageFittingEndConnectors(instance);
+            if (groupType == RoutingPreferenceRuleGroupType.Junctions)
+            {
+                Connector branchPort;
+                List<Connector> runPorts;
+                if (!TryResolveDrainageJunctionPorts(
+                        connectors,
+                        out branchPort,
+                        out runPorts)
+                    || !DrainageEngineeringCore
+                        .AreJunctionDiametersCompatible(
+                            SafeConnectorDiameterMm(runPorts[0])
+                                .GetValueOrDefault(),
+                            SafeConnectorDiameterMm(runPorts[1])
+                                .GetValueOrDefault(),
+                            SafeConnectorDiameterMm(branchPort)
+                                .GetValueOrDefault(),
+                            mainDiameterMm,
+                            branchDiameterMm,
+                            1.0))
+                {
+                    return false;
+                }
+            }
+            double takeoutFeet;
+            double runTakeoutFeet = double.NaN;
+            double intersectionTolerance =
+                UnitUtils.ConvertToInternalUnits(
+                    2,
+                    UnitTypeId.Millimeters);
+            bool measured =
+                groupType == RoutingPreferenceRuleGroupType.Elbows
+                    ? TryMeasureElbowTakeout(
+                        connectors,
+                        intersectionTolerance,
+                        out takeoutFeet)
+                    : TryMeasureJunctionBranchTakeout(
+                        connectors,
+                        intersectionTolerance,
+                        out takeoutFeet,
+                        out runTakeoutFeet);
+            if (!measured || takeoutFeet <= 0)
+            {
+                return false;
+            }
+            measuredTakeoutMm =
+                UnitUtils.ConvertFromInternalUnits(
+                    takeoutFeet,
+                    UnitTypeId.Millimeters);
+            measuredRunTakeoutMm =
+                groupType == RoutingPreferenceRuleGroupType.Junctions
+                    ? UnitUtils.ConvertFromInternalUnits(
+                        runTakeoutFeet,
+                        UnitTypeId.Millimeters)
+                    : measuredTakeoutMm;
+            geometryHash = ComputeDrainageFittingGeometryHash(
+                instance,
+                connectors,
+                measuredTakeoutMm,
+                measuredRunTakeoutMm);
+            evidenceKind = "rollback_probe";
+            return true;
         }
 
         private static string ComputeDrainageFittingGeometryHash(
@@ -2704,8 +3283,8 @@ namespace RfaMetadataAddin
             {
                 Element source = doc.GetElement(
                     new ElementId(Convert.ToInt64(rawId)));
-                if (IsPlumbingFixture(source as FamilyInstance)
-                    || IsDrainagePipeSource(source as Pipe))
+                if (DrainageSourceResolver
+                    .HasOpenPipingEnd(source))
                 {
                     fixtures.Add(source);
                 }
@@ -2836,8 +3415,7 @@ namespace RfaMetadataAddin
         private static bool IsDrainagePipeSource(Pipe pipe)
         {
             if (pipe == null
-                || pipe.ConnectorManager == null
-                || !DrainageSourceResolver.IsVerticalPipe(pipe))
+                || pipe.ConnectorManager == null)
             {
                 return false;
             }
@@ -2920,7 +3498,14 @@ namespace RfaMetadataAddin
             FamilyInstance fixture = source as FamilyInstance;
             if (fixture != null)
             {
-                return ResolveDrainageConnector(fixture);
+                List<Connector> familyCandidates =
+                    GetDrainageConnectors(fixture)
+                        .Where(connector =>
+                            !connector.IsConnected)
+                        .ToList();
+                return ResolvePreferredDrainageConnector(
+                    familyCandidates,
+                    preferredOrigin);
             }
             Pipe pipe = source as Pipe;
             if (!IsDrainagePipeSource(pipe))
@@ -2935,6 +3520,21 @@ namespace RfaMetadataAddin
                     && connector.ConnectorType == ConnectorType.End
                     && !connector.IsConnected)
                 .ToList();
+            return ResolvePreferredDrainageConnector(
+                candidates,
+                preferredOrigin);
+        }
+
+        private static Connector
+            ResolvePreferredDrainageConnector(
+                IList<Connector> candidates,
+                XYZ preferredOrigin)
+        {
+            if (candidates == null || candidates.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "SOURCE_CONNECTOR_MISSING");
+            }
             if (candidates.Count == 1)
             {
                 return candidates[0];
@@ -2958,7 +3558,8 @@ namespace RfaMetadataAddin
                 }
             }
             throw new InvalidOperationException(
-                "SOURCE_CONNECTOR_AMBIGUOUS");
+                "SOURCE_CONNECTOR_AMBIGUOUS: "
+                + "\u591a\u500b\u958b\u653e connector \u8ddd\u96e2\u9ede\u9078\u4f4d\u7f6e\u63a5\u8fd1\uff0c\u7121\u6cd5\u5b89\u5168\u5224\u5b9a\u3002");
         }
 
         private static DrainagePlan BuildDrainagePlan(
@@ -3010,15 +3611,6 @@ namespace RfaMetadataAddin
                 connectorAxis.Y,
                 connectorAxis.Z);
             var issues = new List<string>();
-            string flowDirection = SafeConnectorFlowDirection(connector);
-            if (flowDirection == "In")
-            {
-                issues.Add("CONNECTOR_FLOW_POINTS_INTO_FIXTURE");
-            }
-            else if (flowDirection != "Out")
-            {
-                issues.Add("CONNECTOR_FLOW_UNRESOLVED");
-            }
             if (connector.Shape != ConnectorProfileType.Round)
             {
                 issues.Add("CONNECTOR_SHAPE_NOT_ROUND");
@@ -3084,10 +3676,6 @@ namespace RfaMetadataAddin
             {
                 issues.Add("JUNCTION_ROUTING_RULE_MISSING");
             }
-            if (elbowPart == null)
-            {
-                issues.Add("ELBOW_ROUTING_RULE_MISSING");
-            }
             XYZ routeOrigin = connectorPoint;
             XYZ connectorStubEnd = connectorPoint;
             bool hasConnectorStub = false;
@@ -3137,16 +3725,21 @@ namespace RfaMetadataAddin
                     + "\u7121\u6cd5\u5c07\u885b\u751f\u5668\u5177\u6295\u5f71\u5230\u4e3b\u7ba1\u3002");
             }
             XYZ mainTie = projection.XYZPoint;
-            string routeKind = outletOrientation == "vertical"
-                ? "direct_45_side_entry"
-                : outletOrientation == "horizontal"
-                    ? "wall_outlet_double_45_pending"
-                    : "unresolved_connector_route";
+            string routeKind = "unresolved_connector_route";
             DrainageWallRouteSolution wallSolution = null;
+            DrainageTerminalDropSolution terminalDropSolution = null;
+            DrainageVerticalPlanTurnSolution
+                verticalPlanTurnSolution = null;
+            DrainageSingleFortyFiveSolution singleSolution = null;
+            DrainageAxisDirectSolution directSolution = null;
+            bool isAxisDirect = false;
+            bool hasSingleFortyFive = false;
             bool hasDoubleFortyFive = false;
             double firstElbowAngle = double.NaN;
             double secondElbowAngle = double.NaN;
             double middleLateralOffset = 0;
+            double sourceElevationAdjustment = 0;
+            double sourceOppositeEndpointAdjustment = 0;
             if (downstreamEndpointIndex >= 0)
             {
                 XYZ downstreamPoint = downstreamEndpointIndex == 0 ? mainStart : mainEnd;
@@ -3174,23 +3767,15 @@ namespace RfaMetadataAddin
                     }
                 }
             }
-            if ((outletOrientation == "horizontal"
-                    || outletOrientation == "vertical")
+            if (outletOrientation != "unknown"
                 && downstreamEndpointIndex >= 0)
             {
-                if (elbowPart == null
-                    || !elbowPart.MeasuredTakeoutMm.HasValue)
-                {
-                    issues.Add("ELBOW_45_PROFILE_UNRESOLVED");
-                }
                 if (junctionPart == null
                     || !junctionPart.MeasuredTakeoutMm.HasValue)
                 {
                     issues.Add("JUNCTION_45_PROFILE_UNRESOLVED");
                 }
-                if (elbowPart != null
-                    && elbowPart.MeasuredTakeoutMm.HasValue
-                    && junctionPart != null
+                if (junctionPart != null
                     && junctionPart.MeasuredTakeoutMm.HasValue)
                 {
                     double minimumTangent = Math.Max(
@@ -3210,48 +3795,216 @@ namespace RfaMetadataAddin
                             junctionRunTakeout,
                             UnitTypeId.Millimeters)
                             + minimumTangent);
-                    wallSolution = DrainageEngineeringCore
-                        .SolveWallOutletGeneralDoubleFortyFive(
-                            new DrainageWallRouteInput
+                    double elbowTakeout = elbowPart != null
+                            && elbowPart.MeasuredTakeoutMm.HasValue
+                        ? UnitUtils.ConvertToInternalUnits(
+                            elbowPart.MeasuredTakeoutMm.Value,
+                            UnitTypeId.Millimeters)
+                        : mainPipe.Document.Application
+                            .ShortCurveTolerance;
+                    var routeInput =
+                        new DrainageWallRouteInput
+                        {
+                            Source = ToDrainageGeometryPoint(
+                                connectorPoint),
+                            OutletX = connectorAxis.X,
+                            OutletY = connectorAxis.Y,
+                            OutletZ = connectorAxis.Z,
+                            MainStart = ToDrainageGeometryPoint(mainStart),
+                            MainEnd = ToDrainageGeometryPoint(mainEnd),
+                            DownstreamEndpointIndex =
+                                downstreamEndpointIndex,
+                            SlopeRatio = slopeRatio,
+                            StubLength = UnitUtils
+                                .ConvertToInternalUnits(
+                                    Math.Max(150, diameterMm * 2.0),
+                                    UnitTypeId.Millimeters),
+                            ElbowTakeout = elbowTakeout,
+                            JunctionBranchTakeout = UnitUtils
+                                .ConvertToInternalUnits(
+                                    junctionPart.MeasuredTakeoutMm.Value,
+                                    UnitTypeId.Millimeters),
+                            MinimumTangentLength = minimumTangent,
+                            MainEndClearance = mainEndClearance,
+                            MaximumOutletAdvance = UnitUtils
+                                .ConvertToInternalUnits(
+                                    25,
+                                    UnitTypeId.Meters),
+                            MaximumDouble45LateralOffset = UnitUtils
+                                .ConvertToInternalUnits(
+                                    routePolicy
+                                        .MaximumDouble45LateralOffsetMm,
+                                    UnitTypeId.Millimeters),
+                            SearchStep = UnitUtils.ConvertToInternalUnits(
+                                5,
+                                UnitTypeId.Millimeters)
+                        };
+                    bool sourceSlopeSyncRequired =
+                        RequiresDrainageSourceSlopeSync(
+                            source,
+                            connector,
+                            slopeRatio);
+                    bool initialRouteFeasible =
+                        HasFeasibleDrainageConnectorRoute(
+                            routeInput,
+                            elbowPart);
+                    bool sourceAdjustmentResolved =
+                        (sourceSlopeSyncRequired
+                            || !initialRouteFeasible)
+                        && TryResolveDrainageSourceElevationCompensation(
+                            mainPipe,
+                            source,
+                            connector,
+                            curve,
+                            routeInput,
+                            elbowPart,
+                            out sourceElevationAdjustment,
+                            out sourceOppositeEndpointAdjustment);
+                    if (sourceAdjustmentResolved)
+                    {
+                        XYZ elevationOffset = new XYZ(
+                            0,
+                            0,
+                            sourceElevationAdjustment);
+                        connectorPoint += elevationOffset;
+                        connectorStubEnd += elevationOffset;
+                        routeOrigin += elevationOffset;
+                        routeInput.Source =
+                            ToDrainageGeometryPoint(connectorPoint);
+                        connectorAxis = new XYZ(
+                            routeInput.OutletX,
+                            routeInput.OutletY,
+                            routeInput.OutletZ);
+                        outletOrientation =
+                            DrainageEngineeringCore
+                                .ClassifyConnectorAxis(
+                                    connectorAxis.X,
+                                    connectorAxis.Y,
+                                    connectorAxis.Z);
+                    }
+                    else if (sourceSlopeSyncRequired)
+                    {
+                        issues.Add(
+                            "SOURCE_SLOPE_SYNC_UNRESOLVED");
+                    }
+                    bool sourceBelowTargetMain =
+                        DrainageEngineeringCore
+                            .IsSourceBelowTargetMainAtPlanProjection(
+                                routeInput,
+                                UnitUtils.ConvertToInternalUnits(
+                                    1,
+                                    UnitTypeId.Millimeters));
+                    if (sourceBelowTargetMain)
+                    {
+                        issues.Add(
+                            "SOURCE_BELOW_TARGET_MAIN");
+                    }
+                    else
+                    {
+                        directSolution = outletOrientation == "vertical"
+                            ? new DrainageAxisDirectSolution
                             {
-                                Source = ToDrainageGeometryPoint(
-                                    connectorPoint),
-                                OutletX = connectorAxis.X,
-                                OutletY = connectorAxis.Y,
-                                OutletZ = connectorAxis.Z,
-                                MainStart = ToDrainageGeometryPoint(mainStart),
-                                MainEnd = ToDrainageGeometryPoint(mainEnd),
-                                DownstreamEndpointIndex =
-                                    downstreamEndpointIndex,
-                                SlopeRatio = slopeRatio,
-                                StubLength = UnitUtils
-                                    .ConvertToInternalUnits(
-                                        Math.Max(150, diameterMm * 2.0),
-                                        UnitTypeId.Millimeters),
-                                ElbowTakeout = UnitUtils
-                                    .ConvertToInternalUnits(
-                                        elbowPart.MeasuredTakeoutMm.Value,
-                                        UnitTypeId.Millimeters),
-                                JunctionBranchTakeout = UnitUtils
-                                    .ConvertToInternalUnits(
-                                        junctionPart.MeasuredTakeoutMm.Value,
-                                        UnitTypeId.Millimeters),
-                                MinimumTangentLength = minimumTangent,
-                                MainEndClearance = mainEndClearance,
-                                MaximumOutletAdvance = UnitUtils
-                                    .ConvertToInternalUnits(
-                                        25,
-                                        UnitTypeId.Meters),
-                                MaximumDouble45LateralOffset = UnitUtils
-                                    .ConvertToInternalUnits(
-                                        routePolicy
-                                            .MaximumDouble45LateralOffsetMm,
-                                        UnitTypeId.Millimeters),
-                                SearchStep = UnitUtils.ConvertToInternalUnits(
-                                    5,
-                                    UnitTypeId.Millimeters)
-                            });
-                    if (wallSolution.IsFeasible)
+                                IsFeasible = false,
+                                FailureCode =
+                                    "VERTICAL_SOURCE_REQUIRES_PLAN_TURN"
+                            }
+                            : DrainageEngineeringCore
+                                .SolveAxisDirect(routeInput);
+                        if (directSolution.IsFeasible)
+                        {
+                            connectorStubEnd = connectorPoint;
+                            routeOrigin = connectorPoint;
+                            mainTie = ToXyz(
+                                directSolution.MainTie);
+                            hasConnectorStub = false;
+                            isAxisDirect = true;
+                            routeKind = "axis_direct";
+                        }
+                        else if (elbowPart == null
+                            || !elbowPart.MeasuredTakeoutMm.HasValue)
+                        {
+                            issues.Add(
+                                "ELBOW_45_PROFILE_UNRESOLVED");
+                        }
+                        else
+                        {
+                            if (outletOrientation == "vertical")
+                            {
+                                verticalPlanTurnSolution =
+                                    DrainageEngineeringCore
+                                        .SolveVerticalPlanTurnRoute(
+                                            routeInput);
+                            }
+                            else
+                            {
+                                singleSolution = DrainageEngineeringCore
+                                    .SolveSingleFortyFive(routeInput);
+                                if (singleSolution.IsFeasible)
+                                {
+                                    connectorStubEnd = ToXyz(
+                                        singleSolution.StubEnd);
+                                    routeOrigin = connectorStubEnd;
+                                    mainTie = ToXyz(
+                                        singleSolution.MainTie);
+                                    hasConnectorStub = true;
+                                    hasSingleFortyFive = true;
+                                    firstElbowAngle =
+                                        singleSolution
+                                            .ElbowAngleDegrees;
+                                    routeKind = "single_45";
+                                }
+                                else
+                                {
+                                    wallSolution =
+                                    DrainageEngineeringCore
+                                        .SolveWallOutletGeneralDoubleFortyFive(
+                                            routeInput);
+                                }
+                            }
+                        }
+                    }
+                    if (!isAxisDirect
+                        && !hasSingleFortyFive
+                        && verticalPlanTurnSolution != null
+                        && verticalPlanTurnSolution.IsFeasible)
+                    {
+                        connectorStubEnd = ToXyz(
+                            verticalPlanTurnSolution.StubEnd);
+                        routeOrigin = ToXyz(
+                            verticalPlanTurnSolution.RadialStart);
+                        mainTie = ToXyz(
+                            verticalPlanTurnSolution.MainTie);
+                        hasConnectorStub = true;
+                        hasDoubleFortyFive = true;
+                        routeKind = "vertical_plan_turn_45";
+                        firstElbowAngle =
+                            verticalPlanTurnSolution
+                                .FirstElbowAngleDegrees;
+                        secondElbowAngle =
+                            verticalPlanTurnSolution
+                                .SecondElbowAngleDegrees;
+                    }
+                    else if (!isAxisDirect
+                        && !hasSingleFortyFive
+                        && terminalDropSolution != null
+                        && terminalDropSolution.IsFeasible)
+                    {
+                        connectorStubEnd = ToXyz(
+                            terminalDropSolution.StubEnd);
+                        routeOrigin = ToXyz(
+                            terminalDropSolution.UpperBranchStart);
+                        mainTie = ToXyz(
+                            terminalDropSolution.MainTie);
+                        hasConnectorStub = true;
+                        hasDoubleFortyFive = true;
+                        routeKind = "terminal_double_45";
+                        firstElbowAngle = 45.0;
+                        secondElbowAngle = 45.0;
+                    }
+                    else if (!isAxisDirect
+                        && !hasSingleFortyFive
+                        && wallSolution != null
+                        && wallSolution.IsFeasible)
                     {
                         connectorStubEnd = ToXyz(wallSolution.StubEnd);
                         routeOrigin = ToXyz(wallSolution.OffsetEnd);
@@ -3293,13 +4046,46 @@ namespace RfaMetadataAddin
                             issues.Add(
                                 "DOUBLE45_OUT_OF_PLANE_LIMIT");
                         }
-                        routeKind = outletOrientation == "vertical"
-                            ? "floor_outlet_double_45"
-                            : "wall_outlet_double_45";
+                        routeKind = "double_45";
                     }
-                    else
+                    else if (!isAxisDirect
+                        && !hasSingleFortyFive
+                        && verticalPlanTurnSolution != null)
                     {
-                        issues.Add(wallSolution.FailureCode);
+                        issues.Add(
+                            "NO_FEASIBLE_ROUTE: vertical_plan_turn_45="
+                            + verticalPlanTurnSolution.FailureCode);
+                    }
+                    else if (!isAxisDirect
+                        && !hasSingleFortyFive
+                        && wallSolution != null)
+                    {
+                        issues.Add(
+                            "NO_FEASIBLE_ROUTE: single_45="
+                            + (singleSolution == null
+                                ? "NOT_EVALUATED"
+                                : singleSolution.FailureCode)
+                            + "; double_45="
+                            + wallSolution.FailureCode);
+                    }
+                    else if (!isAxisDirect
+                        && !hasSingleFortyFive
+                        && terminalDropSolution != null
+                        && wallSolution == null)
+                    {
+                        issues.Add(
+                            "NO_FEASIBLE_ROUTE: terminal_double_45="
+                            + terminalDropSolution.FailureCode);
+                    }
+                    else if (!isAxisDirect
+                        && !hasSingleFortyFive
+                        && wallSolution == null
+                        && !sourceBelowTargetMain
+                        && !issues.Contains(
+                            "ELBOW_45_PROFILE_UNRESOLVED"))
+                    {
+                        issues.Add(
+                            "SOURCE_AXIS_ROUTE_UNRESOLVED");
                     }
                 }
             }
@@ -3330,10 +4116,34 @@ namespace RfaMetadataAddin
                 routeOrigin.X,
                 routeOrigin.Y,
                 mainTie.Z + horizontal * slopeRatio);
-            if (hasDoubleFortyFive && wallSolution != null)
+            if (terminalDropSolution != null
+                && terminalDropSolution.IsFeasible)
+            {
+                branchStart = ToXyz(
+                    terminalDropSolution.BranchStart);
+            }
+            else if (verticalPlanTurnSolution != null
+                && verticalPlanTurnSolution.IsFeasible)
+            {
+                branchStart = ToXyz(
+                    verticalPlanTurnSolution.PlanTurnStart);
+            }
+            else if (hasDoubleFortyFive && wallSolution != null)
             {
                 branchStart = ToXyz(wallSolution.OffsetEnd);
             }
+            else if (hasSingleFortyFive
+                && singleSolution != null)
+            {
+                branchStart = ToXyz(singleSolution.StubEnd);
+            }
+            else if (isAxisDirect)
+            {
+                branchStart = connectorPoint;
+            }
+            double signedSlopeHorizontal = Math.Sqrt(
+                Math.Pow(branchStart.X - mainTie.X, 2)
+                + Math.Pow(branchStart.Y - mainTie.Y, 2));
             double sideEntryAngle = double.NaN;
             double radialEntryAngle = double.NaN;
             if (downstreamEndpointIndex >= 0)
@@ -3374,11 +4184,53 @@ namespace RfaMetadataAddin
             if (!DrainageEngineeringCore.IsExpectedDescendingSlope(
                 branchStart.Z,
                 mainTie.Z,
-                horizontal,
+                signedSlopeHorizontal,
                 slopeRatio,
                 0.000001))
             {
                 issues.Add("SIGNED_SLOPE_INVALID");
+            }
+            if (terminalDropSolution != null
+                && terminalDropSolution.IsFeasible)
+            {
+                double terminalPlanTurn =
+                    DrainageEngineeringCore.AngleBetween2D(
+                        terminalDropSolution.TerminalDropStart.X
+                            - terminalDropSolution.UpperBranchStart.X,
+                        terminalDropSolution.TerminalDropStart.Y
+                            - terminalDropSolution.UpperBranchStart.Y,
+                        terminalDropSolution.MainTie.X
+                            - terminalDropSolution.BranchStart.X,
+                        terminalDropSolution.MainTie.Y
+                            - terminalDropSolution.BranchStart.Y);
+                if (terminalPlanTurn > 1.0 + 0.000001)
+                {
+                    issues.Add(
+                        "TERMINAL_PLAN_DIRECTION_MISMATCH");
+                }
+                double minimumTerminalApproach =
+                    UnitUtils.ConvertToInternalUnits(
+                        Math.Max(
+                            150,
+                            routePolicy.MinimumTangentMm),
+                        UnitTypeId.Millimeters);
+                if (terminalDropSolution.BranchTangentLength
+                    < minimumTerminalApproach - 0.000001)
+                {
+                    issues.Add(
+                        "TERMINAL_APPROACH_TANGENT_TOO_SHORT");
+                }
+                double minimumTangent = UnitUtils
+                    .ConvertToInternalUnits(
+                        routePolicy.MinimumTangentMm,
+                        UnitTypeId.Millimeters);
+                if (terminalDropSolution.UpperBranchTangentLength
+                    < terminalDropSolution.BranchTangentLength
+                        + minimumTangent - 0.000001)
+                {
+                    issues.Add(
+                        "TERMINAL_DROP_NOT_LOCALIZED");
+                }
             }
             double minimumCenterlineLength = Math.Max(
                 mainPipe.Document.Application.ShortCurveTolerance,
@@ -3387,7 +4239,38 @@ namespace RfaMetadataAddin
             {
                 branchStart.DistanceTo(mainTie)
             };
-            if (hasConnectorStub)
+            if (verticalPlanTurnSolution != null
+                && verticalPlanTurnSolution.IsFeasible)
+            {
+                plannedLengths.Add(
+                    connectorPoint.DistanceTo(connectorStubEnd));
+                plannedLengths.Add(
+                    connectorStubEnd.DistanceTo(
+                        ToXyz(
+                            verticalPlanTurnSolution.RadialStart)));
+                plannedLengths.Add(
+                    ToXyz(verticalPlanTurnSolution.RadialStart)
+                        .DistanceTo(branchStart));
+            }
+            else if (terminalDropSolution != null
+                && terminalDropSolution.IsFeasible)
+            {
+                plannedLengths.Add(
+                    connectorPoint.DistanceTo(connectorStubEnd));
+                plannedLengths.Add(
+                    connectorStubEnd.DistanceTo(
+                        ToXyz(terminalDropSolution.UpperBranchStart)));
+                plannedLengths.Add(
+                    ToXyz(terminalDropSolution.UpperBranchStart)
+                        .DistanceTo(
+                            ToXyz(
+                                terminalDropSolution
+                                    .TerminalDropStart)));
+                plannedLengths.Add(
+                    ToXyz(terminalDropSolution.TerminalDropStart)
+                        .DistanceTo(branchStart));
+            }
+            else if (hasConnectorStub)
             {
                 plannedLengths.Add(connectorPoint.DistanceTo(connectorStubEnd));
                 double dropLength = connectorStubEnd.DistanceTo(branchStart);
@@ -3457,6 +4340,20 @@ namespace RfaMetadataAddin
             {
                 routeElevations.Add(connectorStubEnd.Z);
             }
+            if (terminalDropSolution != null
+                && terminalDropSolution.IsFeasible)
+            {
+                routeElevations.Add(
+                    terminalDropSolution.UpperBranchStart.Z);
+                routeElevations.Add(
+                    terminalDropSolution.TerminalDropStart.Z);
+            }
+            if (verticalPlanTurnSolution != null
+                && verticalPlanTurnSolution.IsFeasible)
+            {
+                routeElevations.Add(
+                    verticalPlanTurnSolution.RadialStart.Z);
+            }
             routeElevations.Add(branchStart.Z);
             routeElevations.Add(mainTie.Z);
             if (!DrainageEngineeringCore.IsMonotonicDescending(
@@ -3474,6 +4371,24 @@ namespace RfaMetadataAddin
                 ConnectorStubEnd = connectorStubEnd,
                 HasConnectorStub = hasConnectorStub,
                 HasDoubleFortyFive = hasDoubleFortyFive,
+                HasTerminalDrop = terminalDropSolution != null
+                    && terminalDropSolution.IsFeasible,
+                HasVerticalPlanTurn =
+                    verticalPlanTurnSolution != null
+                    && verticalPlanTurnSolution.IsFeasible,
+                UpperBranchStart =
+                    verticalPlanTurnSolution != null
+                        && verticalPlanTurnSolution.IsFeasible
+                    ? ToXyz(verticalPlanTurnSolution.RadialStart)
+                    : terminalDropSolution != null
+                            && terminalDropSolution.IsFeasible
+                        ? ToXyz(
+                            terminalDropSolution.UpperBranchStart)
+                        : XYZ.Zero,
+                TerminalDropStart = terminalDropSolution != null
+                        && terminalDropSolution.IsFeasible
+                    ? ToXyz(terminalDropSolution.TerminalDropStart)
+                    : XYZ.Zero,
                 BranchStart = branchStart,
                 MainTie = mainTie,
                 HorizontalLength = horizontal,
@@ -3492,23 +4407,500 @@ namespace RfaMetadataAddin
                 SideEntryAngleDegrees = sideEntryAngle,
                 RadialEntryAngleDegrees = radialEntryAngle,
                 StubTangentLength = hasDoubleFortyFive
-                    ? wallSolution.OutletAdvance
-                        - UnitUtils.ConvertToInternalUnits(
-                            elbowPart.MeasuredTakeoutMm.Value,
-                            UnitTypeId.Millimeters)
-                    : (double?)null,
+                    ? verticalPlanTurnSolution != null
+                            && verticalPlanTurnSolution.IsFeasible
+                        ? verticalPlanTurnSolution.OutletAdvance
+                            - UnitUtils.ConvertToInternalUnits(
+                                elbowPart.MeasuredTakeoutMm.Value,
+                                UnitTypeId.Millimeters)
+                        : terminalDropSolution != null
+                            && terminalDropSolution.IsFeasible
+                        ? terminalDropSolution.OutletAdvance
+                            - UnitUtils.ConvertToInternalUnits(
+                                elbowPart.MeasuredTakeoutMm.Value,
+                                UnitTypeId.Millimeters)
+                        : wallSolution.OutletAdvance
+                            - UnitUtils.ConvertToInternalUnits(
+                                elbowPart.MeasuredTakeoutMm.Value,
+                                UnitTypeId.Millimeters)
+                    : hasSingleFortyFive
+                        ? singleSolution.StubTangentLength
+                        : (double?)null,
                 MiddleTangentLength = hasDoubleFortyFive
-                    ? wallSolution.DiagonalTangentLength
+                    ? verticalPlanTurnSolution != null
+                            && verticalPlanTurnSolution.IsFeasible
+                        ? verticalPlanTurnSolution
+                            .RadialTangentLength
+                        : terminalDropSolution != null
+                            && terminalDropSolution.IsFeasible
+                        ? terminalDropSolution
+                            .UpperBranchTangentLength
+                        : wallSolution.DiagonalTangentLength
                     : (double?)null,
                 BranchTangentLength = hasDoubleFortyFive
-                    ? wallSolution.BranchTangentLength
-                    : (double?)null,
+                    ? verticalPlanTurnSolution != null
+                            && verticalPlanTurnSolution.IsFeasible
+                        ? verticalPlanTurnSolution
+                            .FinalBranchTangentLength
+                        : terminalDropSolution != null
+                            && terminalDropSolution.IsFeasible
+                        ? terminalDropSolution.BranchTangentLength
+                        : wallSolution.BranchTangentLength
+                    : hasSingleFortyFive
+                        ? singleSolution.BranchTangentLength
+                        : isAxisDirect
+                            ? directSolution.BranchTangentLength
+                            : (double?)null,
+                TerminalPlanTurnAngleDegrees =
+                    verticalPlanTurnSolution != null
+                            && verticalPlanTurnSolution.IsFeasible
+                        ? (double?)verticalPlanTurnSolution
+                            .PlanTurnAngleDegrees
+                        : terminalDropSolution != null
+                            && terminalDropSolution.IsFeasible
+                        ? (double?)terminalDropSolution
+                            .PlanTurnAngleDegrees
+                        : null,
                 FirstElbowAngleDegrees = firstElbowAngle,
                 SecondElbowAngleDegrees = secondElbowAngle,
                 MiddleLateralOffset = middleLateralOffset,
+                SourceElevationAdjustment =
+                    sourceElevationAdjustment,
+                SourceOppositeEndpointAdjustment =
+                    sourceOppositeEndpointAdjustment,
                 CollisionElementIds = new List<long>(),
                 Issues = issues
             };
+        }
+
+        private static bool HasFeasibleDrainageConnectorRoute(
+            DrainageWallRouteInput input,
+            DrainageRoutingPart elbowPart)
+        {
+            bool isVerticalSource =
+                input.OutletZ < -0.90
+                && Math.Sqrt(
+                    input.OutletX * input.OutletX
+                    + input.OutletY * input.OutletY) < 0.10;
+            if (!isVerticalSource
+                && DrainageEngineeringCore
+                .SolveAxisDirect(input)
+                .IsFeasible)
+            {
+                return true;
+            }
+            if (elbowPart == null
+                || !elbowPart.MeasuredTakeoutMm.HasValue)
+            {
+                return false;
+            }
+            if (isVerticalSource)
+            {
+                return DrainageEngineeringCore
+                        .SolveVerticalPlanTurnRoute(input)
+                        .IsFeasible;
+            }
+            return DrainageEngineeringCore
+                    .SolveSingleFortyFive(input)
+                    .IsFeasible
+                || DrainageEngineeringCore
+                    .SolveWallOutletGeneralDoubleFortyFive(input)
+                    .IsFeasible;
+        }
+
+        private static bool RequiresDrainageSourceSlopeSync(
+            Element source,
+            Connector selectedConnector,
+            double expectedSlope)
+        {
+            Pipe sourcePipe = source as Pipe;
+            LocationCurve location = sourcePipe == null
+                ? null
+                : sourcePipe.Location as LocationCurve;
+            Line line = location == null
+                ? null
+                : location.Curve as Line;
+            if (line == null
+                || selectedConnector == null
+                || expectedSlope <= 0)
+            {
+                return false;
+            }
+            List<Connector> endConnectors =
+                sourcePipe.ConnectorManager.Connectors
+                    .Cast<Connector>()
+                    .Where(item =>
+                        item.Domain == Domain.DomainPiping
+                        && item.ConnectorType
+                            == ConnectorType.End)
+                    .ToList();
+            if (endConnectors.Any(item => item.IsConnected))
+            {
+                return false;
+            }
+            XYZ start = line.GetEndPoint(0);
+            XYZ end = line.GetEndPoint(1);
+            double horizontal = Math.Sqrt(
+                Math.Pow(end.X - start.X, 2)
+                + Math.Pow(end.Y - start.Y, 2));
+            if (horizontal <= 0.000001)
+            {
+                return false;
+            }
+            bool selectedAtStart =
+                selectedConnector.Origin.DistanceTo(start)
+                <= selectedConnector.Origin.DistanceTo(end);
+            XYZ selected = selectedAtStart ? start : end;
+            XYZ opposite = selectedAtStart ? end : start;
+            double signedSlope =
+                (opposite.Z - selected.Z) / horizontal;
+            return Math.Abs(signedSlope - expectedSlope)
+                > 0.0005;
+        }
+
+        private static bool
+            TryResolveDrainageSourceElevationCompensation(
+                Pipe mainPipe,
+                Element source,
+                Connector connector,
+                Curve mainCurve,
+                DrainageWallRouteInput routeInput,
+                DrainageRoutingPart elbowPart,
+                out double adjustment,
+                out double oppositeEndpointAdjustment)
+        {
+            adjustment = 0;
+            oppositeEndpointAdjustment = 0;
+            Pipe sourcePipe = source as Pipe;
+            LocationCurve sourceLocation = sourcePipe == null
+                ? null
+                : sourcePipe.Location as LocationCurve;
+            Line sourceLine = sourceLocation == null
+                ? null
+                : sourceLocation.Curve as Line;
+            if (sourceLine == null
+                || connector == null
+                || mainCurve == null
+                || routeInput == null)
+            {
+                return false;
+            }
+            XYZ sourceStart = sourceLine.GetEndPoint(0);
+            XYZ sourceEnd = sourceLine.GetEndPoint(1);
+            double sourceHorizontalLength = Math.Sqrt(
+                Math.Pow(sourceEnd.X - sourceStart.X, 2)
+                + Math.Pow(sourceEnd.Y - sourceStart.Y, 2));
+            double sourceVerticalLength =
+                Math.Abs(sourceEnd.Z - sourceStart.Z);
+            bool horizontalSource =
+                sourceHorizontalLength > 0.000001
+                && sourceVerticalLength
+                    / sourceHorizontalLength <= 0.0005;
+            bool verticalSource =
+                sourceVerticalLength
+                    > UnitUtils.ConvertToInternalUnits(
+                        100.0,
+                        UnitTypeId.Millimeters)
+                && sourceHorizontalLength
+                    / sourceVerticalLength <= 0.02;
+            if (!horizontalSource && !verticalSource)
+            {
+                return false;
+            }
+            List<Connector> endConnectors =
+                sourcePipe.ConnectorManager.Connectors
+                    .Cast<Connector>()
+                    .Where(item =>
+                        item.Domain == Domain.DomainPiping
+                        && item.ConnectorType
+                            == ConnectorType.End)
+                    .ToList();
+            int connectedCount =
+                endConnectors.Count(item => item.IsConnected);
+            if (endConnectors.Count != 2
+                || connectedCount > 1)
+            {
+                return false;
+            }
+            if (horizontalSource && connectedCount == 1)
+            {
+                return false;
+            }
+            IntersectionResult projection =
+                mainCurve.Project(connector.Origin);
+            if (projection == null)
+            {
+                return false;
+            }
+            double mainFallMm = UnitUtils.ConvertFromInternalUnits(
+                Math.Abs(
+                    mainCurve.GetEndPoint(1).Z
+                    - mainCurve.GetEndPoint(0).Z),
+                UnitTypeId.Millimeters);
+            double maximumAdjustmentMm = Math.Min(
+                100.0,
+                Math.Max(25.0, mainFallMm + 25.0));
+            double maximumAdjustment =
+                UnitUtils.ConvertToInternalUnits(
+                    maximumAdjustmentMm,
+                    UnitTypeId.Millimeters);
+            double ignoreTolerance =
+                UnitUtils.ConvertToInternalUnits(
+                    1.0,
+                    UnitTypeId.Millimeters);
+            DrainageGeometryPoint originalSource =
+                routeInput.Source;
+            double originalOutletX = routeInput.OutletX;
+            double originalOutletY = routeInput.OutletY;
+            double originalOutletZ = routeInput.OutletZ;
+            bool connectorAtStart =
+                connector.Origin.DistanceTo(sourceStart)
+                <= connector.Origin.DistanceTo(sourceEnd);
+            XYZ selectedEndpoint = connectorAtStart
+                ? sourceStart
+                : sourceEnd;
+            XYZ oppositeEndpoint = connectorAtStart
+                ? sourceEnd
+                : sourceStart;
+            if (horizontalSource)
+            {
+                double desiredSelectedZ =
+                    oppositeEndpoint.Z
+                    - sourceHorizontalLength
+                        * routeInput.SlopeRatio;
+                double slopeAdjustment =
+                    desiredSelectedZ - selectedEndpoint.Z;
+                double searchStep =
+                    UnitUtils.ConvertToInternalUnits(
+                        1.0,
+                        UnitTypeId.Millimeters);
+                int maximumSteps = connectedCount == 1
+                    ? 0
+                    : (int)Math.Ceiling(
+                        maximumAdjustment / searchStep);
+                for (int stepIndex = 0;
+                    stepIndex <= maximumSteps;
+                    stepIndex++)
+                {
+                    double commonAdjustment =
+                        stepIndex * searchStep;
+                    double selectedAdjustment =
+                        slopeAdjustment + commonAdjustment;
+                    double oppositeAdjustment =
+                        connectedCount == 1
+                            ? 0
+                            : commonAdjustment;
+                    if (Math.Abs(selectedAdjustment)
+                            > maximumAdjustment + 0.000001
+                        || Math.Abs(oppositeAdjustment)
+                            > maximumAdjustment + 0.000001)
+                    {
+                        continue;
+                    }
+                    XYZ adjustedSelected =
+                        selectedEndpoint
+                        + new XYZ(
+                            0,
+                            0,
+                            selectedAdjustment);
+                    XYZ adjustedOpposite =
+                        oppositeEndpoint
+                        + new XYZ(
+                            0,
+                            0,
+                            oppositeAdjustment);
+                    XYZ adjustedAxis =
+                        adjustedSelected - adjustedOpposite;
+                    if (adjustedAxis.IsZeroLength())
+                    {
+                        continue;
+                    }
+                    adjustedAxis = adjustedAxis.Normalize();
+                    routeInput.Source =
+                        new DrainageGeometryPoint
+                        {
+                            X = originalSource.X,
+                            Y = originalSource.Y,
+                            Z = originalSource.Z
+                                + selectedAdjustment
+                        };
+                    routeInput.OutletX = adjustedAxis.X;
+                    routeInput.OutletY = adjustedAxis.Y;
+                    routeInput.OutletZ = adjustedAxis.Z;
+                    if (!HasFeasibleDrainageConnectorRoute(
+                        routeInput,
+                        elbowPart))
+                    {
+                        continue;
+                    }
+                    adjustment = Math.Abs(selectedAdjustment)
+                            <= ignoreTolerance
+                        ? 0
+                        : selectedAdjustment;
+                    oppositeEndpointAdjustment =
+                        Math.Abs(oppositeAdjustment)
+                            <= ignoreTolerance
+                        ? 0
+                        : oppositeAdjustment;
+                    return true;
+                }
+            }
+            else
+            {
+                double searchStep =
+                    UnitUtils.ConvertToInternalUnits(
+                        1.0,
+                        UnitTypeId.Millimeters);
+                for (int stepIndex = 0;
+                    stepIndex <= (int)Math.Ceiling(
+                        maximumAdjustment / searchStep);
+                    stepIndex++)
+                {
+                    double candidateAdjustment =
+                        stepIndex * searchStep;
+                    routeInput.Source =
+                        new DrainageGeometryPoint
+                        {
+                            X = originalSource.X,
+                            Y = originalSource.Y,
+                            Z = originalSource.Z
+                                + candidateAdjustment
+                        };
+                    routeInput.OutletX = originalOutletX;
+                    routeInput.OutletY = originalOutletY;
+                    routeInput.OutletZ = originalOutletZ;
+                    if (!HasFeasibleDrainageConnectorRoute(
+                        routeInput,
+                        elbowPart))
+                    {
+                        continue;
+                    }
+                    adjustment = candidateAdjustment;
+                    oppositeEndpointAdjustment = 0;
+                    return true;
+                }
+            }
+            routeInput.Source = originalSource;
+            routeInput.OutletX = originalOutletX;
+            routeInput.OutletY = originalOutletY;
+            routeInput.OutletZ = originalOutletZ;
+            adjustment = 0;
+            oppositeEndpointAdjustment = 0;
+            return false;
+        }
+
+        private static Connector
+            ApplyDrainageSourceElevationAdjustment(
+                Document document,
+                DrainagePlan plan)
+        {
+            if (plan == null
+                || !plan.HasSourceElevationAdjustment)
+            {
+                return plan == null
+                    ? null
+                    : plan.FixtureConnector;
+            }
+            Pipe sourcePipe = plan.SourceElement as Pipe;
+            LocationCurve location = sourcePipe == null
+                ? null
+                : sourcePipe.Location as LocationCurve;
+            Line line = location == null
+                ? null
+                : location.Curve as Line;
+            if (line == null)
+            {
+                throw new InvalidOperationException(
+                    "SOURCE_ELEVATION_COMPENSATION_UNSUPPORTED");
+            }
+            List<Connector> endConnectors =
+                sourcePipe.ConnectorManager.Connectors
+                    .Cast<Connector>()
+                    .Where(item =>
+                        item.Domain == Domain.DomainPiping
+                        && item.ConnectorType
+                            == ConnectorType.End)
+                    .ToList();
+            if (endConnectors.Count != 2
+                || endConnectors.Count(item => item.IsConnected)
+                    > 1)
+            {
+                throw new InvalidOperationException(
+                    "SOURCE_ELEVATION_COMPENSATION_TOPOLOGY_CHANGED");
+            }
+            Connector connectedEndBefore =
+                endConnectors.FirstOrDefault(item => item.IsConnected);
+            XYZ connectedOriginBefore = connectedEndBefore == null
+                ? null
+                : connectedEndBefore.Origin;
+            XYZ offset = new XYZ(
+                0,
+                0,
+                plan.SourceElevationAdjustment);
+            XYZ start = line.GetEndPoint(0);
+            XYZ end = line.GetEndPoint(1);
+            XYZ originalConnectorPoint =
+                plan.ConnectorPoint - offset;
+            XYZ oppositeOffset = new XYZ(
+                0,
+                0,
+                plan.SourceOppositeEndpointAdjustment);
+            if (start.DistanceTo(originalConnectorPoint)
+                <= end.DistanceTo(originalConnectorPoint))
+            {
+                start += offset;
+                end += oppositeOffset;
+            }
+            else
+            {
+                end += offset;
+                start += oppositeOffset;
+            }
+            location.Curve = Line.CreateBound(start, end);
+            document.Regenerate();
+            if (connectedOriginBefore != null)
+            {
+                Connector connectedEndAfter =
+                    sourcePipe.ConnectorManager.Connectors
+                        .Cast<Connector>()
+                        .Where(item =>
+                            item.Domain == Domain.DomainPiping
+                            && item.ConnectorType
+                                == ConnectorType.End)
+                        .OrderBy(item =>
+                            item.Origin.DistanceTo(
+                                connectedOriginBefore))
+                        .FirstOrDefault();
+                double connectedTolerance =
+                    UnitUtils.ConvertToInternalUnits(
+                        1.0,
+                        UnitTypeId.Millimeters);
+                if (connectedEndAfter == null
+                    || connectedEndAfter.Origin.DistanceTo(
+                        connectedOriginBefore)
+                            > connectedTolerance
+                    || !connectedEndAfter.IsConnected)
+                {
+                    throw new InvalidOperationException(
+                        "SOURCE_CONNECTED_END_VERIFY_FAILED");
+                }
+            }
+            Connector adjustedConnector =
+                ResolveDrainageSourceConnector(
+                    sourcePipe,
+                    plan.ConnectorPoint);
+            double tolerance =
+                UnitUtils.ConvertToInternalUnits(
+                    2.0,
+                    UnitTypeId.Millimeters);
+            if (adjustedConnector == null
+                || adjustedConnector.Origin.DistanceTo(
+                    plan.ConnectorPoint) > tolerance)
+            {
+                throw new InvalidOperationException(
+                    "SOURCE_ELEVATION_COMPENSATION_VERIFY_FAILED");
+            }
+            return adjustedConnector;
         }
 
         private static object SerializeDrainageFixture(FamilyInstance fixture)
@@ -3684,6 +5076,17 @@ namespace RfaMetadataAddin
                     : null,
                 has_connector_stub = plan.HasConnectorStub,
                 has_double_45 = plan.HasDoubleFortyFive,
+                has_terminal_drop = plan.HasTerminalDrop,
+                has_vertical_plan_turn =
+                    plan.HasVerticalPlanTurn,
+                upper_branch_start =
+                    plan.HasTerminalDrop
+                        || plan.HasVerticalPlanTurn
+                    ? SerializePoint(plan.UpperBranchStart)
+                    : null,
+                terminal_drop_start = plan.HasTerminalDrop
+                    ? SerializePoint(plan.TerminalDropStart)
+                    : null,
                 branch_start = SerializePoint(plan.BranchStart),
                 main_tie = SerializePoint(plan.MainTie),
                 horizontal_length_m = plan.HorizontalLength * 0.3048,
@@ -3716,6 +5119,8 @@ namespace RfaMetadataAddin
                         plan.BranchTangentLength.Value,
                         UnitTypeId.Millimeters)
                     : null,
+                terminal_plan_turn_angle_degrees =
+                    plan.TerminalPlanTurnAngleDegrees,
                 first_elbow_angle_degrees =
                     double.IsNaN(plan.FirstElbowAngleDegrees)
                         ? (double?)null
@@ -3727,6 +5132,14 @@ namespace RfaMetadataAddin
                 middle_lateral_offset_mm =
                     UnitUtils.ConvertFromInternalUnits(
                         plan.MiddleLateralOffset,
+                        UnitTypeId.Millimeters),
+                source_elevation_adjustment_mm =
+                    UnitUtils.ConvertFromInternalUnits(
+                        plan.SourceElevationAdjustment,
+                        UnitTypeId.Millimeters),
+                source_opposite_endpoint_adjustment_mm =
+                    UnitUtils.ConvertFromInternalUnits(
+                        plan.SourceOppositeEndpointAdjustment,
                         UnitTypeId.Millimeters),
                 sequence_index = plan.SequenceIndex,
                 collision_element_ids = plan.CollisionElementIds,
@@ -4231,7 +5644,8 @@ namespace RfaMetadataAddin
             XYZ tiePoint,
             XYZ downstreamPoint,
             DrainageRoutingPart junctionPart,
-            double diameterFeet)
+            double mainDiameterFeet,
+            double branchDiameterFeet)
         {
             double tolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Centimeters);
             Pipe target = mainSegments.FirstOrDefault(pipe => IsPointOnPipeXY(pipe, tiePoint, tolerance));
@@ -4267,7 +5681,8 @@ namespace RfaMetadataAddin
                     TryPlaceAndConnectDrainageJunction(
                         doc,
                         junctionPart,
-                        diameterFeet,
+                        mainDiameterFeet,
+                        branchDiameterFeet,
                         downstreamMain,
                         upstreamMain,
                         branchConnector,
@@ -4314,7 +5729,8 @@ namespace RfaMetadataAddin
         private static FamilyInstance TryPlaceAndConnectDrainageJunction(
             Document doc,
             DrainageRoutingPart junctionPart,
-            double diameterFeet,
+            double mainDiameterFeet,
+            double branchDiameterFeet,
             Connector mainA,
             Connector mainB,
             Connector branch,
@@ -4329,7 +5745,8 @@ namespace RfaMetadataAddin
                         TryPlaceAndConnectDrainageJunctionCore(
                             doc,
                             junctionPart,
-                            diameterFeet,
+                            mainDiameterFeet,
+                            branchDiameterFeet,
                             mainA,
                             mainB,
                             branch,
@@ -4362,7 +5779,8 @@ namespace RfaMetadataAddin
             TryPlaceAndConnectDrainageJunctionCore(
             Document doc,
             DrainageRoutingPart junctionPart,
-            double diameterFeet,
+            double mainDiameterFeet,
+            double branchDiameterFeet,
             Connector mainA,
             Connector mainB,
             Connector branch,
@@ -4403,7 +5821,17 @@ namespace RfaMetadataAddin
                 || !mainBDiameterMm.HasValue
                 || !branchDiameterMm.HasValue
                 || Math.Abs(mainADiameterMm.Value - mainBDiameterMm.Value) > 1
-                || Math.Abs(mainADiameterMm.Value - branchDiameterMm.Value) > 1)
+                || !DrainageEngineeringCore.AreJunctionDiametersCompatible(
+                    mainADiameterMm.Value,
+                    mainBDiameterMm.Value,
+                    branchDiameterMm.Value,
+                    UnitUtils.ConvertFromInternalUnits(
+                        mainDiameterFeet,
+                        UnitTypeId.Millimeters),
+                    UnitUtils.ConvertFromInternalUnits(
+                        branchDiameterFeet,
+                        UnitTypeId.Millimeters),
+                    1.0))
             {
                 return null;
             }
@@ -4440,18 +5868,40 @@ namespace RfaMetadataAddin
             {
                 return null;
             }
-            double radius = diameterFeet / 2.0;
-            foreach (Connector port in ports)
+            Connector sizedBranchPort;
+            List<Connector> sizedRunPorts;
+            if (!TryResolveDrainageJunctionPorts(
+                ports,
+                out sizedBranchPort,
+                out sizedRunPorts))
             {
-                port.Radius = radius;
+                return null;
             }
+            foreach (Connector runPort in sizedRunPorts)
+            {
+                runPort.Radius = mainDiameterFeet / 2.0;
+            }
+            sizedBranchPort.Radius = branchDiameterFeet / 2.0;
             doc.Regenerate();
             ports = GetDrainageFittingEndConnectors(fitting);
-            if (ports.Count != 3
-                || ports.Any(port => Math.Abs(port.Radius - radius)
-                    > UnitUtils.ConvertToInternalUnits(
-                        0.5,
-                        UnitTypeId.Millimeters)))
+            if (!TryResolveDrainageJunctionPorts(
+                    ports,
+                    out sizedBranchPort,
+                    out sizedRunPorts)
+                || !DrainageEngineeringCore.AreJunctionDiametersCompatible(
+                    SafeConnectorDiameterMm(sizedRunPorts[0])
+                        .GetValueOrDefault(),
+                    SafeConnectorDiameterMm(sizedRunPorts[1])
+                        .GetValueOrDefault(),
+                    SafeConnectorDiameterMm(sizedBranchPort)
+                        .GetValueOrDefault(),
+                    UnitUtils.ConvertFromInternalUnits(
+                        mainDiameterFeet,
+                        UnitTypeId.Millimeters),
+                    UnitUtils.ConvertFromInternalUnits(
+                        branchDiameterFeet,
+                        UnitTypeId.Millimeters),
+                    0.5))
             {
                 return null;
             }
@@ -4779,6 +6229,31 @@ namespace RfaMetadataAddin
             }
             int connectedMainCount = mainSegments.Count(pipe => connectedOwnerIds.Contains(pipe.Id.Value));
             return connectedOwnerIds.Contains(branch.Id.Value) && connectedMainCount >= 2;
+        }
+
+        private static bool IsDrainageJunctionDiameterValid(
+            FamilyInstance junction,
+            double expectedMainDiameterMm,
+            double expectedBranchDiameterMm)
+        {
+            List<Connector> ports =
+                GetDrainageFittingEndConnectors(junction);
+            Connector branchPort;
+            List<Connector> runPorts;
+            return TryResolveDrainageJunctionPorts(
+                    ports,
+                    out branchPort,
+                    out runPorts)
+                && DrainageEngineeringCore.AreJunctionDiametersCompatible(
+                    SafeConnectorDiameterMm(runPorts[0])
+                        .GetValueOrDefault(),
+                    SafeConnectorDiameterMm(runPorts[1])
+                        .GetValueOrDefault(),
+                    SafeConnectorDiameterMm(branchPort)
+                        .GetValueOrDefault(),
+                    expectedMainDiameterMm,
+                    expectedBranchDiameterMm,
+                    1.0);
         }
 
         private static bool IsDrainageJunctionGeometryValid(

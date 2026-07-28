@@ -106,6 +106,14 @@ def render_manifest(dll_path: Path) -> str:
     <VendorId>DEX</VendorId>
     <VendorDescription>RFA metadata reader for internal classifier</VendorDescription>
   </AddIn>
+  <AddIn Type="Command">
+    <Name>SC Drainage Runtime Self Test</Name>
+    <Assembly>{normalized}</Assembly>
+    <AddInId>A60D2AB6-D860-43D0-91D6-82F4EAC7216A</AddInId>
+    <FullClassName>RfaMetadataAddin.DrainageRuntimeSelfTestCommand</FullClassName>
+    <VendorId>DEX</VendorId>
+    <VendorDescription>Development-only runtime verification for SC drainage tools</VendorDescription>
+  </AddIn>
 </RevitAddIns>
 """
 

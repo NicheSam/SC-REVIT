@@ -85,13 +85,22 @@ namespace RfaMetadataAddin.Drainage
             }
             if (!plan.ReadyToCreate)
             {
+                string message = plan.Issues.Count == 0
+                    ? "排水路徑未通過 preflight。"
+                    : string.Join(
+                        Environment.NewLine,
+                        plan.Issues);
+                DrainageFailureCode failureCode =
+                    ClassifyFailure(message);
+                if (failureCode
+                    == DrainageFailureCode.CommitFailed)
+                {
+                    failureCode =
+                        DrainageFailureCode.RouteBlocked;
+                }
                 return DrainageExecutionResult.Failed(
-                    DrainageFailureCode.RouteBlocked,
-                    plan.Issues.Count == 0
-                        ? "排水路徑未通過 preflight。"
-                        : string.Join(
-                            Environment.NewLine,
-                            plan.Issues));
+                    failureCode,
+                    message);
             }
 
             try
@@ -110,7 +119,7 @@ namespace RfaMetadataAddin.Drainage
                             document,
                             snapshotId,
                             snapshotHash,
-                            "human_interactive");
+                            "human");
                 string operationId =
                     "DOP-" + Guid.NewGuid().ToString("N");
                 var commitPayload =
@@ -137,7 +146,7 @@ namespace RfaMetadataAddin.Drainage
                             "actor_kind",
                             string.IsNullOrWhiteSpace(
                                 plan.Request.ActorKind)
-                                ? "human_interactive"
+                                ? DrainageActorKinds.HumanGui
                                 : plan.Request.ActorKind
                         }
                     };
@@ -251,6 +260,20 @@ namespace RfaMetadataAddin.Drainage
                         }
                     }
                 },
+                {
+                    "source_connector_key",
+                    request.Source.ConnectorRef == null
+                        ? ""
+                        : request.Source.ConnectorRef.ConnectorKey
+                },
+                {
+                    "profile_id",
+                    request.Configuration.ProfileId
+                },
+                {
+                    "profile_kind",
+                    request.Configuration.ProfileKind
+                },
                 { "selection_source", "explicit_user_refs" },
                 { "main_candidate_count", 1 },
                 { "pipe_type_id", pipeType.Id.Value.ToString() },
@@ -281,11 +304,70 @@ namespace RfaMetadataAddin.Drainage
                 },
                 { "diameter_mm", request.DiameterMm },
                 {
+                    "main_diameter_mm",
+                    request.MainDiameterMm > 0
+                        ? request.MainDiameterMm
+                        : ReadPipeDiameterMm(request.Target.MainPipe)
+                },
+                {
                     "downstream_mode",
                     string.IsNullOrWhiteSpace(
                         request.DownstreamMode)
                         ? "auto"
                         : request.DownstreamMode
+                },
+                {
+                    "route_policy",
+                    new Dictionary<string, object>
+                    {
+                        {
+                            "route_policy_id",
+                            "sc-drainage-route-policy"
+                        },
+                        {
+                            "route_policy_version",
+                            "1.2.0"
+                        },
+                        {
+                            "side_entry_angle_degrees",
+                            45.0
+                        },
+                        {
+                            "side_entry_tolerance_degrees",
+                            5.0
+                        },
+                        {
+                            "radial_minimum_degrees",
+                            0.0
+                        },
+                        {
+                            "radial_maximum_degrees",
+                            45.0
+                        },
+                        {
+                            "radial_tolerance_degrees",
+                            5.0
+                        },
+                        {
+                            "minimum_tangent_mm",
+                            request.Configuration
+                                .MinimumTangentMm
+                        },
+                        {
+                            "minimum_junction_spacing_mm",
+                            Math.Max(
+                                300.0,
+                                request.DiameterMm * 3.0)
+                        },
+                        {
+                            "collision_clearance_mm",
+                            25.0
+                        },
+                        {
+                            "maximum_double45_lateral_offset_mm",
+                            25.0
+                        }
+                    }
                 }
             };
         }
@@ -312,8 +394,29 @@ namespace RfaMetadataAddin.Drainage
                     request.DiameterMm))
             {
                 throw new InvalidOperationException(
-                    "CONFIGURATION_MISSING");
+                    "PROFILE_NOT_MATCHED");
             }
+            if (!string.Equals(
+                request.Configuration.ProfileKind,
+                "GravityDrainage",
+                StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "PROFILE_NOT_MATCHED: 目前只支援 GravityDrainage。");
+            }
+        }
+
+        private static double ReadPipeDiameterMm(Pipe pipe)
+        {
+            Parameter parameter = pipe == null
+                ? null
+                : pipe.get_Parameter(
+                    BuiltInParameter.RBS_PIPE_DIAMETER_PARAM);
+            return parameter == null
+                ? 0
+                : UnitUtils.ConvertFromInternalUnits(
+                    parameter.AsDouble(),
+                    UnitTypeId.Millimeters);
         }
 
         private static ElementId ReadSystemTypeId(Pipe pipe)
@@ -374,6 +477,39 @@ namespace RfaMetadataAddin.Drainage
             string message)
         {
             string value = message ?? "";
+            if (value.Contains("SOURCE_CONNECTOR_AMBIGUOUS"))
+            {
+                return DrainageFailureCode
+                    .SourceConnectorAmbiguous;
+            }
+            if (value.Contains("SOURCE_FLOW_INCOMPATIBLE"))
+            {
+                return DrainageFailureCode
+                    .SourceFlowIncompatible;
+            }
+            if (value.Contains("PROFILE_NOT_MATCHED"))
+            {
+                return DrainageFailureCode.ProfileNotMatched;
+            }
+            if (value.Contains("SOURCE_BELOW_TARGET_MAIN"))
+            {
+                return DrainageFailureCode
+                    .SourceBelowTargetMain;
+            }
+            if (value.Contains("SOURCE_AXIS_ROUTE_UNRESOLVED"))
+            {
+                return DrainageFailureCode
+                    .SourceAxisRouteUnresolved;
+            }
+            if (value.Contains("SINGLE45_NOT_FEASIBLE"))
+            {
+                return DrainageFailureCode
+                    .SingleFortyFiveNotFeasible;
+            }
+            if (value.Contains("NO_FEASIBLE_ROUTE"))
+            {
+                return DrainageFailureCode.NoFeasibleRoute;
+            }
             if (value.Contains("SOURCE_CONNECTOR"))
             {
                 return DrainageFailureCode.SourceConnectorMissing;

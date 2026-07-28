@@ -12,17 +12,8 @@ namespace RfaMetadataAddin.Drainage
     {
         public bool AllowElement(Element element)
         {
-            Pipe pipe = element as Pipe;
-            if (pipe != null
-                && DrainageSourceResolver.IsVerticalPipe(pipe))
-            {
-                return true;
-            }
-            FamilyInstance instance = element as FamilyInstance;
-            return instance != null
-                && instance.Category != null
-                && instance.Category.Id.Value
-                    == (long)BuiltInCategory.OST_PlumbingFixtures;
+            return DrainageSourceResolver.HasOpenPipingEnd(
+                element);
         }
 
         public bool AllowReference(Reference reference, XYZ position)
@@ -34,10 +25,26 @@ namespace RfaMetadataAddin.Drainage
     internal sealed class DrainageMainSelectionFilter :
         ISelectionFilter
     {
+        private readonly ElementId _excludedElementId;
+
+        public DrainageMainSelectionFilter(
+            ElementId excludedElementId)
+        {
+            _excludedElementId = excludedElementId;
+        }
+
         public bool AllowElement(Element element)
         {
             Pipe pipe = element as Pipe;
             if (pipe == null)
+            {
+                return false;
+            }
+            if (_excludedElementId != null
+                && _excludedElementId
+                    != ElementId.InvalidElementId
+                && pipe.Id.Value
+                    == _excludedElementId.Value)
             {
                 return false;
             }
@@ -74,39 +81,104 @@ namespace RfaMetadataAddin.Drainage
                     "SOURCE_NOT_SUPPORTED");
             }
 
-            FamilyInstance fixture = sourceElement as FamilyInstance;
-            if (fixture != null
-                && fixture.Category != null
-                && fixture.Category.Id.Value
-                    == (long)BuiltInCategory.OST_PlumbingFixtures)
-            {
-                Connector connector = ResolveFixtureConnector(fixture);
-                return new DrainageSourceRef
-                {
-                    SourceElement = fixture,
-                    SourceConnector = connector,
-                    Kind = DrainageSourceKind.PlumbingFixture,
-                    PickPoint = pickPoint
-                };
-            }
-
-            Pipe standpipe = sourceElement as Pipe;
-            if (standpipe != null && IsVerticalPipe(standpipe))
-            {
-                Connector connector = ResolveOpenPipeEnd(
-                    standpipe,
+            IList<DrainageConnectorRef> candidates =
+                BuildConnectorRefs(
+                    sourceElement,
                     pickPoint);
-                return new DrainageSourceRef
-                {
-                    SourceElement = standpipe,
-                    SourceConnector = connector,
-                    Kind = DrainageSourceKind.Standpipe,
-                    PickPoint = pickPoint
-                };
+            if (candidates.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "SOURCE_CONNECTOR_MISSING: 選取物件沒有可用的開放 piping end connector。");
             }
 
-            throw new InvalidOperationException(
-                "SOURCE_NOT_SUPPORTED: 只接受衛生器具或有未連接端的立管。");
+            IList<DrainageConfigurationProfile> profiles =
+                DrainageConfigurationStore
+                    .Load(sourceElement.Document)
+                    .Profiles;
+            foreach (DrainageConnectorRef candidate in candidates)
+            {
+                ScoreCandidate(
+                    candidate,
+                    pickPoint,
+                    profiles);
+            }
+            Pipe sourcePipe = sourceElement as Pipe;
+            if (sourcePipe != null
+                && IsVerticalPipe(sourcePipe))
+            {
+                foreach (DrainageConnectorRef candidate in candidates)
+                {
+                    if (candidate.Axis != null
+                        && candidate.Axis.Z < -0.90)
+                    {
+                        candidate.Score += 1000.0;
+                        candidate.Evidence.Add(
+                            "垂直 Pipe 優先使用向下開放端");
+                    }
+                }
+            }
+            candidates = candidates
+                .OrderByDescending(item => item.Score)
+                .ThenBy(item => item.Origin.X)
+                .ThenBy(item => item.Origin.Y)
+                .ThenBy(item => item.Origin.Z)
+                .ThenBy(item => item.ConnectorIndex)
+                .ToList();
+
+            DrainageConnectorRef selected = candidates[0];
+            if (selected.FlowDirectionKnown
+                && selected.FlowDirection == FlowDirectionType.In
+                && !profiles.Any(item => item != null
+                    && item.Enabled
+                    && item.AllowInFlow
+                    && ProfileAllowsSystem(item, selected)))
+            {
+                throw new InvalidOperationException(
+                    "SOURCE_FLOW_INCOMPATIBLE: connector 的 FlowDirection 為 In，且沒有允許此方向的 Connection Profile。");
+            }
+            if (candidates.Count > 1)
+            {
+                double pickTolerance =
+                    UnitUtils.ConvertToInternalUnits(
+                        50,
+                        UnitTypeId.Millimeters);
+                double firstDistance = pickPoint == null
+                    ? 0
+                    : selected.Origin.DistanceTo(pickPoint);
+                double secondDistance = pickPoint == null
+                    ? 0
+                    : candidates[1].Origin.DistanceTo(pickPoint);
+                if (selected.Score - candidates[1].Score < 8.0
+                    && (pickPoint == null
+                        || Math.Abs(
+                            secondDistance - firstDistance)
+                            < pickTolerance))
+                {
+                    throw new InvalidOperationException(
+                        "SOURCE_CONNECTOR_AMBIGUOUS: 多個 connector 的系統、方向與距離接近，請靠近要使用的接口點選。");
+                }
+            }
+
+            return new DrainageSourceRef
+            {
+                SourceElement = sourceElement,
+                SourceConnector = selected.Connector,
+                ConnectorRef = selected,
+                Kind = sourceElement is Pipe
+                    ? DrainageSourceKind.PipeOpenEnd
+                    : DrainageSourceKind.FamilyConnector,
+                PickPoint = pickPoint
+            };
+        }
+
+        internal static bool HasOpenPipingEnd(Element element)
+        {
+            return GetConnectors(element)
+                .Any(connector =>
+                    connector.Domain == Domain.DomainPiping
+                    && connector.ConnectorType
+                        == ConnectorType.End
+                    && !connector.IsConnected);
         }
 
         internal static bool IsVerticalPipe(Pipe pipe)
@@ -153,98 +225,252 @@ namespace RfaMetadataAddin.Drainage
             }
         }
 
-        private static Connector ResolveFixtureConnector(
-            FamilyInstance fixture)
+        private static IList<DrainageConnectorRef> BuildConnectorRefs(
+            Element sourceElement,
+            XYZ pickPoint)
         {
-            if (fixture.MEPModel == null
-                || fixture.MEPModel.ConnectorManager == null)
-            {
-                throw new InvalidOperationException(
-                    "SOURCE_CONNECTOR_MISSING: 衛生器具沒有 MEP connector。");
-            }
-            List<Connector> candidates = fixture.MEPModel
-                .ConnectorManager
-                .Connectors
-                .Cast<Connector>()
+            List<Connector> connectors = GetConnectors(
+                    sourceElement)
                 .Where(connector =>
                     connector.Domain == Domain.DomainPiping
                     && connector.ConnectorType
                         == ConnectorType.End
                     && !connector.IsConnected)
+                .OrderBy(connector => connector.Origin.X)
+                .ThenBy(connector => connector.Origin.Y)
+                .ThenBy(connector => connector.Origin.Z)
                 .ToList();
-            List<Connector> sanitary = candidates
-                .Where(connector =>
-                    string.Equals(
-                        SafeSystemClassification(connector),
-                        "Sanitary",
-                        StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(
-                        SafeSystemClassification(connector),
-                        "Waste",
-                        StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            if (sanitary.Count == 1)
+            var result = new List<DrainageConnectorRef>();
+            for (int index = 0;
+                index < connectors.Count;
+                index++)
             {
-                return sanitary[0];
+                Connector connector = connectors[index];
+                XYZ axis = SafeAxis(connector);
+                FlowDirectionType direction;
+                bool directionKnown = TryReadDirection(
+                    connector,
+                    out direction);
+                string classification =
+                    SafeSystemClassification(connector);
+                result.Add(new DrainageConnectorRef
+                {
+                    Connector = connector,
+                    ConnectorIndex = index,
+                    ConnectorKey = sourceElement.UniqueId
+                        + ":PIPING_END:"
+                        + index.ToString("D2")
+                        + ":"
+                        + StablePointKey(connector.Origin),
+                    Origin = connector.Origin,
+                    Axis = axis,
+                    DiameterMm = ReadDiameterMm(connector),
+                    Shape = connector.Shape,
+                    FlowDirection = direction,
+                    FlowDirectionKnown = directionKnown,
+                    SystemClassification = classification,
+                    SystemTypeUniqueId =
+                        ReadSystemTypeUniqueId(connector),
+                    IsConnected = connector.IsConnected,
+                    Evidence = new List<string>
+                    {
+                        "DomainPiping",
+                        "ConnectorType.End",
+                        "未連接",
+                        directionKnown
+                            ? "FlowDirection="
+                                + direction
+                            : "FlowDirection=Undefined",
+                        string.IsNullOrWhiteSpace(classification)
+                            ? "SystemClassification=Unknown"
+                            : "SystemClassification="
+                                + classification
+                    }
+                });
             }
-            if (sanitary.Count == 0 && candidates.Count == 1)
-            {
-                return candidates[0];
-            }
-            if (sanitary.Count > 1 || candidates.Count > 1)
-            {
-                throw new InvalidOperationException(
-                    "SOURCE_CONNECTOR_AMBIGUOUS: 衛生器具有多個未連接排水 connector。");
-            }
-            throw new InvalidOperationException(
-                "SOURCE_CONNECTOR_MISSING: 衛生器具沒有可用的未連接排水 connector。");
+            return result;
         }
 
-        private static Connector ResolveOpenPipeEnd(
-            Pipe pipe,
-            XYZ pickPoint)
+        private static IEnumerable<Connector> GetConnectors(
+            Element element)
         {
-            List<Connector> candidates = pipe.ConnectorManager
-                .Connectors
-                .Cast<Connector>()
-                .Where(connector =>
-                    connector.ConnectorType
-                        == ConnectorType.End
-                    && !connector.IsConnected)
-                .ToList();
-            if (candidates.Count == 1)
+            Pipe pipe = element as Pipe;
+            if (pipe != null
+                && pipe.ConnectorManager != null)
             {
-                return candidates[0];
+                return pipe.ConnectorManager.Connectors
+                    .Cast<Connector>();
             }
-            if (candidates.Count == 0)
+            FamilyInstance instance =
+                element as FamilyInstance;
+            if (instance != null
+                && instance.MEPModel != null
+                && instance.MEPModel.ConnectorManager != null)
             {
-                throw new InvalidOperationException(
-                    "SOURCE_CONNECTOR_CONNECTED: 立管沒有未連接端。");
+                return instance.MEPModel.ConnectorManager
+                    .Connectors
+                    .Cast<Connector>();
             }
-            if (pickPoint == null)
+            return Enumerable.Empty<Connector>();
+        }
+
+        private static void ScoreCandidate(
+            DrainageConnectorRef candidate,
+            XYZ pickPoint,
+            IList<DrainageConfigurationProfile> profiles)
+        {
+            double score = 100.0;
+            if (candidate.Shape == ConnectorProfileType.Round
+                && candidate.DiameterMm > 0)
             {
-                throw new InvalidOperationException(
-                    "SOURCE_CONNECTOR_AMBIGUOUS: 請靠近要接管的立管端點點選。");
+                score += 25.0;
+                candidate.Evidence.Add("圓形且可讀取尺寸");
             }
-            Connector nearest = candidates
-                .OrderBy(item => item.Origin.DistanceTo(pickPoint))
-                .First();
-            double secondDistance = candidates
-                .OrderBy(item => item.Origin.DistanceTo(pickPoint))
-                .Skip(1)
-                .Select(item => item.Origin.DistanceTo(pickPoint))
-                .FirstOrDefault();
-            double firstDistance =
-                nearest.Origin.DistanceTo(pickPoint);
-            if (Math.Abs(secondDistance - firstDistance)
-                < UnitUtils.ConvertToInternalUnits(
-                    50,
-                    UnitTypeId.Millimeters))
+            else
             {
-                throw new InvalidOperationException(
-                    "SOURCE_CONNECTOR_AMBIGUOUS: 無法判定立管接入端，請更靠近端點點選。");
+                score -= 200.0;
+                candidate.Evidence.Add("非圓形或尺寸無效");
             }
-            return nearest;
+            if (candidate.FlowDirectionKnown)
+            {
+                if (candidate.FlowDirection
+                    == FlowDirectionType.Out)
+                {
+                    score += 35.0;
+                }
+                else if (candidate.FlowDirection
+                    == FlowDirectionType.Bidirectional)
+                {
+                    score += 15.0;
+                }
+                else
+                {
+                    score -= 100.0;
+                }
+            }
+            else
+            {
+                score += 10.0;
+            }
+            if (candidate.Axis != null
+                && candidate.Axis.GetLength() > 0.99)
+            {
+                score += 10.0;
+            }
+            if ((profiles ?? new List<DrainageConfigurationProfile>())
+                .Any(item => item != null
+                    && item.Enabled
+                    && ProfileAllowsSystem(item, candidate)))
+            {
+                score += 30.0;
+                candidate.Evidence.Add("符合專案 Connection Profile");
+            }
+            if (pickPoint != null)
+            {
+                score -= Math.Min(
+                    30.0,
+                    candidate.Origin.DistanceTo(pickPoint) * 6.0);
+            }
+            candidate.Score = score;
+        }
+
+        private static bool ProfileAllowsSystem(
+            DrainageConfigurationProfile profile,
+            DrainageConnectorRef connector)
+        {
+            string allowed = profile
+                .AllowedSourceSystemClassifications ?? "";
+            if (string.IsNullOrWhiteSpace(allowed))
+            {
+                return true;
+            }
+            return allowed
+                .Split(new[] { ',', ';', '\r', '\n' },
+                    StringSplitOptions.RemoveEmptyEntries)
+                .Select(item => item.Trim())
+                .Any(item => string.Equals(
+                    item,
+                    connector.SystemClassification,
+                    StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static double ReadDiameterMm(
+            Connector connector)
+        {
+            try
+            {
+                return connector.Shape
+                        == ConnectorProfileType.Round
+                    ? UnitUtils.ConvertFromInternalUnits(
+                        connector.Radius * 2.0,
+                        UnitTypeId.Millimeters)
+                    : 0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static XYZ SafeAxis(Connector connector)
+        {
+            try
+            {
+                XYZ axis = connector.CoordinateSystem.BasisZ;
+                return axis == null
+                    || axis.GetLength() < 0.000001
+                        ? XYZ.Zero
+                        : axis.Normalize();
+            }
+            catch
+            {
+                return XYZ.Zero;
+            }
+        }
+
+        private static bool TryReadDirection(
+            Connector connector,
+            out FlowDirectionType direction)
+        {
+            try
+            {
+                direction = connector.Direction;
+                return true;
+            }
+            catch
+            {
+                direction = FlowDirectionType.Bidirectional;
+                return false;
+            }
+        }
+
+        private static string ReadSystemTypeUniqueId(
+            Connector connector)
+        {
+            try
+            {
+                MEPSystem system = connector.MEPSystem;
+                if (system == null)
+                {
+                    return "";
+                }
+                Element type = system.Document.GetElement(
+                    system.GetTypeId());
+                return type == null ? "" : type.UniqueId;
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static string StablePointKey(XYZ point)
+        {
+            return string.Join(
+                ",",
+                Math.Round(point.X, 6),
+                Math.Round(point.Y, 6),
+                Math.Round(point.Z, 6));
         }
 
         private static string SafeSystemClassification(
@@ -292,13 +518,34 @@ namespace RfaMetadataAddin.Drainage
                 };
             }
 
-            IEnumerable<Pipe> pipes = activeView != null
+            IList<Pipe> activeViewPipes = activeView != null
                 ? new FilteredElementCollector(
                     document,
                     activeView.Id)
                     .OfClass(typeof(Pipe))
                     .Cast<Pipe>()
-                : Enumerable.Empty<Pipe>();
+                    .ToList()
+                : new List<Pipe>();
+            ISet<long> activeViewIds = new HashSet<long>(
+                activeViewPipes.Select(item => item.Id.Value));
+            XYZ sourceOrigin = source.SourceConnector.Origin;
+            XYZ delta = new XYZ(
+                SearchRadiusFeet,
+                SearchRadiusFeet,
+                SearchRadiusFeet);
+            var spatialFilter =
+                new BoundingBoxIntersectsFilter(
+                    new Outline(
+                        sourceOrigin - delta,
+                        sourceOrigin + delta));
+            IEnumerable<Pipe> pipes = activeViewPipes
+                .Concat(
+                    new FilteredElementCollector(document)
+                        .OfClass(typeof(Pipe))
+                        .WherePasses(spatialFilter)
+                        .Cast<Pipe>())
+                .GroupBy(item => item.Id.Value)
+                .Select(group => group.First());
             double sourceDiameterMm =
                 DrainageSourceResolver.ReadDiameterMm(source);
             var ranked = new List<DrainageTargetRef>();
@@ -320,35 +567,40 @@ namespace RfaMetadataAddin.Drainage
                     DrainageConfigurationStore.ResolveForPipe(
                         document,
                         pipe,
-                        sourceDiameterMm);
+                        sourceDiameterMm,
+                        source);
                 double score = 100.0 - distance * 2.0;
                 var evidence = new List<string>();
+                bool isActiveView =
+                    activeViewIds.Contains(pipe.Id.Value);
+                if (isActiveView)
+                {
+                    score += 8.0;
+                    evidence.Add("位於目前視圖");
+                }
                 if (configuration != null)
                 {
-                    score += 30.0;
-                    evidence.Add("管類型有專案排水設定");
+                    score += 60.0;
+                    evidence.Add("目標與來源符合 Connection Profile");
                 }
                 else
                 {
-                    score -= 50.0;
-                    evidence.Add("管類型缺少專案排水設定");
+                    score -= 80.0;
+                    evidence.Add("PROFILE_NOT_MATCHED");
                 }
                 if (IsBelowSource(pipe, source.SourceConnector.Origin))
                 {
                     score += 15.0;
                     evidence.Add("幹管位於接入端下方");
                 }
-                if (HasCompatibleSystem(source.SourceElement, pipe))
-                {
-                    score += 20.0;
-                    evidence.Add("系統類型相容");
-                }
                 ranked.Add(new DrainageTargetRef
                 {
                     MainPipe = pipe,
                     Score = score,
                     DistanceFeet = distance,
-                    Resolution = "BoundedActiveViewSearch",
+                    Resolution = isActiveView
+                        ? "BoundedActiveViewSearch"
+                        : "BoundedSpatialSearch",
                     Evidence = evidence
                 });
             }
@@ -356,6 +608,8 @@ namespace RfaMetadataAddin.Drainage
             ranked = ranked
                 .OrderByDescending(item => item.Score)
                 .ThenBy(item => item.DistanceFeet)
+                .ThenBy(item => item.MainPipe.Id.Value)
+                .Take(20)
                 .ToList();
             if (ranked.Count > 0)
             {

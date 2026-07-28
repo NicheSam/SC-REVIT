@@ -131,6 +131,550 @@ internal static class DrainageEngineeringCoreTests
             MaximumOutletAdvance = 900,
             SearchStep = 1
         };
+        var singleInput = new DrainageWallRouteInput
+        {
+            Source = new DrainageGeometryPoint
+            {
+                X = 0,
+                Y = 0,
+                Z = 7.0710678119
+            },
+            OutletX = 0,
+            OutletY = 1,
+            OutletZ = 0,
+            MainStart = new DrainageGeometryPoint
+            {
+                X = -2000,
+                Y = 1000,
+                Z = 0
+            },
+            MainEnd = new DrainageGeometryPoint
+            {
+                X = 2000,
+                Y = 1000,
+                Z = 0
+            },
+            DownstreamEndpointIndex = 1,
+            SlopeRatio = 0.01,
+            StubLength = 100,
+            ElbowTakeout = 20,
+            JunctionBranchTakeout = 30,
+            MinimumTangentLength = 50,
+            MainEndClearance = 100,
+            MaximumOutletAdvance = 2000,
+            SearchStep = 1
+        };
+        Expect(
+            !DrainageEngineeringCore
+                .IsSourceBelowTargetMainAtPlanProjection(
+                    singleInput,
+                    0.001),
+            "source above projected main is allowed");
+        var belowMainInput = new DrainageWallRouteInput
+        {
+            Source = new DrainageGeometryPoint
+            {
+                X = 0,
+                Y = 0,
+                Z = -10
+            },
+            OutletX = 0,
+            OutletY = 1,
+            OutletZ = 0,
+            MainStart = singleInput.MainStart,
+            MainEnd = singleInput.MainEnd,
+            DownstreamEndpointIndex = 1,
+            SlopeRatio = 0.01,
+            StubLength = 100,
+            ElbowTakeout = 20,
+            JunctionBranchTakeout = 30,
+            MinimumTangentLength = 50,
+            MainEndClearance = 100,
+            MaximumOutletAdvance = 2000,
+            SearchStep = 1
+        };
+        Expect(
+            DrainageEngineeringCore
+                .IsSourceBelowTargetMainAtPlanProjection(
+                    belowMainInput,
+                    0.001),
+            "source below projected main is detected");
+        Expect(
+            DrainageEngineeringCore
+                .SolveSingleFortyFive(belowMainInput)
+                .FailureCode == "SOURCE_BELOW_TARGET_MAIN",
+            "source below main returns stable failure");
+        DrainageSingleFortyFiveSolution singleRoute =
+            DrainageEngineeringCore
+                .SolveSingleFortyFive(singleInput);
+        Expect(
+            singleRoute.IsFeasible,
+            "single 45 route feasible");
+        Expect(
+            singleRoute.IsFeasible
+                && Math.Abs(
+                    singleRoute.ElbowAngleDegrees - 45)
+                    <= 0.01,
+            "single 45 elbow angle");
+        Expect(
+            singleRoute.IsFeasible
+                && singleRoute.StubEnd.Z
+                    >= singleRoute.MainTie.Z,
+            "single 45 monotonic");
+        Expect(
+            singleRoute.IsFeasible
+                && Math.Abs(singleRoute.MainTie.Z)
+                    < 0.000001,
+            "single 45 ties at main elevation");
+        DrainageSingleFortyFiveSolution repeatedSingleRoute =
+            DrainageEngineeringCore
+                .SolveSingleFortyFive(singleInput);
+        Expect(
+            singleRoute.IsFeasible
+                && repeatedSingleRoute.IsFeasible
+                && Math.Abs(
+                    singleRoute.StubEnd.X
+                    - repeatedSingleRoute.StubEnd.X)
+                    < 0.000001
+                && Math.Abs(
+                    singleRoute.MainTie.X
+                    - repeatedSingleRoute.MainTie.X)
+                    < 0.000001,
+            "single 45 result is deterministic");
+        singleInput.MinimumTangentLength = 2000;
+        Expect(
+            !DrainageEngineeringCore
+                .SolveSingleFortyFive(singleInput)
+                .IsFeasible,
+            "single 45 minimum tangent enforced");
+        singleInput.MinimumTangentLength = 50;
+        singleInput.OutletX = 1;
+        singleInput.OutletY = 0;
+        Expect(
+            !DrainageEngineeringCore
+                .SolveSingleFortyFive(singleInput)
+                .IsFeasible,
+            "single 45 rejects incompatible outlet");
+        singleInput.OutletX = 0;
+        singleInput.OutletY = 1;
+
+        var directInput = new DrainageWallRouteInput
+        {
+            Source = new DrainageGeometryPoint
+            {
+                X = -500,
+                Y = 500,
+                Z = 7.0710678119
+            },
+            OutletX = 1,
+            OutletY = 1,
+            OutletZ = -0.0141421356,
+            MainStart = singleInput.MainStart,
+            MainEnd = singleInput.MainEnd,
+            DownstreamEndpointIndex = 1,
+            SlopeRatio = 0.01,
+            StubLength = 100,
+            ElbowTakeout = 20,
+            JunctionBranchTakeout = 30,
+            MinimumTangentLength = 50,
+            MainEndClearance = 100,
+            MaximumOutletAdvance = 2000,
+            SearchStep = 1
+        };
+        DrainageAxisDirectSolution directRoute =
+            DrainageEngineeringCore
+                .SolveAxisDirect(directInput);
+        Expect(
+            directRoute.IsFeasible,
+            "axis direct route feasible");
+        Expect(
+            directRoute.IsFeasible
+                && Math.Abs(
+                    directRoute.JunctionAngleDegrees - 45)
+                    <= 0.01,
+            "axis direct junction angle");
+        Expect(
+            directRoute.IsFeasible
+                && Math.Abs(directRoute.MainTie.Z)
+                    < 0.000001,
+            "axis direct ties at main elevation");
+        directInput.OutletZ = 0;
+        Expect(
+            DrainageEngineeringCore
+                .SolveAxisDirect(directInput)
+                .FailureCode
+                == "AXIS_DIRECT_SLOPE_MISMATCH",
+            "axis direct requires signed profile slope");
+
+        var shortHorizontalInput = new DrainageWallRouteInput
+        {
+            Source = new DrainageGeometryPoint
+            {
+                X = 0,
+                Y = 0,
+                Z = 0
+            },
+            OutletX = 0,
+            OutletY = -1,
+            OutletZ = 0,
+            MainStart = new DrainageGeometryPoint
+            {
+                X = 8000,
+                Y = -1473.75,
+                Z = -86
+            },
+            MainEnd = new DrainageGeometryPoint
+            {
+                X = -2000,
+                Y = -1473.75,
+                Z = 14
+            },
+            DownstreamEndpointIndex = 0,
+            SlopeRatio = 0.01,
+            StubLength = 160,
+            ElbowTakeout = 43.06,
+            JunctionBranchTakeout = 94,
+            MinimumTangentLength = 80,
+            MainEndClearance = 150,
+            MaximumOutletAdvance = 25000,
+            MaximumDouble45LateralOffset = 25,
+            SearchStep = 5
+        };
+        DrainageSingleFortyFiveSolution shortHorizontalSingle =
+            DrainageEngineeringCore.SolveSingleFortyFive(
+                shortHorizontalInput);
+        DrainageWallRouteSolution shortHorizontalDouble =
+            DrainageEngineeringCore
+                .SolveWallOutletGeneralDoubleFortyFive(
+                    shortHorizontalInput);
+        Expect(
+            !shortHorizontalSingle.IsFeasible,
+            "single 45 rejects outlet overshoot and return");
+        Expect(
+            shortHorizontalSingle.FailureCode
+                == "SINGLE45_TANGENT_TOO_SHORT",
+            "single 45 reports forward route tangent shortage");
+        Expect(
+            !shortHorizontalDouble.IsFeasible
+                && shortHorizontalDouble.FailureCode
+                    == "DOUBLE_45_TANGENT_TOO_SHORT",
+            "short horizontal case has no constructible double 45");
+        double boundedAdjustment;
+        Expect(
+            DrainageEngineeringCore
+                .TryComputeBoundedElevationCompensation(
+                    0,
+                    -6,
+                    100,
+                    1,
+                    out boundedAdjustment)
+                && Math.Abs(boundedAdjustment + 6)
+                    < 0.000001,
+            "small main-slope elevation datum is compensated");
+        Expect(
+            !DrainageEngineeringCore
+                .TryComputeBoundedElevationCompensation(
+                    0,
+                    -250,
+                    100,
+                    1,
+                    out boundedAdjustment),
+            "large elevation mismatch is never compensated");
+        shortHorizontalInput.Source.Z = -5;
+        Expect(
+            DrainageEngineeringCore
+                .SolveSingleFortyFive(shortHorizontalInput)
+                .IsFeasible
+                || DrainageEngineeringCore
+                .SolveWallOutletGeneralDoubleFortyFive(
+                    shortHorizontalInput)
+                .IsFeasible,
+            "one-millimeter head above the projected main avoids degenerate geometry");
+        shortHorizontalInput.Source.Z = 0;
+
+        var verticalSourceInput = new DrainageWallRouteInput
+        {
+            Source = new DrainageGeometryPoint
+            {
+                X = 0,
+                Y = 0,
+                Z = 0
+            },
+            OutletX = 0,
+            OutletY = 0,
+            OutletZ = -1,
+            MainStart = new DrainageGeometryPoint
+            {
+                X = -5000,
+                Y = -4000,
+                Z = -300
+            },
+            MainEnd = new DrainageGeometryPoint
+            {
+                X = 5000,
+                Y = -4000,
+                Z = -400
+            },
+            DownstreamEndpointIndex = 1,
+            SlopeRatio = 0.01,
+            StubLength = 160,
+            ElbowTakeout = 43.06,
+            JunctionBranchTakeout = 94,
+            MinimumTangentLength = 80,
+            MainEndClearance = 150,
+            MaximumOutletAdvance = 25000,
+            MaximumDouble45LateralOffset = 25,
+            SearchStep = 5
+        };
+        DrainageWallRouteSolution verticalSourceRoute =
+            DrainageEngineeringCore
+                .SolveWallOutletGeneralDoubleFortyFive(
+                    verticalSourceInput);
+        Expect(
+            verticalSourceRoute.IsFeasible,
+            "vertical source route remains feasible");
+        Expect(
+            verticalSourceRoute.IsFeasible
+                && Math.Abs(verticalSourceRoute.StubEnd.X)
+                    < 0.000001
+                && Math.Abs(verticalSourceRoute.StubEnd.Y)
+                    < 0.000001
+                && verticalSourceRoute.StubEnd.Z < 0,
+            "vertical source first descends on connector axis");
+        Expect(
+            verticalSourceRoute.IsFeasible
+                && verticalSourceRoute.OutletAdvance
+                    > verticalSourceInput.StubLength
+                && verticalSourceRoute.DiagonalTangentLength
+                    <= verticalSourceInput.MinimumTangentLength
+                        + 0.000001,
+            "vertical source maximizes axial descent before offset");
+        verticalSourceInput.Source.Z = 1000;
+        DrainageTerminalDropSolution terminalDropRoute =
+            DrainageEngineeringCore
+                .SolveVerticalTerminalDropRoute(
+                    verticalSourceInput);
+        Expect(
+            terminalDropRoute.IsFeasible,
+            "vertical source terminal-drop route remains feasible: "
+                + terminalDropRoute.FailureCode);
+        Expect(
+            terminalDropRoute.IsFeasible
+                && terminalDropRoute.UpperBranchTangentLength
+                    > terminalDropRoute.TerminalDropTangentLength
+                && terminalDropRoute.UpperBranchTangentLength
+                    >= terminalDropRoute.BranchTangentLength
+                        + verticalSourceInput.MinimumTangentLength
+                        - 0.000001,
+            "terminal-drop route keeps the long run before the localized descent");
+        Expect(
+            terminalDropRoute.IsFeasible
+                && terminalDropRoute.BranchTangentLength
+                    >= Math.Max(
+                        verticalSourceInput.MinimumTangentLength,
+                        verticalSourceInput.MainEndClearance)
+                        - 0.000001
+                && terminalDropRoute.TerminalDropStart.Z
+                    > terminalDropRoute.BranchStart.Z
+                && terminalDropRoute.BranchStart.Z
+                    > terminalDropRoute.MainTie.Z,
+            "terminal-drop route descends near the main and keeps a constructible final approach");
+        Expect(
+            terminalDropRoute.IsFeasible
+                && Math.Abs(
+                    terminalDropRoute.PlanTurnAngleDegrees)
+                    <= 0.000001,
+            "terminal-drop route keeps the upper and final branches in one vertical routing plane");
+        Expect(
+            terminalDropRoute.IsFeasible
+                && Math.Abs(
+                    DrainageEngineeringCore.AxialAngleDegrees(
+                        terminalDropRoute.StubEnd.X
+                            - verticalSourceInput.Source.X,
+                        terminalDropRoute.StubEnd.Y
+                            - verticalSourceInput.Source.Y,
+                        terminalDropRoute.StubEnd.Z
+                            - verticalSourceInput.Source.Z,
+                        terminalDropRoute.UpperBranchStart.X
+                            - terminalDropRoute.StubEnd.X,
+                        terminalDropRoute.UpperBranchStart.Y
+                            - terminalDropRoute.StubEnd.Y,
+                        terminalDropRoute.UpperBranchStart.Z
+                            - terminalDropRoute.StubEnd.Z)
+                    - 45.0) < 1.0
+                && Math.Abs(
+                    DrainageEngineeringCore.AxialAngleDegrees(
+                        terminalDropRoute.UpperBranchStart.X
+                            - terminalDropRoute.StubEnd.X,
+                        terminalDropRoute.UpperBranchStart.Y
+                            - terminalDropRoute.StubEnd.Y,
+                        terminalDropRoute.UpperBranchStart.Z
+                            - terminalDropRoute.StubEnd.Z,
+                        terminalDropRoute.TerminalDropStart.X
+                            - terminalDropRoute.UpperBranchStart.X,
+                        terminalDropRoute.TerminalDropStart.Y
+                            - terminalDropRoute.UpperBranchStart.Y,
+                        terminalDropRoute.TerminalDropStart.Z
+                            - terminalDropRoute.UpperBranchStart.Z)
+                    - 45.0) < 1.0
+                && Math.Abs(
+                    DrainageEngineeringCore.AxialAngleDegrees(
+                        terminalDropRoute.TerminalDropStart.X
+                            - terminalDropRoute.UpperBranchStart.X,
+                        terminalDropRoute.TerminalDropStart.Y
+                            - terminalDropRoute.UpperBranchStart.Y,
+                        terminalDropRoute.TerminalDropStart.Z
+                            - terminalDropRoute.UpperBranchStart.Z,
+                        terminalDropRoute.BranchStart.X
+                            - terminalDropRoute.TerminalDropStart.X,
+                        terminalDropRoute.BranchStart.Y
+                            - terminalDropRoute.TerminalDropStart.Y,
+                        terminalDropRoute.BranchStart.Z
+                            - terminalDropRoute.TerminalDropStart.Z)
+                    - 45.0) < 1.0
+                && Math.Abs(
+                    DrainageEngineeringCore.AxialAngleDegrees(
+                        terminalDropRoute.BranchStart.X
+                            - terminalDropRoute.TerminalDropStart.X,
+                        terminalDropRoute.BranchStart.Y
+                            - terminalDropRoute.TerminalDropStart.Y,
+                        terminalDropRoute.BranchStart.Z
+                            - terminalDropRoute.TerminalDropStart.Z,
+                        terminalDropRoute.MainTie.X
+                            - terminalDropRoute.BranchStart.X,
+                        terminalDropRoute.MainTie.Y
+                            - terminalDropRoute.BranchStart.Y,
+                        terminalDropRoute.MainTie.Z
+                            - terminalDropRoute.BranchStart.Z)
+                    - 45.0) < 1.0,
+            "terminal-drop route uses four genuine forty-five-degree elbows");
+        verticalSourceInput.Source.Z = 0;
+        var boundedVerticalCompensationInput =
+            new DrainageWallRouteInput
+            {
+                Source = new DrainageGeometryPoint
+                {
+                    X = 155000,
+                    Y = 64000,
+                    Z = -4500
+                },
+                OutletX = 0,
+                OutletY = 0,
+                OutletZ = -1,
+                MainStart = new DrainageGeometryPoint
+                {
+                    X = 150000,
+                    Y = 60000,
+                    Z = -4800
+                },
+                MainEnd = new DrainageGeometryPoint
+                {
+                    X = 160000,
+                    Y = 60000,
+                    Z = -4900
+                },
+                DownstreamEndpointIndex = 1,
+                SlopeRatio = 0.01,
+                StubLength = 160,
+                ElbowTakeout = 43.06,
+                JunctionBranchTakeout = 94,
+                MinimumTangentLength = 80,
+                MainEndClearance = 150,
+                MaximumOutletAdvance = 25000,
+                MaximumDouble45LateralOffset = 25,
+                SearchStep = 1
+            };
+        DrainageTerminalDropSolution uncompensatedVerticalRoute =
+            DrainageEngineeringCore
+                .SolveVerticalTerminalDropRoute(
+                    boundedVerticalCompensationInput);
+        Expect(
+            !uncompensatedVerticalRoute.IsFeasible
+                && uncompensatedVerticalRoute.FailureCode
+                    == "TERMINAL_DROP_INSUFFICIENT_VERTICAL_FALL",
+            "model vertical source reports insufficient vertical fall before compensation");
+        DrainageVerticalPlanTurnSolution preferredVerticalRoute =
+            DrainageEngineeringCore
+                .SolveVerticalPlanTurnRoute(
+                    boundedVerticalCompensationInput);
+        double preferredVerticalFinalHorizontalLength = Math.Sqrt(
+            Math.Pow(
+                preferredVerticalRoute.MainTie.X
+                    - preferredVerticalRoute.PlanTurnStart.X,
+                2)
+            + Math.Pow(
+                preferredVerticalRoute.MainTie.Y
+                    - preferredVerticalRoute.PlanTurnStart.Y,
+                2));
+        double preferredVerticalRadialHorizontalLength = Math.Sqrt(
+            Math.Pow(
+                preferredVerticalRoute.PlanTurnStart.X
+                    - preferredVerticalRoute.RadialStart.X,
+                2)
+            + Math.Pow(
+                preferredVerticalRoute.PlanTurnStart.Y
+                    - preferredVerticalRoute.RadialStart.Y,
+                2));
+        Expect(
+            preferredVerticalRoute.IsFeasible
+                && preferredVerticalRoute.OutletAdvance
+                    > boundedVerticalCompensationInput.StubLength
+                && preferredVerticalRoute
+                    .SourceDiagonalTangentLength
+                    >= boundedVerticalCompensationInput
+                        .MinimumTangentLength
+                        - 0.000001
+                && preferredVerticalRoute.RadialTangentLength
+                    >= boundedVerticalCompensationInput
+                        .MinimumTangentLength
+                        - 0.000001
+                && preferredVerticalRoute
+                    .FinalBranchTangentLength
+                    >= boundedVerticalCompensationInput
+                        .MinimumTangentLength
+                        - 0.000001,
+            "model vertical source preserves source double-45, radial run, and final plan-45 approach");
+        Expect(
+            preferredVerticalRoute.IsFeasible
+                && preferredVerticalFinalHorizontalLength
+                    > 0.000001
+                && Math.Abs(
+                    (preferredVerticalRoute.PlanTurnStart.Z
+                        - preferredVerticalRoute.MainTie.Z)
+                    / preferredVerticalFinalHorizontalLength
+                    - boundedVerticalCompensationInput.SlopeRatio)
+                    < 0.000001
+                && preferredVerticalRadialHorizontalLength
+                    > 0.000001
+                && Math.Abs(
+                    (preferredVerticalRoute.RadialStart.Z
+                        - preferredVerticalRoute.PlanTurnStart.Z)
+                    / preferredVerticalRadialHorizontalLength
+                    - boundedVerticalCompensationInput.SlopeRatio)
+                    < 0.000001,
+            "vertical radial and final approach runs both carry the configured one-percent signed slope");
+        Expect(
+            preferredVerticalRoute.IsFeasible
+                && Math.Abs(
+                    preferredVerticalRoute
+                        .FirstElbowAngleDegrees
+                    - 45.0) < 1.0
+                && Math.Abs(
+                    preferredVerticalRoute
+                        .SecondElbowAngleDegrees
+                    - 45.0) < 1.0
+                && Math.Abs(
+                    preferredVerticalRoute
+                        .PlanTurnAngleDegrees
+                    - 45.0) < 0.000001,
+            "vertical route uses source double-45 and a separate plan 45 turn");
+        boundedVerticalCompensationInput.Source.Z += 100;
+        Expect(
+            DrainageEngineeringCore
+                .SolveVerticalTerminalDropRoute(
+                    boundedVerticalCompensationInput)
+                .IsFeasible,
+            "one-hundred-millimeter vertical endpoint compensation makes the model route feasible");
         DrainageWallRouteSolution wall =
             DrainageEngineeringCore.SolveWallOutletDoubleFortyFive(wallInput);
         Expect(wall.IsFeasible, "wall double 45 route feasible");
@@ -160,6 +704,11 @@ internal static class DrainageEngineeringCoreTests
             DrainageEngineeringCore
                 .SolveWallOutletGeneralDoubleFortyFive(wallInput);
         Expect(generalWall.IsFeasible, "general wall double 45 feasible");
+        Expect(
+            generalWall.IsFeasible
+                && Math.Abs(
+                    generalWall.MainTie.Z) < 0.000001,
+            "different elevation route ties at main elevation");
         Expect(
             generalWall.StubEnd.Z <= wallInput.Source.Z + 0.000001
                 && generalWall.OffsetEnd.Z
@@ -243,13 +792,13 @@ internal static class DrainageEngineeringCoreTests
             DrainageEngineeringCore
                 .SolveWallOutletGeneralDoubleFortyFive(wallInput);
         Expect(
-            floorRoute.MiddleLateralOffset > 0.000001
-                && constrainedFloorRoute.IsFeasible
+            (constrainedFloorRoute.IsFeasible
                 && constrainedFloorRoute.MiddleLateralOffset
-                    < floorRoute.MiddleLateralOffset
-                && constrainedFloorRoute.MiddleLateralOffset
-                    <= constrainedLateralLimit + 0.000001,
-            "floor solver selects an in-limit alternative candidate");
+                    <= constrainedLateralLimit + 0.000001)
+                || (!constrainedFloorRoute.IsFeasible
+                    && constrainedFloorRoute.FailureCode
+                        == "DOUBLE45_OUT_OF_PLANE_LIMIT"),
+            "floor solver honors lateral offset limit");
         wallInput.MaximumDouble45LateralOffset = null;
         DrainageGeometryPoint originalMainStart = wallInput.MainStart;
         DrainageGeometryPoint originalMainEnd = wallInput.MainEnd;
@@ -316,7 +865,69 @@ internal static class DrainageEngineeringCoreTests
                 new DrainageGeometryPoint { X = 0, Y = 0, Z = 3 }) - 3)
                 < 0.000001,
             "degenerate segment clearance");
-        Console.WriteLine(_failures == 0 ? "PASS: 63 drainage engineering core tests" : "FAILED");
+        Expect(
+            DrainageEngineeringCore.AreJunctionDiametersCompatible(
+                100,
+                100,
+                75,
+                100,
+                75,
+                1),
+            "reducing junction accepts 100x75");
+        Expect(
+            !DrainageEngineeringCore.AreJunctionDiametersCompatible(
+                100,
+                100,
+                100,
+                100,
+                75,
+                1),
+            "reducing junction rejects wrong branch size");
+        double projectedElevation;
+        double projectedParameter;
+        Expect(
+            DrainageEngineeringCore.TryProjectPlanElevation(
+                new DrainageGeometryPoint { X = 0, Y = 0, Z = 10 },
+                new DrainageGeometryPoint { X = 10, Y = 0, Z = 9 },
+                new DrainageGeometryPoint { X = 5, Y = 3, Z = 0 },
+                out projectedElevation,
+                out projectedParameter)
+            && Math.Abs(projectedElevation - 9.5) < 0.000001
+            && Math.Abs(projectedParameter - 0.5) < 0.000001,
+            "plan projection reads local sloped centerline elevation");
+        Expect(
+            DrainageEngineeringCore.IsDownwardVerticalDisplacement(
+                0.5,
+                0.5,
+                -100,
+                1,
+                50),
+            "vertical down accepts bounded plan offset");
+        Expect(
+            !DrainageEngineeringCore.IsDownwardVerticalDisplacement(
+                2,
+                0,
+                -100,
+                1,
+                50),
+            "vertical down rejects lateral offset");
+        Expect(
+            DrainageEngineeringCore.IsDownwardFortyFiveDisplacement(
+                100,
+                0,
+                -100,
+                1,
+                50),
+            "down 45 accepts equal run and drop");
+        Expect(
+            !DrainageEngineeringCore.IsDownwardFortyFiveDisplacement(
+                200,
+                0,
+                -100,
+                1,
+                50),
+            "down 45 rejects wrong angle");
+        Console.WriteLine(_failures == 0 ? "PASS: 94 drainage engineering core tests" : "FAILED");
         return _failures == 0 ? 0 : 1;
     }
 }

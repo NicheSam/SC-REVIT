@@ -30,10 +30,6 @@ namespace RfaMetadataAddin
             }
 
             Document document = uiDocument.Document;
-            Pipe pinnedMain = ResolvePinnedMain(
-                document,
-                uiDocument.Selection.GetElementIds());
-            var targetResolver = new DrainageTargetResolver();
             var workflow = new DrainageWorkflowService();
             var failures = new List<string>();
             int successCount = 0;
@@ -49,9 +45,9 @@ namespace RfaMetadataAddin
                     {
                         Reference sourceReference =
                             uiDocument.Selection.PickObject(
-                                ObjectType.Element,
-                                new DrainageSourceSelectionFilter(),
-                                "點選器具或立管接入端；按 Esc 結束");
+                                 ObjectType.Element,
+                                 new DrainageSourceSelectionFilter(),
+                                 "1/2 點選設備接口或任意開放管端；按 Esc 結束");
                         Element sourceElement = document.GetElement(
                             sourceReference);
                         DrainageSourceRef source =
@@ -67,30 +63,19 @@ namespace RfaMetadataAddin
                                 "SOURCE_CONNECTOR_DIAMETER_UNRESOLVED");
                         }
 
-                        IList<DrainageTargetRef> candidates =
-                            targetResolver.RankCandidates(
-                                document,
-                                document.ActiveView,
-                                source,
-                                pinnedMain);
-                        DrainageTargetRef target =
-                            candidates.FirstOrDefault();
-                        if (target == null
-                            || target.RequiresUserConfirmation)
-                        {
-                            target = PromptForMain(
-                                uiDocument,
-                                source);
-                        }
+                        DrainageTargetRef target = PromptForMain(
+                            uiDocument,
+                            source);
                         DrainageConfigurationProfile configuration =
                             DrainageConfigurationStore.ResolveForPipe(
-                                document,
-                                target.MainPipe,
-                                diameterMm);
-                        if (configuration == null)
-                        {
-                            throw new System.InvalidOperationException(
-                                "CONFIGURATION_MISSING: 目標幹管的 Pipe Type 沒有適用的排水管件設定。");
+                                 document,
+                                 target.MainPipe,
+                                 diameterMm,
+                                 source);
+                         if (configuration == null)
+                         {
+                             throw new System.InvalidOperationException(
+                                 "PROFILE_NOT_MATCHED: 來源 connector 與目標幹管沒有相符的 GravityDrainage Connection Profile。");
                         }
 
                         DrainageExecutionResult result =
@@ -102,18 +87,24 @@ namespace RfaMetadataAddin
                                     Target = target,
                                     Configuration = configuration,
                                     DiameterMm = diameterMm,
+                                    MainDiameterMm =
+                                        ReadPipeDiameterMm(
+                                            target.MainPipe),
                                     DownstreamMode = "auto",
-                                    ActorKind = "human_interactive",
+                                    ActorKind =
+                                        DrainageActorKinds.HumanGui,
                                     IdempotencyKey =
                                         "DIK-"
                                         + Guid.NewGuid().ToString("N")
                                 });
                         if (!result.Succeeded)
                         {
-                            failures.Add(
-                                FormatFailure(
-                                    sourceElement,
-                                    result.Message));
+                            string failure = FormatFailure(
+                                sourceElement,
+                                result.Message);
+                            failures.Add(failure);
+                            ClearActivePreview(uiDocument);
+                            ShowBranchFailure(failure);
                         }
                         else
                         {
@@ -122,11 +113,14 @@ namespace RfaMetadataAddin
                     }
                     catch (Autodesk.Revit.Exceptions.OperationCanceledException)
                     {
+                        ClearActivePreview(uiDocument);
                         break;
                     }
                     catch (Exception ex)
                     {
                         failures.Add(ex.Message);
+                        ClearActivePreview(uiDocument);
+                        ShowBranchFailure(ex.Message);
                     }
                 }
 
@@ -156,19 +150,38 @@ namespace RfaMetadataAddin
             return Result.Succeeded;
         }
 
-        private static Pipe ResolvePinnedMain(
-            Document document,
-            ICollection<ElementId> selectedIds)
+        private static double ReadPipeDiameterMm(Pipe pipe)
         {
-            var filter = new DrainageMainSelectionFilter();
-            List<Pipe> selectedPipes = selectedIds
-                .Select(id => document.GetElement(id) as Pipe)
-                .Where(pipe => pipe != null
-                    && filter.AllowElement(pipe))
-                .ToList();
-            return selectedPipes.Count == 1
-                ? selectedPipes[0]
-                : null;
+            Parameter parameter = pipe == null
+                ? null
+                : pipe.get_Parameter(
+                    BuiltInParameter.RBS_PIPE_DIAMETER_PARAM);
+            return parameter == null
+                ? 0
+                : UnitUtils.ConvertFromInternalUnits(
+                    parameter.AsDouble(),
+                    UnitTypeId.Millimeters);
+        }
+
+        private static void ClearActivePreview(
+            UIDocument uiDocument)
+        {
+            if (uiDocument == null)
+            {
+                return;
+            }
+            DrainagePreviewServer.Clear(uiDocument.Document);
+            uiDocument.RefreshActiveView();
+        }
+
+        private static void ShowBranchFailure(string failure)
+        {
+            TaskDialog.Show(
+                "排水接入幹管－本支未建立",
+                failure
+                + Environment.NewLine
+                + Environment.NewLine
+                + "按「確定」後可繼續點選下一支；按 Esc 結束命令。");
         }
 
         private static DrainageTargetRef PromptForMain(
@@ -178,8 +191,12 @@ namespace RfaMetadataAddin
             Reference reference =
                 uiDocument.Selection.PickObject(
                     ObjectType.Element,
-                    new DrainageMainSelectionFilter(),
-                    "候選幹管不明確，請點選本支要接入的幹管");
+                    new DrainageMainSelectionFilter(
+                        source == null
+                            || source.SourceElement == null
+                            ? ElementId.InvalidElementId
+                            : source.SourceElement.Id),
+                    "2/2 點選本支要接入的目標主管；按 Esc 結束");
             Pipe pipe = uiDocument.Document.GetElement(
                 reference) as Pipe;
             if (pipe == null)
@@ -216,14 +233,37 @@ namespace RfaMetadataAddin
             Element source,
             string reason)
         {
+            string userReason = reason;
+            if (!string.IsNullOrWhiteSpace(reason)
+                && reason.IndexOf(
+                    "SOURCE_BELOW_TARGET_MAIN",
+                    StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                userReason =
+                    "SOURCE_BELOW_TARGET_MAIN：支管接口低於目標主管中心線高程，"
+                    + "重力排水不得向上接入。";
+            }
+            else if (!string.IsNullOrWhiteSpace(reason)
+                && reason.IndexOf(
+                    "SINGLE45_TANGENT_TOO_SHORT",
+                    StringComparison.OrdinalIgnoreCase) >= 0
+                && reason.IndexOf(
+                    "DOUBLE_45_TANGENT_TOO_SHORT",
+                    StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                userReason =
+                    "NO_FEASIBLE_ROUTE：正向 45° 與雙 45° 所需的直管、"
+                    + "管件 takeout 或高程空間不足；已禁止用反向折返假接。"
+                    + "請調整來源或主管高程，或增加可用接管範圍。";
+            }
             return "ID "
                 + (source == null
                     ? "?"
                     : source.Id.Value.ToString())
                 + "："
-                + (string.IsNullOrWhiteSpace(reason)
+                + (string.IsNullOrWhiteSpace(userReason)
                     ? "接管失敗"
-                    : reason);
+                    : userReason);
         }
     }
 

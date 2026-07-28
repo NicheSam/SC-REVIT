@@ -27,9 +27,11 @@ namespace RfaMetadataAddin.Drainage
         private readonly ObservableCollection<DrainageConfigurationProfile>
             _profiles;
         private readonly IList<DrainageElementChoice> _pipeTypes;
+        private readonly IList<DrainageElementChoice> _systemTypes;
         private IList<DrainageElementChoice> _fittings;
         private readonly DataGrid _grid;
         private readonly System.Windows.Controls.ComboBox _pipeTypePicker;
+        private readonly System.Windows.Controls.ComboBox _systemTypePicker;
         private readonly CheckBox _showAllFittings;
 
         public DrainageConfigurationWindow(UIApplication uiApplication)
@@ -43,14 +45,15 @@ namespace RfaMetadataAddin.Drainage
 
             _document = uiApplication.ActiveUIDocument.Document;
             _pipeTypes = LoadPipeTypes(_document);
+            _systemTypes = LoadSystemTypes(_document);
             _profiles = new ObservableCollection<DrainageConfigurationProfile>(
                 DrainageConfigurationStore.Load(_document).Profiles
                     ?? new List<DrainageConfigurationProfile>());
             _fittings = LoadFittings(_document, false);
 
             Title = "排水／Y接 管件設定";
-            Width = 1120;
-            Height = 560;
+            Width = 1480;
+            Height = 620;
             MinWidth = 900;
             MinHeight = 420;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -85,6 +88,20 @@ namespace RfaMetadataAddin.Drainage
                 _pipeTypePicker.SelectedIndex = 0;
             }
             toolbar.Children.Add(_pipeTypePicker);
+
+            _systemTypePicker = new System.Windows.Controls.ComboBox
+            {
+                Width = 220,
+                Margin = new Thickness(0, 0, 8, 8),
+                ItemsSource = _systemTypes,
+                DisplayMemberPath = "Name",
+                SelectedValuePath = "ElementIdValue"
+            };
+            if (_systemTypes.Count > 0)
+            {
+                _systemTypePicker.SelectedIndex = 0;
+            }
+            toolbar.Children.Add(_systemTypePicker);
 
             Button addButton = CreateButton("新增設定列");
             addButton.Click += delegate { AddProfile(); };
@@ -150,6 +167,26 @@ namespace RfaMetadataAddin.Drainage
             _grid.Columns.Clear();
             _grid.Columns.Add(new DataGridComboBoxColumn
             {
+                Header = "Profile 類型",
+                Width = 130,
+                ItemsSource = new[] { "GravityDrainage" },
+                SelectedItemBinding =
+                    new WpfBinding("ProfileKind")
+            });
+            _grid.Columns.Add(new DataGridComboBoxColumn
+            {
+                Header = "目標 System Type",
+                Width = new DataGridLength(
+                    1.15,
+                    DataGridLengthUnitType.Star),
+                ItemsSource = _systemTypes,
+                DisplayMemberPath = "Name",
+                SelectedValuePath = "ElementIdValue",
+                SelectedValueBinding =
+                    new WpfBinding("TargetSystemTypeId")
+            });
+            _grid.Columns.Add(new DataGridComboBoxColumn
+            {
                 Header = "管類型",
                 Width = new DataGridLength(1.25, DataGridLengthUnitType.Star),
                 ItemsSource = _pipeTypes,
@@ -169,6 +206,9 @@ namespace RfaMetadataAddin.Drainage
             _grid.Columns.Add(CreateFittingColumn(
                 "45°／錯層彎頭",
                 "OffsetElbowTypeId"));
+            _grid.Columns.Add(CreateFittingColumn(
+                "變徑",
+                "ReducerTypeId"));
             _grid.Columns.Add(CreateTextColumn(
                 "支管坡度 (%)",
                 "SlopePercent",
@@ -181,6 +221,61 @@ namespace RfaMetadataAddin.Drainage
                 "最大管徑 (mm)",
                 "MaximumDiameterMm",
                 105));
+            _grid.Columns.Add(CreateTextColumn(
+                "最短直管 (mm)",
+                "MinimumTangentMm",
+                105));
+            _grid.Columns.Add(
+                CreateAdvancedRulesColumn());
+        }
+
+        private DataGridTemplateColumn CreateAdvancedRulesColumn()
+        {
+            var button = new FrameworkElementFactory(
+                typeof(Button));
+            button.SetValue(
+                Button.ContentProperty,
+                "進階來源規則");
+            button.SetValue(
+                Button.MarginProperty,
+                new Thickness(2));
+            button.AddHandler(
+                Button.ClickEvent,
+                new RoutedEventHandler(
+                    OpenAdvancedRules));
+            var template = new DataTemplate
+            {
+                VisualTree = button
+            };
+            return new DataGridTemplateColumn
+            {
+                Header = "來源規則",
+                Width = 120,
+                CellTemplate = template
+            };
+        }
+
+        private void OpenAdvancedRules(
+            object sender,
+            RoutedEventArgs args)
+        {
+            FrameworkElement element =
+                sender as FrameworkElement;
+            DrainageConfigurationProfile profile =
+                element == null
+                    ? null
+                    : element.DataContext
+                        as DrainageConfigurationProfile;
+            if (profile == null)
+            {
+                return;
+            }
+            var window =
+                new DrainageAdvancedSourceRulesWindow(profile)
+                {
+                    Owner = this
+                };
+            window.ShowDialog();
         }
 
         private DataGridComboBoxColumn CreateFittingColumn(
@@ -219,6 +314,9 @@ namespace RfaMetadataAddin.Drainage
         {
             DrainageElementChoice pipeType =
                 _pipeTypePicker.SelectedItem as DrainageElementChoice;
+            DrainageElementChoice systemType =
+                _systemTypePicker.SelectedItem
+                    as DrainageElementChoice;
             if (pipeType == null)
             {
                 MessageBox.Show(
@@ -230,7 +328,15 @@ namespace RfaMetadataAddin.Drainage
                 return;
             }
             if (_profiles.Any(item =>
-                item.PipeTypeId == pipeType.ElementIdValue))
+                item.PipeTypeId == pipeType.ElementIdValue
+                && item.TargetSystemTypeId
+                    == (systemType == null
+                        ? 0
+                        : systemType.ElementIdValue)
+                && string.Equals(
+                    item.ProfileKind,
+                    "GravityDrainage",
+                    StringComparison.Ordinal)))
             {
                 MessageBox.Show(
                     this,
@@ -245,7 +351,16 @@ namespace RfaMetadataAddin.Drainage
             {
                 PipeTypeId = pipeType.ElementIdValue,
                 PipeTypeUniqueId = pipeType.UniqueId,
-                PipeTypeName = pipeType.Name
+                PipeTypeName = pipeType.Name,
+                TargetSystemTypeId = systemType == null
+                    ? 0
+                    : systemType.ElementIdValue,
+                TargetSystemTypeUniqueId = systemType == null
+                    ? ""
+                    : systemType.UniqueId,
+                TargetSystemTypeName = systemType == null
+                    ? ""
+                    : systemType.Name
             };
             ApplyRoutingDefaults(profile);
             _profiles.Add(profile);
@@ -284,12 +399,17 @@ namespace RfaMetadataAddin.Drainage
             IList<long> elbowIds = ReadRoutingPartIds(
                 pipeType,
                 RoutingPreferenceRuleGroupType.Elbows);
+            IList<long> reducerIds = ReadRoutingPartIds(
+                pipeType,
+                RoutingPreferenceRuleGroupType.Transitions);
             long junctionId = junctionIds.FirstOrDefault();
             long elbowId = elbowIds.FirstOrDefault();
             profile.WyeTypeId = junctionId;
             profile.SanitaryTeeTypeId = junctionId;
             profile.OffsetElbowTypeId = elbowId;
             profile.VerticalToHorizontalElbowTypeId = elbowId;
+            profile.ReducerTypeId =
+                reducerIds.FirstOrDefault();
         }
 
         private void SaveProfiles()
@@ -360,6 +480,21 @@ namespace RfaMetadataAddin.Drainage
                 profile.PipeTypeUniqueId = pipeType.UniqueId;
                 profile.PipeTypeName = pipeType.Name;
             }
+            PipingSystemType systemType =
+                profile.TargetSystemTypeId > 0
+                    ? _document.GetElement(
+                        new ElementId(
+                            profile.TargetSystemTypeId))
+                        as PipingSystemType
+                    : null;
+            profile.TargetSystemTypeUniqueId =
+                systemType == null
+                    ? ""
+                    : systemType.UniqueId;
+            profile.TargetSystemTypeName =
+                systemType == null
+                    ? ""
+                    : systemType.Name;
             SetFittingIdentity(
                 profile.SanitaryTeeTypeId,
                 delegate(string value)
@@ -383,6 +518,12 @@ namespace RfaMetadataAddin.Drainage
                 delegate(string value)
                 {
                     profile.OffsetElbowTypeUniqueId = value;
+                });
+            SetFittingIdentity(
+                profile.ReducerTypeId,
+                delegate(string value)
+                {
+                    profile.ReducerTypeUniqueId = value;
                 });
         }
 
@@ -430,7 +571,10 @@ namespace RfaMetadataAddin.Drainage
                         RoutingPreferenceRuleGroupType.Junctions)
                         .Concat(ReadRoutingPartIds(
                             pipeType,
-                            RoutingPreferenceRuleGroupType.Elbows)))
+                            RoutingPreferenceRuleGroupType.Elbows))
+                        .Concat(ReadRoutingPartIds(
+                            pipeType,
+                            RoutingPreferenceRuleGroupType.Transitions)))
                     {
                         allowedIds.Add(id);
                     }
@@ -456,6 +600,22 @@ namespace RfaMetadataAddin.Drainage
                 .ToList();
         }
 
+        private static IList<DrainageElementChoice> LoadSystemTypes(
+            Document document)
+        {
+            return new FilteredElementCollector(document)
+                .OfClass(typeof(PipingSystemType))
+                .Cast<PipingSystemType>()
+                .OrderBy(item => item.Name)
+                .Select(item => new DrainageElementChoice
+                {
+                    ElementIdValue = item.Id.Value,
+                    UniqueId = item.UniqueId,
+                    Name = item.Name
+                })
+                .ToList();
+        }
+
         private static IList<long> ReadRoutingPartIds(
             PipeType pipeType,
             RoutingPreferenceRuleGroupType group)
@@ -476,6 +636,159 @@ namespace RfaMetadataAddin.Drainage
                 }
             }
             return result;
+        }
+    }
+
+    internal sealed class DrainageAdvancedSourceRulesWindow :
+        Window
+    {
+        private readonly DrainageConfigurationProfile _profile;
+        private readonly System.Windows.Controls.TextBox
+            _classifications;
+        private readonly System.Windows.Controls.TextBox
+            _systemTypeUniqueIds;
+        private readonly CheckBox _allowBidirectional;
+        private readonly CheckBox _allowUndefined;
+        private readonly CheckBox _allowIn;
+        private readonly System.Windows.Controls.ComboBox
+            _routePreference;
+
+        public DrainageAdvancedSourceRulesWindow(
+            DrainageConfigurationProfile profile)
+        {
+            if (profile == null)
+            {
+                throw new ArgumentNullException("profile");
+            }
+            _profile = profile;
+            Title = "進階來源規則";
+            Width = 520;
+            Height = 430;
+            ResizeMode = ResizeMode.NoResize;
+            WindowStartupLocation =
+                WindowStartupLocation.CenterOwner;
+
+            var root = new StackPanel
+            {
+                Margin = new Thickness(16)
+            };
+            Content = root;
+            root.Children.Add(new TextBlock
+            {
+                Text = "留空代表沿用目標系統分類；多個值以逗號分隔。",
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 12)
+            });
+            root.Children.Add(CreateLabel(
+                "允許的來源系統分類"));
+            _classifications =
+                new System.Windows.Controls.TextBox
+            {
+                Text = _profile
+                    .AllowedSourceSystemClassifications ?? "",
+                Margin = new Thickness(0, 4, 0, 12)
+            };
+            root.Children.Add(_classifications);
+
+            root.Children.Add(CreateLabel(
+                "允許的來源 System Type UniqueId"));
+            _systemTypeUniqueIds =
+                new System.Windows.Controls.TextBox
+            {
+                Text = _profile
+                    .AllowedSourceSystemTypeUniqueIds ?? "",
+                Margin = new Thickness(0, 4, 0, 12)
+            };
+            root.Children.Add(_systemTypeUniqueIds);
+
+            _allowBidirectional = CreateCheckBox(
+                "允許 Bidirectional",
+                _profile.AllowBidirectionalFlow);
+            _allowUndefined = CreateCheckBox(
+                "允許無法讀取 FlowDirection",
+                _profile.AllowUndefinedFlow);
+            _allowIn = CreateCheckBox(
+                "允許 In（預設關閉）",
+                _profile.AllowInFlow);
+            root.Children.Add(_allowBidirectional);
+            root.Children.Add(_allowUndefined);
+            root.Children.Add(_allowIn);
+
+            root.Children.Add(CreateLabel("路型優先序"));
+            _routePreference =
+                new System.Windows.Controls.ComboBox
+                {
+                    ItemsSource = new[]
+                    {
+                        "PreserveOutletThenFewestFittings"
+                    },
+                    SelectedItem = string.IsNullOrWhiteSpace(
+                        _profile.RoutePreference)
+                            ? "PreserveOutletThenFewestFittings"
+                            : _profile.RoutePreference,
+                    Margin = new Thickness(0, 4, 0, 16)
+                };
+            root.Children.Add(_routePreference);
+
+            var buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            var cancel = new Button
+            {
+                Content = "取消",
+                MinWidth = 84,
+                Margin = new Thickness(0, 0, 8, 0),
+                IsCancel = true
+            };
+            var save = new Button
+            {
+                Content = "套用",
+                MinWidth = 84,
+                IsDefault = true
+            };
+            save.Click += delegate
+            {
+                _profile.AllowedSourceSystemClassifications =
+                    _classifications.Text.Trim();
+                _profile.AllowedSourceSystemTypeUniqueIds =
+                    _systemTypeUniqueIds.Text.Trim();
+                _profile.AllowBidirectionalFlow =
+                    _allowBidirectional.IsChecked == true;
+                _profile.AllowUndefinedFlow =
+                    _allowUndefined.IsChecked == true;
+                _profile.AllowInFlow =
+                    _allowIn.IsChecked == true;
+                _profile.RoutePreference =
+                    Convert.ToString(
+                        _routePreference.SelectedItem);
+                DialogResult = true;
+            };
+            buttons.Children.Add(cancel);
+            buttons.Children.Add(save);
+            root.Children.Add(buttons);
+        }
+
+        private static TextBlock CreateLabel(string text)
+        {
+            return new TextBlock
+            {
+                Text = text,
+                FontWeight = FontWeights.SemiBold
+            };
+        }
+
+        private static CheckBox CreateCheckBox(
+            string text,
+            bool isChecked)
+        {
+            return new CheckBox
+            {
+                Content = text,
+                IsChecked = isChecked,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
         }
     }
 }
