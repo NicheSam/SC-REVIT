@@ -15,11 +15,17 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 - 支援不同管徑與專案管件設定。
 - 建立後檢查管件角度、接入方向、管段長度與拓撲。
 
-目前立管路型已完成實機驗證；坡度同步及不同情境下的坡度編輯仍在調整，因此本版只發布開發原始碼，不提供新的安裝包或正式 Release。
+目前立管路型已完成實機驗證；坡度同步及不同情境下的坡度編輯仍在調整。`v0.5.0-drainage-dev` 提供開發預覽安裝包，僅建議用於測試模型，不應直接用於正式專案。
 
 ## 下載安裝包
 
-最新版測試安裝包：
+最新排水開發預覽版：
+
+[下載 SC_REVIT_v0.5.0-drainage-dev_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.0-drainage-dev/SC_REVIT_v0.5.0-drainage-dev_installer.zip)
+
+[SC REVIT v0.5.0-drainage-dev Release](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.0-drainage-dev)
+
+前一個一般測試版：
 
 [下載 SC_REVIT_v0.4.1-dev_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.4.1-dev/SC_REVIT_v0.4.1-dev_installer.zip)
 
@@ -41,7 +47,7 @@ Release 頁面：
 
 ## 安裝方式
 
-1. 下載 `SC_REVIT_v0.4.1-dev_installer.zip`。
+1. 下載所需版本的 `SC_REVIT_*_installer.zip`。
 2. 解壓縮 ZIP。
 3. 執行 `Install_SC_REVIT.bat`。
 4. 等待安裝完成。
