@@ -258,6 +258,104 @@ internal static class DrainageEngineeringCoreTests
         singleInput.OutletX = 0;
         singleInput.OutletY = 1;
 
+        var perpendicularDropInput = new DrainageWallRouteInput
+        {
+            Source = new DrainageGeometryPoint
+            {
+                X = 0,
+                Y = 0,
+                Z = 500
+            },
+            OutletX = 0,
+            OutletY = 1,
+            OutletZ = 0,
+            MainStart = new DrainageGeometryPoint
+            {
+                X = -2000,
+                Y = 1000,
+                Z = 0
+            },
+            MainEnd = new DrainageGeometryPoint
+            {
+                X = 2000,
+                Y = 1000,
+                Z = 0
+            },
+            DownstreamEndpointIndex = 1,
+            SlopeRatio = 0.01,
+            StubLength = 100,
+            ElbowTakeout = 20,
+            JunctionBranchTakeout = 30,
+            MinimumTangentLength = 50,
+            MainEndClearance = 100,
+            MaximumOutletAdvance = 2000,
+            SearchStep = 1
+        };
+        DrainagePerpendicularDropSolution perpendicularDrop =
+            DrainageEngineeringCore
+                .SolvePerpendicularDropEntry(
+                    perpendicularDropInput);
+        Expect(
+            perpendicularDrop.IsFeasible,
+            "perpendicular high branch can drop into lower main: "
+                + perpendicularDrop.FailureCode);
+        Expect(
+            perpendicularDrop.IsFeasible
+                && perpendicularDrop.StubEnd.Z
+                    > perpendicularDrop.MainTie.Z
+                && perpendicularDrop.EntrySlope > 0.01
+                && perpendicularDrop.ElbowAngleDegrees > 45
+                && perpendicularDrop.ElbowAngleDegrees < 88,
+            "perpendicular drop keeps arbitrary descending entry slope");
+        Expect(
+            perpendicularDrop.IsFeasible
+                && Math.Abs(
+                    DrainageEngineeringCore.AngleBetween2D(
+                        perpendicularDrop.MainTie.X
+                            - perpendicularDrop.StubEnd.X,
+                        perpendicularDrop.MainTie.Y
+                            - perpendicularDrop.StubEnd.Y,
+                        1,
+                        0)
+                    - 45.0) < 0.001,
+            "perpendicular drop enters the main downstream at forty-five degrees in plan");
+        DrainagePerpendicularDropSolution repeatedPerpendicularDrop =
+            DrainageEngineeringCore
+                .SolvePerpendicularDropEntry(
+                    perpendicularDropInput);
+        Expect(
+            perpendicularDrop.IsFeasible
+                && repeatedPerpendicularDrop.IsFeasible
+                && Math.Abs(
+                    perpendicularDrop.MainTie.X
+                        - repeatedPerpendicularDrop.MainTie.X)
+                    < 0.000001
+                && Math.Abs(
+                    perpendicularDrop.MainTie.Z
+                        - repeatedPerpendicularDrop.MainTie.Z)
+                    < 0.000001,
+            "perpendicular drop result is deterministic");
+        perpendicularDropInput.OutletX = 1;
+        perpendicularDropInput.OutletY = 0;
+        Expect(
+            DrainageEngineeringCore
+                .SolvePerpendicularDropEntry(
+                    perpendicularDropInput)
+                .FailureCode
+                == "PERPENDICULAR_DROP_SOURCE_NOT_PERPENDICULAR",
+            "perpendicular drop rejects a source parallel to the main");
+        perpendicularDropInput.OutletX = 0;
+        perpendicularDropInput.OutletY = 1;
+        perpendicularDropInput.Source.Z = -100;
+        Expect(
+            DrainageEngineeringCore
+                .SolvePerpendicularDropEntry(
+                    perpendicularDropInput)
+                .FailureCode
+                == "PERPENDICULAR_DROP_MAIN_NOT_LOWER",
+            "perpendicular drop rejects a main above the branch");
+        perpendicularDropInput.Source.Z = 500;
+
         var directInput = new DrainageWallRouteInput
         {
             Source = new DrainageGeometryPoint
@@ -579,6 +677,8 @@ internal static class DrainageEngineeringCoreTests
                 ElbowTakeout = 43.06,
                 JunctionBranchTakeout = 94,
                 MinimumTangentLength = 80,
+                VerticalTransitionMinimumTangentLength = 160,
+                VerticalTransitionMinimumOutletAdvanceLength = 100,
                 MainEndClearance = 150,
                 MaximumOutletAdvance = 25000,
                 MaximumDouble45LateralOffset = 25,
@@ -618,11 +718,13 @@ internal static class DrainageEngineeringCoreTests
         Expect(
             preferredVerticalRoute.IsFeasible
                 && preferredVerticalRoute.OutletAdvance
-                    > boundedVerticalCompensationInput.StubLength
+                    >= boundedVerticalCompensationInput
+                        .VerticalTransitionMinimumOutletAdvanceLength
+                        - 0.000001
                 && preferredVerticalRoute
                     .SourceDiagonalTangentLength
                     >= boundedVerticalCompensationInput
-                        .MinimumTangentLength
+                        .VerticalTransitionMinimumTangentLength
                         - 0.000001
                 && preferredVerticalRoute.RadialTangentLength
                     >= boundedVerticalCompensationInput

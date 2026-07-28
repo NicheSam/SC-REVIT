@@ -41,6 +41,7 @@ namespace RfaMetadataAddin
             public bool HasDoubleFortyFive { get; set; }
             public bool HasTerminalDrop { get; set; }
             public bool HasVerticalPlanTurn { get; set; }
+            public bool HasVariableDropEntry { get; set; }
             public XYZ UpperBranchStart { get; set; }
             public XYZ TerminalDropStart { get; set; }
             public XYZ BranchStart { get; set; }
@@ -864,7 +865,8 @@ namespace RfaMetadataAddin
                                     Pipe = branch,
                                     Source = plan.BranchStart,
                                     Sink = plan.MainTie,
-                                    RequiresSignedSlope = true,
+                                    RequiresSignedSlope =
+                                        !plan.HasVariableDropEntry,
                                     RequiresDescending = true,
                                     MinimumCenterlineLength = Math.Max(
                                         diameterFeet,
@@ -964,7 +966,17 @@ namespace RfaMetadataAddin
                                                     item.SignedSlope,
                                                 RequiresDescending = true,
                                                 MinimumCenterlineLength =
-                                                    Math.Max(
+                                                    item.Kind
+                                                        == "source_double45_diagonal"
+                                                    ? Math.Max(
+                                                        diameterFeet * 2.0,
+                                                        UnitUtils
+                                                            .ConvertToInternalUnits(
+                                                                routePolicy
+                                                                    .MinimumTangentMm,
+                                                                UnitTypeId
+                                                                    .Millimeters))
+                                                    : Math.Max(
                                                         diameterFeet,
                                                         UnitUtils
                                                             .ConvertToInternalUnits(
@@ -1359,14 +1371,17 @@ namespace RfaMetadataAddin
                                         connectorStub,
                                         branch,
                                         plan.BranchStart,
-                                        elbowPart);
+                                        elbowPart,
+                                        !plan.HasVariableDropEntry);
                                     createdFittingIds.Add(stubToBranchElbow.Id);
                                     SetDrainageElementMetadata(stubToBranchElbow, "elbow", batchId, slopeRatio, operation.OperationId);
                                     createdFittings.Add(new
                                     {
                                         element_id = stubToBranchElbow.Id.Value,
                                         kind = "elbow",
-                                        role = "wall_stub_to_branch",
+                                        role = plan.HasVariableDropEntry
+                                            ? "perpendicular_drop_elbow"
+                                            : "wall_stub_to_branch",
                                         type_id = stubToBranchElbow.GetTypeId().Value,
                                         first_pipe_id = connectorStub.Id.Value,
                                         second_pipe_id = branch.Id.Value,
@@ -1985,10 +2000,17 @@ namespace RfaMetadataAddin
                             Pipe second = doc.GetElement(new ElementId(
                                 Convert.ToInt64(
                                     fittingRecord["second_pipe_id"]))) as Pipe;
+                            string fittingRole =
+                                fittingRecord.ContainsKey("role")
+                                    ? Convert.ToString(
+                                        fittingRecord["role"])
+                                    : "";
                             geometryValid = IsDrainageElbowGeometryValid(
                                 fitting,
                                 first,
                                 second,
+                                fittingRole
+                                    != "perpendicular_drop_elbow",
                                 out geometryError);
                         }
                         if (!geometryValid)
@@ -3731,9 +3753,12 @@ namespace RfaMetadataAddin
             DrainageVerticalPlanTurnSolution
                 verticalPlanTurnSolution = null;
             DrainageSingleFortyFiveSolution singleSolution = null;
+            DrainagePerpendicularDropSolution
+                perpendicularDropSolution = null;
             DrainageAxisDirectSolution directSolution = null;
             bool isAxisDirect = false;
             bool hasSingleFortyFive = false;
+            bool hasVariableDropEntry = false;
             bool hasDoubleFortyFive = false;
             double firstElbowAngle = double.NaN;
             double secondElbowAngle = double.NaN;
@@ -3795,13 +3820,18 @@ namespace RfaMetadataAddin
                             junctionRunTakeout,
                             UnitTypeId.Millimeters)
                             + minimumTangent);
-                    double elbowTakeout = elbowPart != null
+                    double measuredElbowTakeout = elbowPart != null
                             && elbowPart.MeasuredTakeoutMm.HasValue
                         ? UnitUtils.ConvertToInternalUnits(
                             elbowPart.MeasuredTakeoutMm.Value,
                             UnitTypeId.Millimeters)
                         : mainPipe.Document.Application
                             .ShortCurveTolerance;
+                    double elbowTakeout = Math.Max(
+                        measuredElbowTakeout,
+                        UnitUtils.ConvertToInternalUnits(
+                            diameterMm / 2.0,
+                            UnitTypeId.Millimeters));
                     var routeInput =
                         new DrainageWallRouteInput
                         {
@@ -3825,6 +3855,16 @@ namespace RfaMetadataAddin
                                     junctionPart.MeasuredTakeoutMm.Value,
                                     UnitTypeId.Millimeters),
                             MinimumTangentLength = minimumTangent,
+                            VerticalTransitionMinimumTangentLength =
+                                UnitUtils.ConvertToInternalUnits(
+                                    Math.Max(
+                                        routePolicy.MinimumTangentMm,
+                                        diameterMm * 2.0),
+                                    UnitTypeId.Millimeters),
+                            VerticalTransitionMinimumOutletAdvanceLength =
+                                UnitUtils.ConvertToInternalUnits(
+                                    Math.Max(100, diameterMm * 2.0),
+                                    UnitTypeId.Millimeters),
                             MainEndClearance = mainEndClearance,
                             MaximumOutletAdvance = UnitUtils
                                 .ConvertToInternalUnits(
@@ -3937,34 +3977,61 @@ namespace RfaMetadataAddin
                             }
                             else
                             {
-                                singleSolution = DrainageEngineeringCore
-                                    .SolveSingleFortyFive(routeInput);
-                                if (singleSolution.IsFeasible)
+                                perpendicularDropSolution =
+                                    DrainageEngineeringCore
+                                        .SolvePerpendicularDropEntry(
+                                            routeInput);
+                                if (perpendicularDropSolution.IsFeasible)
                                 {
                                     connectorStubEnd = ToXyz(
-                                        singleSolution.StubEnd);
+                                        perpendicularDropSolution
+                                            .StubEnd);
                                     routeOrigin = connectorStubEnd;
                                     mainTie = ToXyz(
-                                        singleSolution.MainTie);
+                                        perpendicularDropSolution
+                                            .MainTie);
                                     hasConnectorStub = true;
-                                    hasSingleFortyFive = true;
+                                    hasVariableDropEntry = true;
                                     firstElbowAngle =
-                                        singleSolution
+                                        perpendicularDropSolution
                                             .ElbowAngleDegrees;
-                                    routeKind = "single_45";
+                                    routeKind =
+                                        "perpendicular_drop_entry";
                                 }
                                 else
                                 {
-                                    wallSolution =
-                                    DrainageEngineeringCore
-                                        .SolveWallOutletGeneralDoubleFortyFive(
-                                            routeInput);
+                                    singleSolution =
+                                        DrainageEngineeringCore
+                                            .SolveSingleFortyFive(
+                                                routeInput);
+                                    if (singleSolution.IsFeasible)
+                                    {
+                                        connectorStubEnd = ToXyz(
+                                            singleSolution.StubEnd);
+                                        routeOrigin = connectorStubEnd;
+                                        mainTie = ToXyz(
+                                            singleSolution.MainTie);
+                                        hasConnectorStub = true;
+                                        hasSingleFortyFive = true;
+                                        firstElbowAngle =
+                                            singleSolution
+                                                .ElbowAngleDegrees;
+                                        routeKind = "single_45";
+                                    }
+                                    else
+                                    {
+                                        wallSolution =
+                                        DrainageEngineeringCore
+                                            .SolveWallOutletGeneralDoubleFortyFive(
+                                                routeInput);
+                                    }
                                 }
                             }
                         }
                     }
                     if (!isAxisDirect
                         && !hasSingleFortyFive
+                        && !hasVariableDropEntry
                         && verticalPlanTurnSolution != null
                         && verticalPlanTurnSolution.IsFeasible)
                     {
@@ -3986,6 +4053,7 @@ namespace RfaMetadataAddin
                     }
                     else if (!isAxisDirect
                         && !hasSingleFortyFive
+                        && !hasVariableDropEntry
                         && terminalDropSolution != null
                         && terminalDropSolution.IsFeasible)
                     {
@@ -4003,6 +4071,7 @@ namespace RfaMetadataAddin
                     }
                     else if (!isAxisDirect
                         && !hasSingleFortyFive
+                        && !hasVariableDropEntry
                         && wallSolution != null
                         && wallSolution.IsFeasible)
                     {
@@ -4050,6 +4119,7 @@ namespace RfaMetadataAddin
                     }
                     else if (!isAxisDirect
                         && !hasSingleFortyFive
+                        && !hasVariableDropEntry
                         && verticalPlanTurnSolution != null)
                     {
                         issues.Add(
@@ -4058,6 +4128,7 @@ namespace RfaMetadataAddin
                     }
                     else if (!isAxisDirect
                         && !hasSingleFortyFive
+                        && !hasVariableDropEntry
                         && wallSolution != null)
                     {
                         issues.Add(
@@ -4070,6 +4141,7 @@ namespace RfaMetadataAddin
                     }
                     else if (!isAxisDirect
                         && !hasSingleFortyFive
+                        && !hasVariableDropEntry
                         && terminalDropSolution != null
                         && wallSolution == null)
                     {
@@ -4079,6 +4151,7 @@ namespace RfaMetadataAddin
                     }
                     else if (!isAxisDirect
                         && !hasSingleFortyFive
+                        && !hasVariableDropEntry
                         && wallSolution == null
                         && !sourceBelowTargetMain
                         && !issues.Contains(
@@ -4137,6 +4210,12 @@ namespace RfaMetadataAddin
             {
                 branchStart = ToXyz(singleSolution.StubEnd);
             }
+            else if (hasVariableDropEntry
+                && perpendicularDropSolution != null)
+            {
+                branchStart = ToXyz(
+                    perpendicularDropSolution.StubEnd);
+            }
             else if (isAxisDirect)
             {
                 branchStart = connectorPoint;
@@ -4181,12 +4260,22 @@ namespace RfaMetadataAddin
             {
                 issues.Add("FIXTURE_CONNECTOR_BELOW_ROUTE");
             }
-            if (!DrainageEngineeringCore.IsExpectedDescendingSlope(
-                branchStart.Z,
-                mainTie.Z,
-                signedSlopeHorizontal,
-                slopeRatio,
-                0.000001))
+            if (hasVariableDropEntry)
+            {
+                if (mainTie.Z
+                    >= branchStart.Z - 0.000001)
+                {
+                    issues.Add(
+                        "PERPENDICULAR_DROP_MAIN_NOT_LOWER");
+                }
+            }
+            else if (!DrainageEngineeringCore
+                .IsExpectedDescendingSlope(
+                    branchStart.Z,
+                    mainTie.Z,
+                    signedSlopeHorizontal,
+                    slopeRatio,
+                    0.000001))
             {
                 issues.Add("SIGNED_SLOPE_INVALID");
             }
@@ -4376,6 +4465,8 @@ namespace RfaMetadataAddin
                 HasVerticalPlanTurn =
                     verticalPlanTurnSolution != null
                     && verticalPlanTurnSolution.IsFeasible,
+                HasVariableDropEntry =
+                    hasVariableDropEntry,
                 UpperBranchStart =
                     verticalPlanTurnSolution != null
                         && verticalPlanTurnSolution.IsFeasible
@@ -4425,6 +4516,9 @@ namespace RfaMetadataAddin
                                 UnitTypeId.Millimeters)
                     : hasSingleFortyFive
                         ? singleSolution.StubTangentLength
+                        : hasVariableDropEntry
+                            ? perpendicularDropSolution
+                                .StubTangentLength
                         : (double?)null,
                 MiddleTangentLength = hasDoubleFortyFive
                     ? verticalPlanTurnSolution != null
@@ -4448,6 +4542,9 @@ namespace RfaMetadataAddin
                         : wallSolution.BranchTangentLength
                     : hasSingleFortyFive
                         ? singleSolution.BranchTangentLength
+                        : hasVariableDropEntry
+                            ? perpendicularDropSolution
+                                .BranchTangentLength
                         : isAxisDirect
                             ? directSolution.BranchTangentLength
                             : (double?)null,
@@ -4501,6 +4598,9 @@ namespace RfaMetadataAddin
                         .IsFeasible;
             }
             return DrainageEngineeringCore
+                    .SolvePerpendicularDropEntry(input)
+                    .IsFeasible
+                || DrainageEngineeringCore
                     .SolveSingleFortyFive(input)
                     .IsFeasible
                 || DrainageEngineeringCore
@@ -5526,7 +5626,8 @@ namespace RfaMetadataAddin
             Pipe first,
             Pipe second,
             XYZ point,
-            DrainageRoutingPart elbowPart)
+            DrainageRoutingPart elbowPart,
+            bool requireFortyFive = true)
         {
             FamilyInstance elbow = CreateDrainageElbowAtPipeEnd(
                 doc,
@@ -5558,6 +5659,7 @@ namespace RfaMetadataAddin
                 elbow,
                 first,
                 second,
+                requireFortyFive,
                 out geometryError))
             {
                 throw new InvalidOperationException(
@@ -5570,6 +5672,7 @@ namespace RfaMetadataAddin
             FamilyInstance elbow,
             Pipe first,
             Pipe second,
+            bool requireFortyFive,
             out string error)
         {
             error = "";
@@ -5621,17 +5724,30 @@ namespace RfaMetadataAddin
                 fittingAxisB.Z);
             if (double.IsNaN(expectedAngle)
                 || double.IsNaN(actualAngle)
-                || !DrainageEngineeringCore.IsSideEntryAngleAllowed(
-                    expectedAngle,
-                    45,
-                    3)
-                || !DrainageEngineeringCore.IsSideEntryAngleAllowed(
-                    actualAngle,
-                    45,
-                    3)
+                || expectedAngle <= 2.0
+                || expectedAngle >= 88.0
+                || actualAngle <= 2.0
+                || actualAngle >= 88.0
                 || Math.Abs(expectedAngle - actualAngle) > 3.0)
             {
-                error = "elbow is not a verified 45-degree fitting";
+                error =
+                    "elbow angle does not match planned pipe geometry";
+                return false;
+            }
+            if (requireFortyFive
+                && (!DrainageEngineeringCore
+                        .IsSideEntryAngleAllowed(
+                            expectedAngle,
+                            45,
+                            3)
+                    || !DrainageEngineeringCore
+                        .IsSideEntryAngleAllowed(
+                            actualAngle,
+                            45,
+                            3)))
+            {
+                error =
+                    "elbow is not a verified 45-degree fitting";
                 return false;
             }
             return true;

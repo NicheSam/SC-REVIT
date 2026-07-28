@@ -248,24 +248,6 @@ namespace RfaMetadataAddin
                 assemblyPath,
                 "RfaMetadataAddin.AlignPipeCenterlineCommand"
             );
-            PushButtonData extendPipeDown45ButtonData = new PushButtonData(
-                "ExtendPipeDown45",
-                "\u5411\u4e0b45\u00b0",
-                assemblyPath,
-                "RfaMetadataAddin.ExtendPipeDownFortyFiveCommand"
-            );
-            PushButtonData extendPipeVerticalDownButtonData = new PushButtonData(
-                "ExtendPipeVerticalDown",
-                "\u5782\u76f4\u5411\u4e0b",
-                assemblyPath,
-                "RfaMetadataAddin.ExtendPipeVerticallyDownCommand"
-            );
-            PushButtonData connectPipeFortyFiveButtonData = new PushButtonData(
-                "ConnectPipeFortyFive",
-                "45\u5ea6\u5c0d\u63a5",
-                assemblyPath,
-                "RfaMetadataAddin.ConnectPipeFortyFiveCommand"
-            );
             PushButtonData openingButtonData = new PushButtonData(
                 "OpenOpeningCheck",
                 "開孔定位",
@@ -382,58 +364,17 @@ namespace RfaMetadataAddin
                 drainageSettingsButton.LargeImage = ScIconFactory.Create("drainage_settings", 32);
             }
 
-            SplitButtonData drainageRepairSplitButtonData =
-                new SplitButtonData(
-                    "DrainageRepairWorkflow",
-                    "\u7ba1\u4e2d\u5fc3\u5c0d\u9f4a");
-            SplitButton drainageRepairSplitButton =
+            PushButton alignPipeCenterlineButton =
                 drainagePanel.AddItem(
-                    drainageRepairSplitButtonData) as SplitButton;
-            if (drainageRepairSplitButton != null)
+                    alignPipeCenterlineButtonData) as PushButton;
+            if (alignPipeCenterlineButton != null)
             {
-                drainageRepairSplitButton
-                    .IsSynchronizedWithCurrentItem = true;
-
-                PushButton alignPipeCenterlineButton =
-                    drainageRepairSplitButton.AddPushButton(
-                        alignPipeCenterlineButtonData);
                 alignPipeCenterlineButton.ToolTip =
                     "\u5148\u9ede\u9ad8\u7a0b\u57fa\u6e96\u7ba1\uff0c\u518d\u9023\u7e8c\u5c07\u7368\u7acb\u7ba1\u6bb5\u7684\u4e2d\u5fc3\u7dda\u5c0d\u9f4a\u81f3\u57fa\u6e96\u7ba1\u5c40\u90e8\u9ad8\u7a0b";
                 alignPipeCenterlineButton.Image =
                     ScIconFactory.Create("align_centerline", 16);
                 alignPipeCenterlineButton.LargeImage =
                     ScIconFactory.Create("align_centerline", 32);
-
-                PushButton connectPipeFortyFiveButton =
-                    drainageRepairSplitButton.AddPushButton(
-                        connectPipeFortyFiveButtonData);
-                connectPipeFortyFiveButton.ToolTip =
-                    "\u9078\u53d6\u5169\u500b\u958b\u653e\u7ba1\u7aef\uff0c\u4ee5\u4e00\u6bb545\u00b0\u659c\u7ba1\u8207\u5169\u500b45\u00b0\u5f4e\u982d\u5c0d\u63a5";
-                connectPipeFortyFiveButton.Image =
-                    ScIconFactory.Create("connect_45", 16);
-                connectPipeFortyFiveButton.LargeImage =
-                    ScIconFactory.Create("connect_45", 32);
-
-                PushButton extendPipeDown45Button =
-                    drainageRepairSplitButton.AddPushButton(
-                        extendPipeDown45ButtonData);
-                extendPipeDown45Button.ToolTip =
-                    "\u9078\u53d6\u8a2d\u5099\u63a5\u53e3\u6216\u958b\u653e\u7ba1\u7aef\uff0c\u518d\u9078\u76ee\u6a19\u4e3b\u7ba1\uff1b\u53ea\u6709\u53ef\u4ee5\u55ae45\u00b0\u8def\u5f91\u5efa\u7acb\u6642\u624d\u6703\u5be6\u969b\u63a5\u5165";
-                extendPipeDown45Button.Image =
-                    ScIconFactory.Create("down_45", 16);
-                extendPipeDown45Button.LargeImage =
-                    ScIconFactory.Create("down_45", 32);
-
-                PushButton extendPipeVerticalDownButton =
-                    drainageRepairSplitButton.AddPushButton(
-                        extendPipeVerticalDownButtonData);
-                extendPipeVerticalDownButton.ToolTip =
-                    "\u5c07\u5782\u76f4\u7ba1\u7684\u4e0b\u65b9\u958b\u653e\u7aef\u5ef6\u4f38\u5230\u9ad8\u5ea6\u57fa\u6e96\u7ba1\u7684\u5c40\u90e8\u4e2d\u5fc3\u7dda\u9ad8\u7a0b";
-                extendPipeVerticalDownButton.Image =
-                    ScIconFactory.Create("vertical_down", 16);
-                extendPipeVerticalDownButton.LargeImage =
-                    ScIconFactory.Create("vertical_down", 32);
-
             }
 
             RibbonPanel coordinationPanel = application

@@ -25,6 +25,7 @@ obj/
 *.7z
 *.rar
 tmp_*.png
+.tmp-agent-context-*
 PROJECT_CONTEXT.md
 .env
 .env.*
