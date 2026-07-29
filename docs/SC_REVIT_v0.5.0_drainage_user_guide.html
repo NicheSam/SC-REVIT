@@ -132,34 +132,34 @@
 <body>
 <main>
   <header>
-    <div class="kicker">Revit 2024｜排水建模｜開發預覽版</div>
-    <h1>SC REVIT v0.5.0<br>排水建模操作手冊</h1>
-    <p class="lead">這份手冊回答四件事：每個 Ribbon 圖示做什麼、第一次如何設定、排水接入幹管的正確選取順序，以及失敗時應該檢查什麼。</p>
-    <div class="warning"><strong>版本邊界：</strong>立管接管路型已完成實機驗證；坡度同步與更多高程情境仍在調整。本版應先用於測試模型，不應直接批量處理正式專案。</div>
+    <div class="kicker">Revit 2024｜main / snapshot-676ce995fd74</div>
+    <h1>SC REVIT<br>排水建模操作手冊</h1>
+    <p class="lead">本手冊依目前 Git 原始碼更新，說明實際存在的三項操作、管件設定、接管流程、能力邊界與錯誤處理。</p>
+    <div class="warning"><strong>使用範圍：</strong>這是開發預覽功能，應先在測試模型驗收。坡度同步及更多高程情境仍在調整，不應直接批量處理正式專案。</div>
     <nav>
-      <a href="#install">安裝與開始</a>
-      <a href="#icons">Ribbon 圖示</a>
+      <a href="#install">開始前</a>
+      <a href="#icons">Ribbon</a>
       <a href="#settings">管件設定</a>
       <a href="#connect">接入幹管</a>
-      <a href="#repair">修復工具</a>
+      <a href="#slope">坡度與高程</a>
+      <a href="#align">管中心對齊</a>
       <a href="#errors">失敗排查</a>
     </nav>
   </header>
 
   <section id="install">
-    <h2>1. 安裝與開始</h2>
-    <ol class="steps">
-      <li>完整關閉 Revit 2024。</li>
-      <li>解壓縮 <code>SC_REVIT_v0.5.0-drainage-dev_installer.zip</code>。</li>
-      <li>執行 <code>Install_SC_REVIT.bat</code>，等待安裝完成。</li>
-      <li>重新開啟 Revit 2024，確認 Ribbon 出現 <strong>SC 族群工具</strong> 頁籤與 <strong>排水系統</strong> 面板。</li>
-      <li>第一次使用先開啟測試模型，完成管件設定後再執行接管。</li>
-    </ol>
+    <h2>1. 開始前</h2>
+    <ul>
+      <li>使用 Windows 10／11、Autodesk Revit 2024 與目前專案所需的排水管族。</li>
+      <li>第一次使用必須先建立並儲存管件設定；沒有匹配 Profile 時不會修改模型。</li>
+      <li>來源與主管必須具有可用的圓形 piping connector，且主管要有足夠的接頭與最短管空間。</li>
+      <li>目前可執行安裝包為 <code>v0.5.0-drainage-dev</code>；本手冊內容對應 <code>snapshot-676ce995fd74</code>。</li>
+    </ul>
   </section>
 
   <section id="icons">
-    <h2>2. Ribbon 圖示與功能</h2>
-    <p>排水面板分成兩個 split button：日常建模使用「排水接入幹管」，局部整理使用「管中心對齊」下拉工具。</p>
+    <h2>2. 目前排水 Ribbon</h2>
+    <p>目前排水面板只對使用者開放下列三項操作。</p>
     <div class="grid">
       <article class="card">
         <div class="button-title"><img class="icon" src="user-guide-assets/drainage_connect.png" alt=""><strong>排水接入幹管</strong></div>
@@ -173,37 +173,8 @@
         <div class="button-title"><img class="icon" src="user-guide-assets/align_centerline.png" alt=""><strong>管中心對齊</strong></div>
         <p>先選高程基準管，再連續選取要對齊的管段。只調整中心線高程，不會把管段接入基準管。</p>
       </article>
-      <article class="card">
-        <div class="button-title"><img class="icon" src="user-guide-assets/connect_45.png" alt=""><strong>45度對接</strong></div>
-        <p>選取兩個開放管端，以一段 45°斜管與兩個 45°彎頭連接。兩端高程與位置必須有可行幾何。</p>
-      </article>
-      <article class="card">
-        <div class="button-title"><img class="icon" src="user-guide-assets/down_45.png" alt=""><strong>向下45°</strong></div>
-        <p>選來源，再選主管；只有求解結果確實為單 45°路徑時才建立，不會自動改成其他路型。</p>
-      </article>
-      <article class="card">
-        <div class="button-title"><img class="icon" src="user-guide-assets/vertical_down.png" alt=""><strong>垂直向下</strong></div>
-        <p>選取要延伸的開放管端，再選高程基準管；建立到基準管局部中心線高程的垂直管段，但不接入基準管。</p>
-      </article>
     </div>
-    <h3>其他 SC REVIT 面板</h3>
-    <p>同一套圖示系統也套用到其餘 Ribbon 命令，顏色與符號分別表示資料、建模、檢查及修復動作。</p>
-    <table>
-      <thead><tr><th>圖示</th><th>按鈕</th><th>功能</th></tr></thead>
-      <tbody>
-        <tr><td><img class="icon" src="user-guide-assets/family_archive.png" alt=""></td><td>族群歸檔</td><td>分類、命名與歸檔外部 RFA。</td></tr>
-        <tr><td><img class="icon" src="user-guide-assets/project_recovery.png" alt=""></td><td>專案回收</td><td>掃描並回收目前專案中的族群。</td></tr>
-        <tr><td><img class="icon" src="user-guide-assets/point_placement.png" alt=""></td><td>批量點位放置</td><td>依 CAD／DWG 點位批次放置族群。</td></tr>
-        <tr><td><img class="icon" src="user-guide-assets/backstage.png" alt=""></td><td>SC 後台</td><td>管理批次紀錄、同步與可追蹤清理。</td></tr>
-        <tr><td><img class="icon" src="user-guide-assets/fire_branch.png" alt=""></td><td>消防支管建立</td><td>依主管與撒水頭建立消防支管。</td></tr>
-        <tr><td><img class="icon" src="user-guide-assets/opening_locator.png" alt=""></td><td>開孔定位</td><td>掃描 MEP 與建築物件的開孔候選。</td></tr>
-        <tr><td><img class="icon" src="user-guide-assets/element_inspector.png" alt=""></td><td>身份檢查</td><td>檢查元件是否具備 SC 追蹤身份。</td></tr>
-        <tr><td><img class="icon" src="user-guide-assets/parameter_audit.png" alt=""></td><td>參數健檢</td><td>檢查 SC_ 參數缺漏與空值。</td></tr>
-        <tr><td><img class="icon" src="user-guide-assets/breakpoint_check.png" alt=""></td><td>斷點檢查</td><td>找出 MEP 斷點並修復符合條件的管端。</td></tr>
-        <tr><td><img class="icon" src="user-guide-assets/piping_support.png" alt=""></td><td>管支撐預覽</td><td>產生管支撐候選點與預覽標記。</td></tr>
-      </tbody>
-    </table>
-    <div class="status"><strong>圖示一致性：</strong>Ribbon、排水設定窗、SC 桌面 GUI 與本手冊均使用同一份圖示定義；圖示不再由通用放置圖代替。</div>
+    <div class="status"><strong>舊功能已移除：</strong><code>45度對接</code>、<code>向下45°</code> 與 <code>垂直向下</code> 目前不在 Ribbon 上，不應再依舊手冊尋找。</div>
   </section>
 
   <section id="settings">
@@ -225,8 +196,10 @@
         <tr><td>45°／錯層彎頭</td><td>來源轉向、平面轉向與不同高程補正。</td><td>takeout 過大可能導致最短直管不足。</td></tr>
         <tr><td>變徑</td><td>主管管徑大於支管時使用。</td><td>族群需覆蓋實際主、支管尺寸。</td></tr>
         <tr><td>支管坡度</td><td>控制重力排水支管沿流向下降。</td><td>目前坡度同步仍在調整，建立後必須抽查。</td></tr>
+        <tr><td>管徑／最短直管</td><td>限制可用尺寸並避免 fitting takeout 重疊。</td><td>預設 25–300 mm、最短直管 80 mm。</td></tr>
       </tbody>
     </table>
+    <p>視窗保留四個主要操作：<strong>新增設定列</strong>、<strong>移除選取列</strong>、<strong>顯示全部管配件</strong>、<strong>儲存設定</strong>。進階來源規則預設允許 Bidirectional／Undefined，拒絕 In。</p>
   </section>
 
   <section id="connect">
@@ -253,29 +226,61 @@
       <li>主管大於支管時，變徑是否使用正確尺寸與方向。</li>
       <li>所有 fitting 是否真正接上 connector，沒有孤立短管。</li>
     </ul>
-  </section>
-
-  <section id="repair">
-    <h2>5. 修復工具何時使用</h2>
+    <h3>本版路型與來源範圍</h3>
     <table>
-      <thead><tr><th>工具</th><th>選取順序</th><th>適合情境</th><th>不會做的事</th></tr></thead>
+      <thead><tr><th>路型</th><th>用途</th></tr></thead>
       <tbody>
-        <tr><td>管中心對齊</td><td>基準管 → 要調整的管段，可連續選取</td><td>設備延伸管或無坡管需要先對齊局部中心線高程。</td><td>不建立接管、不套用完整路由。</td></tr>
-        <tr><td>45度對接</td><td>較高開放端 → 較低開放端</td><td>兩段既有管可以用一段 45°斜管橋接。</td><td>不切入主管、不自動選第三支管。</td></tr>
-        <tr><td>向下45°</td><td>來源 → 目標主管</td><td>幾何明確且只需要單 45°接入。</td><td>若求解不是 <code>single_45</code>，會拒絕建立。</td></tr>
-        <tr><td>垂直向下</td><td>開放管端 → 高程基準管</td><td>先建立到指定局部高程的垂直延伸。</td><td>不把垂直管接到基準管。</td></tr>
+        <tr><td><code>axis_direct</code></td><td>沿來源 connector 軸線延伸後直接接入。</td></tr>
+        <tr><td><code>perpendicular_drop_entry</code></td><td>支管與主管近似垂直且不同高程時，保留來源方向後向下斜接。</td></tr>
+        <tr><td><code>single_45</code></td><td>來源直管加一個 45°轉向後接入。</td></tr>
+        <tr><td><code>vertical_plan_turn_45</code></td><td>立管先保留垂直段，再以 45°與平面轉向接入。</td></tr>
+        <tr><td><code>terminal_double_45</code></td><td>來源端以兩個 45°處理立轉橫。</td></tr>
+        <tr><td><code>double_45</code></td><td>需要平面或高程偏移時使用雙 45°。</td></tr>
       </tbody>
     </table>
+    <p>來源可為垂直、水平或傾斜 Pipe 的開放端，也可為 FamilyInstance 的圓形 DomainPiping 端口。來源已連接、FlowDirection 為 In、設定不匹配、主管流向不明或空間無法容納管件時不建立。</p>
+  </section>
+
+  <section id="slope">
+    <h2>5. 坡度與不同高程</h2>
+    <ul>
+      <li>底層規則是<strong>往主管方向為低點，越離開主管越高</strong>。</li>
+      <li>1% 是重力排水水平支管的設定值；高程轉換段可使用符合管件與幾何的向下斜角，不代表每段都固定為 45°或 1%。</li>
+      <li>來源高於主管時，系統會尋找保持來源方向、向下轉換並在主管高程接入的候選。</li>
+      <li>來源低於主管且必須向上流時拒絕建立，不會以反坡補正。</li>
+    </ul>
+  </section>
+
+  <section id="align">
+    <h2>6. 管中心對齊</h2>
+    <ol class="steps">
+      <li>先選一支非垂直的高程基準管。</li>
+      <li>連續點選要調整的目標管；系統在目標位置投影基準管的局部中心線高程。</li>
+      <li>按 Esc 結束。</li>
+    </ol>
+    <table>
+      <thead><tr><th>目標連接狀態</th><th>處理方式</th></tr></thead>
+      <tbody>
+        <tr><td>兩端皆開放</td><td>整支垂直移動到局部中心線高程。</td></tr>
+        <tr><td>一端已連接</td><td>保留已連接端，只調整自由端。</td></tr>
+        <tr><td>兩端已連接</td><td>拒絕調整，避免破壞既有拓撲。</td></tr>
+      </tbody>
+    </table>
+    <div class="warning">被釘選或位於群組內的目標不會移動。此功能只調整幾何高程，不建立接管，也不等於完整坡度同步。</div>
   </section>
 
   <section id="errors">
-    <h2>6. 常見失敗與排查</h2>
+    <h2>7. 常見失敗與排查</h2>
+    <p>對話框先說明「無法建立的原因」與「下一步」，最後保留來源 ID 與技術碼供追查。</p>
     <table>
       <thead><tr><th>訊息</th><th>代表意思</th><th>處理方式</th></tr></thead>
       <tbody>
         <tr><td><code>PROFILE_NOT_MATCHED</code></td><td>來源 connector 與目標主管沒有相符設定。</td><td>回到管件設定檢查 Pipe Type、System Type、管徑與來源規則。</td></tr>
         <tr><td><code>SOURCE_BELOW_TARGET_MAIN</code></td><td>來源接點低於主管局部中心線，重力排水不能向上接入。</td><td>重新檢查高程或選取其他主管；不要強制反坡。</td></tr>
-        <tr><td><code>NO_FEASIBLE_ROUTE</code></td><td>角度、takeout、坡度或最短直管無法同時成立。</td><td>增加距離、調整來源位置、確認管件尺寸，或先使用修復工具整理幾何。</td></tr>
+        <tr><td><code>MAIN_DOWNSTREAM_UNRESOLVED</code></td><td>無法可靠判定主管下游方向。</td><td>補足主管拓撲或改選方向可判定的主管段。</td></tr>
+        <tr><td><code>NO_FEASIBLE_ROUTE</code></td><td>角度、takeout、坡度或最短直管無法同時成立。</td><td>增加距離、調整來源位置或高程，並確認管件尺寸。</td></tr>
+        <tr><td><code>JUNCTION_GEOMETRY_INVALID</code></td><td>斜 T／Y 支口方向或接續幾何不成立。</td><td>確認主管流向、管件族支口方向及設定列。</td></tr>
+        <tr><td><code>MAIN_END_CLEARANCE</code></td><td>接入點距主管端部太近。</td><td>選擇離端點較遠的位置或延長主管。</td></tr>
         <tr><td><code>PLANNED_PIPE_TANGENT_TOO_SHORT</code></td><td>扣除彎頭與 junction takeout 後沒有足夠直管。</td><td>拉開來源與主管距離，或換用 takeout 較小且經驗證的管件。</td></tr>
         <tr><td><code>SIGNED_SLOPE_INVALID</code></td><td>支管沒有形成設定坡度，或排水方向相反。</td><td>檢查主管下游方向、來源高程與 Profile 坡度。</td></tr>
       </tbody>
@@ -284,7 +289,7 @@
   </section>
 
   <section>
-    <h2>7. 測試模型驗收清單</h2>
+    <h2>8. 測試模型驗收清單</h2>
     <ul>
       <li>同徑與 100×80 變徑各測一支。</li>
       <li>垂直、水平與傾斜開放管端各測一支。</li>
@@ -293,11 +298,11 @@
       <li>量測每段實際坡度；目前 1% 為測試基準，但仍須人工抽查。</li>
       <li>完成五支後測試一次 Undo 是否能復原整輪操作。</li>
     </ul>
+    <div class="status"><strong>版本邊界：</strong>後續實驗中的「斜 T 支口向上旋轉 45°，搭配兩個 45°彎頭」新優先路型不屬於此快照，也不應出現在本版正常結果中。</div>
   </section>
 
   <footer>
-    SC REVIT v0.5.0-drainage-dev｜Revit 2024｜開發預覽文件<br>
-    本手冊中的路型圖為工程示意；Ribbon PNG 依本版外掛的實際繪圖程式產生。
+    SC REVIT｜Revit 2024｜main / snapshot-676ce995fd74｜排水工作流程開發預覽
   </footer>
 </main>
 </body>

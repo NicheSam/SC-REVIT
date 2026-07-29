@@ -3,7 +3,7 @@
 SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提供測試使用。  
 目前請使用 GitHub Releases 下載安裝包，不要使用 GitHub 的 `Code > Download ZIP`。
 
-目前倉庫原始碼版本為 `v0.5.0-drainage-dev`；GitHub Releases 中可直接安裝的版本仍為 `v0.4.1-dev`。
+目前 `main` 的排水功能基準為 `snapshot-676ce995fd74`；可直接執行的完整安裝包仍為 `v0.5.0-drainage-dev`。
 
 ## v0.5.0-drainage-dev 開發狀態
 
@@ -19,27 +19,33 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 
 ## 排水操作手冊
 
-使用排水工具前，請先閱讀 [SC REVIT v0.5.0 排水建模操作手冊](docs/SC_REVIT_v0.5.0_drainage_user_guide.html)。
+目前手冊已依 `main` 的實際 Ribbon 與命令流程更新：
 
-手冊包含：
+- [GitHub 可直接閱讀的 Markdown 完整手冊](docs/SC_REVIT_drainage_operation_manual.md)
+- [下載／列印 PDF 手冊](docs/SC_REVIT_drainage_operation_manual.pdf)
+- [HTML 圖文版](docs/SC_REVIT_v0.5.0_drainage_user_guide.html)（下載後以瀏覽器開啟）
 
-- SC REVIT 全部 16 個 Ribbon 命令的實際圖示與用途。
-- 管件設定欄位與第一次設定順序。
-- 「來源 → 主管」的正確選取流程。
-- 立管雙 45°、徑向管段、平面 45°與斜 T／Y 的預期路型。
-- 管中心對齊、45度對接、向下45°與垂直向下的使用邊界。
-- 常見失敗碼、模型檢查與測試驗收清單。
+目前排水面板對使用者開放三項操作：
 
 ### 排水 Ribbon 快速對照
 
 | 圖示 | 按鈕 | 用途 |
 | --- | --- | --- |
-| <img src="docs/user-guide-assets/drainage_connect.png" width="44" alt=""> | 排水接入幹管 | 依序選取來源與主管，建立並驗證完整接管。 |
-| <img src="docs/user-guide-assets/drainage_settings.png" width="44" alt=""> | 管件設定 | 設定 Pipe Type、System Type、管件、管徑與坡度。 |
-| <img src="docs/user-guide-assets/align_centerline.png" width="44" alt=""> | 管中心對齊 | 依基準管局部高程對齊其他管段中心線。 |
-| <img src="docs/user-guide-assets/connect_45.png" width="44" alt=""> | 45度對接 | 以一段 45°斜管連接兩個開放管端。 |
-| <img src="docs/user-guide-assets/down_45.png" width="44" alt=""> | 向下45° | 只在單 45°路型可行時接入指定主管。 |
-| <img src="docs/user-guide-assets/vertical_down.png" width="44" alt=""> | 垂直向下 | 延伸到基準管局部中心線高程，不接入基準管。 |
+| <img src="docs/user-guide-assets/drainage_connect.png" width="44" alt=""> | 排水接入幹管 | 依提示先選來源，再選這一支要接入的主管；成功後可繼續下一支。 |
+| <img src="docs/user-guide-assets/drainage_settings.png" width="44" alt=""> | 管件設定 | 依目標 Pipe Type／System Type 設定斜 T／Y、彎頭、變徑、坡度與管徑範圍。 |
+| <img src="docs/user-guide-assets/align_centerline.png" width="44" alt=""> | 管中心對齊 | 先選非垂直的高程基準管，再連續對齊其他管段的局部中心線高程。 |
+
+`45度對接`、`向下45°` 與 `垂直向下` 目前不在 Ribbon 上，不應再依舊手冊尋找這三個按鈕。
+
+### 最短操作流程
+
+1. 展開 `排水接入幹管`，先進入 `管件設定`。
+2. 選擇目標 Pipe Type 與 System Type，新增設定列並確認管件、管徑及坡度後儲存。
+3. 執行 `排水接入幹管`。
+4. 依 `1/2` 提示點選設備接口或開放管端。
+5. 依 `2/2` 提示明確點選本支要接入的主管。
+6. 成功後直接繼續下一支；單支失敗會回復該支並顯示處理方式。
+7. 按 `Esc` 結束整輪操作；成功結果合併為一次 Revit Undo。
 
 ## 下載安裝包
 
