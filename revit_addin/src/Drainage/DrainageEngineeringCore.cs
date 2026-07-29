@@ -34,6 +34,13 @@ namespace RfaMetadataAddin.Drainage
         public double StubLength { get; set; }
         public double ElbowTakeout { get; set; }
         public double JunctionBranchTakeout { get; set; }
+        public double? JunctionBranchAngleDegrees { get; set; }
+        public double? SideEntryAngleDegrees { get; set; }
+        public double? SideEntryToleranceDegrees { get; set; }
+        public double? RadialMinimumDegrees { get; set; }
+        public double? RadialMaximumDegrees { get; set; }
+        public double? RadialToleranceDegrees { get; set; }
+        public double? JunctionBranchAxisMinimumAlignment { get; set; }
         public double MinimumTangentLength { get; set; }
         public double VerticalTransitionMinimumTangentLength { get; set; }
         public double VerticalTransitionMinimumOutletAdvanceLength
@@ -44,7 +51,21 @@ namespace RfaMetadataAddin.Drainage
         public double MainEndClearance { get; set; }
         public double MaximumOutletAdvance { get; set; }
         public double? MaximumDouble45LateralOffset { get; set; }
+        public double? MaximumPerpendicularDropLength { get; set; }
+        public double? MaximumPerpendicularDropRouteShare { get; set; }
+        public double ExistingSourceLength { get; set; }
         public double SearchStep { get; set; }
+        public bool AllowSourceAxialAdjustment { get; set; }
+        public double? MaximumSourceAxialAdjustment { get; set; }
+        public IList<DrainageMainForbiddenInterval>
+            MainForbiddenIntervals { get; set; }
+    }
+
+    internal sealed class DrainageMainForbiddenInterval
+    {
+        public double MinimumParameter { get; set; }
+        public double MaximumParameter { get; set; }
+        public long ElementId { get; set; }
     }
 
     internal sealed class DrainageWallRouteSolution
@@ -87,6 +108,13 @@ namespace RfaMetadataAddin.Drainage
         public double BranchTangentLength { get; set; }
         public double ElbowAngleDegrees { get; set; }
         public double EntrySlope { get; set; }
+        public double CenterlineLength { get; set; }
+        public double VariableRouteLength { get; set; }
+        public double RouteShare { get; set; }
+        public double SourceAxialAdjustment { get; set; }
+        public bool ExceedsPreferredLength { get; set; }
+        public bool ExceedsPreferredRouteShare { get; set; }
+        public long BlockingElementId { get; set; }
     }
 
     internal sealed class DrainageAxisDirectSolution
@@ -163,6 +191,31 @@ namespace RfaMetadataAddin.Drainage
                 return -1;
             }
             return startZ < endZ ? 0 : 1;
+        }
+
+        public static int SelectPreferredDownstreamCandidate(
+            bool end0Feasible,
+            bool end1Feasible,
+            int end0TopologyEvidence,
+            int end1TopologyEvidence)
+        {
+            if (end0Feasible && !end1Feasible)
+            {
+                return 0;
+            }
+            if (end1Feasible && !end0Feasible)
+            {
+                return 1;
+            }
+            if (!end0Feasible && !end1Feasible)
+            {
+                return -1;
+            }
+            if (end1TopologyEvidence > end0TopologyEvidence)
+            {
+                return 1;
+            }
+            return 0;
         }
 
         public static double ComputeSignedSlope(
@@ -259,6 +312,23 @@ namespace RfaMetadataAddin.Drainage
             return length > 0.000001 && z / length <= -0.707;
         }
 
+        public static bool IsNearlyVerticalDownwardAxis(
+            double x,
+            double y,
+            double z)
+        {
+            double length = Math.Sqrt(x * x + y * y + z * z);
+            if (length <= 0.000001)
+            {
+                return false;
+            }
+            double normalizedZ = z / length;
+            double normalizedHorizontal =
+                Math.Sqrt(x * x + y * y) / length;
+            return normalizedZ < -0.99
+                && normalizedHorizontal <= 0.02;
+        }
+
         public static bool IsConnectorAxisDirectedTowardTarget(
             double axisX,
             double axisY,
@@ -330,6 +400,62 @@ namespace RfaMetadataAddin.Drainage
                 }
             }
             return true;
+        }
+
+        public static double ComputeGravityNearMainEndpointAdjustment(
+            double nearMainElevation,
+            double farElevation,
+            double horizontalLength,
+            double expectedSlope)
+        {
+            if (horizontalLength <= 0
+                || expectedSlope <= 0
+                || double.IsNaN(nearMainElevation)
+                || double.IsNaN(farElevation))
+            {
+                return double.NaN;
+            }
+            double requiredNearMainElevation =
+                farElevation - horizontalLength * expectedSlope;
+            return requiredNearMainElevation - nearMainElevation;
+        }
+
+        public static bool IsGravitySlopeDirectedTowardMain(
+            double nearMainElevation,
+            double farElevation,
+            double horizontalLength,
+            double expectedSlope,
+            double tolerance)
+        {
+            double adjustment =
+                ComputeGravityNearMainEndpointAdjustment(
+                    nearMainElevation,
+                    farElevation,
+                    horizontalLength,
+                    expectedSlope);
+            return !double.IsNaN(adjustment)
+                && Math.Abs(adjustment) <= Math.Max(0, tolerance);
+        }
+
+        public static double ComputeSourceElevationAdjustmentLimit(
+            double sourceLength,
+            double fittingStubLength,
+            double minimumLimit,
+            double maximumLimit)
+        {
+            if (sourceLength <= 0
+                || fittingStubLength <= 0
+                || minimumLimit <= 0
+                || maximumLimit < minimumLimit)
+            {
+                return double.NaN;
+            }
+            double routeDerivedLimit = Math.Min(
+                sourceLength * 0.10,
+                Math.Max(minimumLimit, fittingStubLength));
+            return Math.Min(
+                maximumLimit,
+                Math.Max(minimumLimit, routeDerivedLimit));
         }
 
         public static double AngleBetween2D(
@@ -1256,6 +1382,19 @@ namespace RfaMetadataAddin.Drainage
 
         public static DrainageTerminalDropSolution
             SolveVerticalTerminalDropRoute(
+                DrainageWallRouteInput input)
+        {
+            DrainageTerminalDropSolution searched =
+                SolveVerticalTerminalDropTurnSearch(input);
+            if (searched.IsFeasible)
+            {
+                return searched;
+            }
+            return SolveVerticalTerminalDropCoplanarRoute(input);
+        }
+
+        private static DrainageTerminalDropSolution
+            SolveVerticalTerminalDropCoplanarRoute(
                 DrainageWallRouteInput input)
         {
             var noSolution = new DrainageTerminalDropSolution
@@ -2241,12 +2380,12 @@ namespace RfaMetadataAddin.Drainage
                                         + terminalDropLength
                                         + lowerBranchLength;
                                     bool preferCandidate = best == null
-                                        || angleDeviation
-                                            < bestAngleDeviation
+                                        || totalLength
+                                            < bestTotalLength
                                                 - 0.000001
                                         || (Math.Abs(
-                                                angleDeviation
-                                                - bestAngleDeviation)
+                                                totalLength
+                                                - bestTotalLength)
                                                 <= 0.000001
                                             && (lowerTangent
                                                     < bestFinalApproachLength
@@ -2255,12 +2394,12 @@ namespace RfaMetadataAddin.Drainage
                                                         lowerTangent
                                                         - bestFinalApproachLength)
                                                         <= 0.000001
-                                                    && (totalLength
-                                                            < bestTotalLength
+                                                    && (angleDeviation
+                                                            < bestAngleDeviation
                                                                 - 0.000001
                                                         || (Math.Abs(
-                                                                totalLength
-                                                                - bestTotalLength)
+                                                                angleDeviation
+                                                                - bestAngleDeviation)
                                                                 <= 0.000001
                                                             && minimumMargin
                                                                 > bestMinimumMargin
@@ -2545,6 +2684,31 @@ namespace RfaMetadataAddin.Drainage
             return noSolution;
         }
 
+        private static DrainageMainForbiddenInterval
+            FindBlockingMainInterval(
+                DrainageWallRouteInput input,
+                double parameter)
+        {
+            if (input == null
+                || input.MainForbiddenIntervals == null)
+            {
+                return null;
+            }
+            return input.MainForbiddenIntervals
+                .FirstOrDefault(item =>
+                    item != null
+                    && parameter
+                        >= Math.Min(
+                            item.MinimumParameter,
+                            item.MaximumParameter)
+                            - 0.000001
+                    && parameter
+                        <= Math.Max(
+                            item.MinimumParameter,
+                            item.MaximumParameter)
+                            + 0.000001);
+        }
+
         public static DrainagePerpendicularDropSolution
             SolvePerpendicularDropEntry(
                 DrainageWallRouteInput input)
@@ -2602,140 +2766,434 @@ namespace RfaMetadataAddin.Drainage
                 input.StubLength,
                 input.ElbowTakeout
                     + input.MinimumTangentLength);
-            DrainageGeometryPoint stubEnd = AddScaled(
-                input.Source,
-                outlet,
-                stubLength);
-            double projectedParameter = (
-                (stubEnd.X - input.MainStart.X) * mainX
-                + (stubEnd.Y - input.MainStart.Y) * mainY)
-                / (mainLength * mainLength);
-            double projectedX =
-                input.MainStart.X + mainX * projectedParameter;
-            double projectedY =
-                input.MainStart.Y + mainY * projectedParameter;
-            double towardMainX = projectedX - stubEnd.X;
-            double towardMainY = projectedY - stubEnd.Y;
-            double lateralDistance = Math.Sqrt(
-                towardMainX * towardMainX
-                + towardMainY * towardMainY);
-            if (lateralDistance <= 0.000001
-                || (towardMainX * outletPlanX
-                    + towardMainY * outletPlanY)
-                    / lateralDistance < 0.90)
-            {
-                noSolution.FailureCode =
-                    "PERPENDICULAR_DROP_SOURCE_POINTS_AWAY";
-                return noSolution;
-            }
             double downstreamSign =
                 input.DownstreamEndpointIndex == 1
                     ? 1.0
                     : -1.0;
-            double tieParameter = projectedParameter
-                + downstreamSign
-                    * lateralDistance / mainLength;
             double minimumParameter =
                 input.MainEndClearance / mainLength;
             double maximumParameter =
                 1.0 - minimumParameter;
-            if (tieParameter
-                    < minimumParameter - 0.000001
-                || tieParameter
-                    > maximumParameter + 0.000001)
+            if (minimumParameter >= maximumParameter)
             {
                 noSolution.FailureCode =
-                    "PERPENDICULAR_DROP_MAIN_END_CLEARANCE";
-                return noSolution;
-            }
-            DrainageGeometryPoint tie = Point(
-                input.MainStart.X + mainX * tieParameter,
-                input.MainStart.Y + mainY * tieParameter,
-                input.MainStart.Z
-                    + (input.MainEnd.Z
-                        - input.MainStart.Z)
-                        * tieParameter);
-            double branchX = tie.X - stubEnd.X;
-            double branchY = tie.Y - stubEnd.Y;
-            double branchZ = tie.Z - stubEnd.Z;
-            double branchHorizontal = Math.Sqrt(
-                branchX * branchX
-                + branchY * branchY);
-            double branchLength = Math.Sqrt(
-                branchHorizontal * branchHorizontal
-                + branchZ * branchZ);
-            if (branchHorizontal <= 0.000001
-                || branchZ >= -0.000001)
-            {
-                noSolution.FailureCode =
-                    "PERPENDICULAR_DROP_MAIN_NOT_LOWER";
-                return noSolution;
-            }
-            double entrySlope =
-                -branchZ / branchHorizontal;
-            if (entrySlope
-                <= input.SlopeRatio + 0.002)
-            {
-                noSolution.FailureCode =
-                    "PERPENDICULAR_DROP_NOT_REQUIRED";
-                return noSolution;
-            }
-            double minimumBranchLength =
-                input.ElbowTakeout
-                + input.JunctionBranchTakeout
-                + input.MinimumTangentLength;
-            if (branchLength
-                < minimumBranchLength - 0.000001)
-            {
-                noSolution.FailureCode =
-                    "PERPENDICULAR_DROP_TANGENT_TOO_SHORT";
+                    "TARGET_SEGMENT_CAPACITY_INSUFFICIENT";
                 return noSolution;
             }
             double downstreamX =
                 downstreamSign * mainUnitX;
             double downstreamY =
                 downstreamSign * mainUnitY;
-            double sideEntryAngle = AngleBetween2D(
-                branchX,
-                branchY,
-                downstreamX,
-                downstreamY);
-            if (Math.Abs(sideEntryAngle - 45.0) > 0.01)
+            double searchStep = Math.Max(
+                input.SearchStep,
+                0.000001);
+            double maximumAdjustment =
+                input.AllowSourceAxialAdjustment
+                    ? input.MaximumSourceAxialAdjustment
+                        .GetValueOrDefault(
+                            input.MaximumOutletAdvance)
+                    : 0;
+            maximumAdjustment = Math.Max(
+                0,
+                maximumAdjustment);
+            bool reachedUsableMainInterval = false;
+            bool blockedByTargetFitting = false;
+            long blockingElementId = 0;
+            DrainagePerpendicularDropSolution bestSolution =
+                null;
+            double bestVariableRouteLength =
+                double.PositiveInfinity;
+            for (double sourceAdjustment = 0;
+                sourceAdjustment
+                    <= maximumAdjustment + 0.000001;
+                sourceAdjustment += searchStep)
+            {
+                DrainageGeometryPoint adjustedSource =
+                    AddScaled(
+                        input.Source,
+                        outlet,
+                        sourceAdjustment);
+                DrainageGeometryPoint stubEnd = AddScaled(
+                    adjustedSource,
+                    outlet,
+                    stubLength);
+                double projectedParameter = (
+                    (stubEnd.X - input.MainStart.X) * mainX
+                    + (stubEnd.Y - input.MainStart.Y) * mainY)
+                    / (mainLength * mainLength);
+                double projectedX =
+                    input.MainStart.X
+                    + mainX * projectedParameter;
+                double projectedY =
+                    input.MainStart.Y
+                    + mainY * projectedParameter;
+                double towardMainX =
+                    projectedX - stubEnd.X;
+                double towardMainY =
+                    projectedY - stubEnd.Y;
+                double lateralDistance = Math.Sqrt(
+                    towardMainX * towardMainX
+                    + towardMainY * towardMainY);
+                if (lateralDistance <= 0.000001)
+                {
+                    break;
+                }
+                if ((towardMainX * outletPlanX
+                        + towardMainY * outletPlanY)
+                        / lateralDistance < 0.90)
+                {
+                    noSolution.FailureCode =
+                        "PERPENDICULAR_DROP_SOURCE_POINTS_AWAY";
+                    break;
+                }
+                double tieParameter = projectedParameter
+                    + downstreamSign
+                        * lateralDistance / mainLength;
+                if (tieParameter
+                        < minimumParameter - 0.000001
+                    || tieParameter
+                        > maximumParameter + 0.000001)
+                {
+                    noSolution.FailureCode =
+                        "TARGET_SEGMENT_CAPACITY_INSUFFICIENT";
+                    continue;
+                }
+                reachedUsableMainInterval = true;
+                DrainageMainForbiddenInterval
+                    blockingInterval =
+                        FindBlockingMainInterval(
+                            input,
+                            tieParameter);
+                if (blockingInterval != null)
+                {
+                    blockedByTargetFitting = true;
+                    blockingElementId =
+                        blockingInterval.ElementId;
+                    noSolution.FailureCode =
+                        "TARGET_FITTING_CLEARANCE_CONFLICT";
+                    continue;
+                }
+                DrainageGeometryPoint tie = Point(
+                    input.MainStart.X
+                        + mainX * tieParameter,
+                    input.MainStart.Y
+                        + mainY * tieParameter,
+                    input.MainStart.Z
+                        + (input.MainEnd.Z
+                            - input.MainStart.Z)
+                            * tieParameter);
+                double branchX = tie.X - stubEnd.X;
+                double branchY = tie.Y - stubEnd.Y;
+                double branchZ = tie.Z - stubEnd.Z;
+                double branchHorizontal = Math.Sqrt(
+                    branchX * branchX
+                    + branchY * branchY);
+                double branchLength = Math.Sqrt(
+                    branchHorizontal * branchHorizontal
+                    + branchZ * branchZ);
+                if (branchHorizontal <= 0.000001
+                    || branchZ >= -0.000001)
+                {
+                    noSolution.FailureCode =
+                        "PERPENDICULAR_DROP_MAIN_NOT_LOWER";
+                    continue;
+                }
+                double entrySlope =
+                    -branchZ / branchHorizontal;
+                if (entrySlope
+                    <= input.SlopeRatio + 0.002)
+                {
+                    noSolution.FailureCode =
+                        "PERPENDICULAR_DROP_NOT_REQUIRED";
+                    continue;
+                }
+                double minimumBranchLength =
+                    input.ElbowTakeout
+                    + input.JunctionBranchTakeout
+                    + input.MinimumTangentLength;
+                if (branchLength
+                    < minimumBranchLength - 0.000001)
+                {
+                    noSolution.FailureCode =
+                        "PERPENDICULAR_DROP_TANGENT_TOO_SHORT";
+                    continue;
+                }
+                double sideEntryAngle = AngleBetween2D(
+                    branchX,
+                    branchY,
+                    downstreamX,
+                    downstreamY);
+                if (Math.Abs(sideEntryAngle - 45.0)
+                    > 0.01)
+                {
+                    noSolution.FailureCode =
+                        "PERPENDICULAR_DROP_SIDE_ENTRY_INVALID";
+                    continue;
+                }
+                double elbowAngle = AxialAngleDegrees(
+                    outlet.X,
+                    outlet.Y,
+                    outlet.Z,
+                    branchX,
+                    branchY,
+                    branchZ);
+                double effectiveBranchLength = branchLength;
+                double effectiveBranchX = branchX;
+                double effectiveBranchY = branchY;
+                double effectiveBranchZ = branchZ;
+                if (input.JunctionBranchAngleDegrees.HasValue)
+                {
+                    DrainageVector3 downstream3D =
+                        NormalizeVector(
+                            new DrainageVector3(
+                                downstreamX,
+                                downstreamY,
+                                downstreamSign
+                                    * (input.MainEnd.Z
+                                        - input.MainStart.Z)
+                                        / mainLength));
+                    DrainageVector3 desiredOutward =
+                        NormalizeVector(
+                            new DrainageVector3(
+                                -branchX,
+                                -branchY,
+                                -branchZ));
+                    if (downstream3D == null
+                        || desiredOutward == null)
+                    {
+                        noSolution.FailureCode =
+                            "PERPENDICULAR_DROP_JUNCTION_GEOMETRY_INVALID";
+                        continue;
+                    }
+                    double outwardAlongDownstream =
+                        Dot(desiredOutward, downstream3D);
+                    DrainageVector3 outwardRadial =
+                        NormalizeVector(
+                            new DrainageVector3(
+                                desiredOutward.X
+                                    - downstream3D.X
+                                        * outwardAlongDownstream,
+                                desiredOutward.Y
+                                    - downstream3D.Y
+                                        * outwardAlongDownstream,
+                                desiredOutward.Z
+                                    - downstream3D.Z
+                                        * outwardAlongDownstream));
+                    if (outwardRadial == null)
+                    {
+                        noSolution.FailureCode =
+                            "PERPENDICULAR_DROP_JUNCTION_GEOMETRY_INVALID";
+                        continue;
+                    }
+                    double junctionAngleRadians =
+                        input.JunctionBranchAngleDegrees.Value
+                        * Math.PI / 180.0;
+                    DrainageVector3 branchPortAxis =
+                        NormalizeVector(
+                            new DrainageVector3(
+                                -Math.Cos(junctionAngleRadians)
+                                    * downstream3D.X
+                                    + Math.Sin(junctionAngleRadians)
+                                        * outwardRadial.X,
+                                -Math.Cos(junctionAngleRadians)
+                                    * downstream3D.Y
+                                    + Math.Sin(junctionAngleRadians)
+                                        * outwardRadial.Y,
+                                -Math.Cos(junctionAngleRadians)
+                                    * downstream3D.Z
+                                    + Math.Sin(junctionAngleRadians)
+                                        * outwardRadial.Z));
+                    if (branchPortAxis == null)
+                    {
+                        noSolution.FailureCode =
+                            "PERPENDICULAR_DROP_JUNCTION_GEOMETRY_INVALID";
+                        continue;
+                    }
+                    DrainageGeometryPoint branchPort = AddScaled(
+                        tie,
+                        branchPortAxis,
+                        input.JunctionBranchTakeout);
+                    effectiveBranchX =
+                        branchPort.X - stubEnd.X;
+                    effectiveBranchY =
+                        branchPort.Y - stubEnd.Y;
+                    effectiveBranchZ =
+                        branchPort.Z - stubEnd.Z;
+                    double effectiveHorizontal = Math.Sqrt(
+                        effectiveBranchX * effectiveBranchX
+                        + effectiveBranchY * effectiveBranchY);
+                    effectiveBranchLength = Math.Sqrt(
+                        effectiveHorizontal * effectiveHorizontal
+                        + effectiveBranchZ * effectiveBranchZ);
+                    if (effectiveHorizontal <= 0.000001
+                        || effectiveBranchZ >= -0.000001
+                        || effectiveBranchLength
+                            < input.ElbowTakeout
+                                + input.MinimumTangentLength
+                                - 0.000001)
+                    {
+                        noSolution.FailureCode =
+                            "PERPENDICULAR_DROP_TANGENT_TOO_SHORT";
+                        continue;
+                    }
+                    double expectedSideEntry =
+                        input.SideEntryAngleDegrees
+                            .GetValueOrDefault(45.0);
+                    double sideEntryTolerance =
+                        input.SideEntryToleranceDegrees
+                            .GetValueOrDefault(5.0);
+                    if (!IsDirectedSideEntryAllowed(
+                        effectiveBranchX,
+                        effectiveBranchY,
+                        downstreamX,
+                        downstreamY,
+                        expectedSideEntry,
+                        sideEntryTolerance))
+                    {
+                        noSolution.FailureCode =
+                            "PERPENDICULAR_DROP_JUNCTION_GEOMETRY_INVALID";
+                        continue;
+                    }
+                    DrainageVector3 actualOutward =
+                        NormalizeVector(
+                            new DrainageVector3(
+                                -effectiveBranchX,
+                                -effectiveBranchY,
+                                -effectiveBranchZ));
+                    if (actualOutward == null
+                        || Dot(branchPortAxis, actualOutward)
+                            < input
+                                .JunctionBranchAxisMinimumAlignment
+                                .GetValueOrDefault(0.95))
+                    {
+                        noSolution.FailureCode =
+                            "PERPENDICULAR_DROP_JUNCTION_GEOMETRY_INVALID";
+                        continue;
+                    }
+                    double radialAngle =
+                        RadialElevationAngleDegrees(
+                            downstreamX,
+                            downstreamY,
+                            -effectiveBranchX,
+                            -effectiveBranchY,
+                            -effectiveBranchZ);
+                    if (!IsRadialElevationAllowed(
+                        radialAngle,
+                        input.RadialMinimumDegrees
+                            .GetValueOrDefault(0),
+                        input.RadialMaximumDegrees
+                            .GetValueOrDefault(45),
+                        input.RadialToleranceDegrees
+                            .GetValueOrDefault(5)))
+                    {
+                        noSolution.FailureCode =
+                            "PERPENDICULAR_DROP_JUNCTION_GEOMETRY_INVALID";
+                        continue;
+                    }
+                    entrySlope =
+                        -effectiveBranchZ / effectiveHorizontal;
+                    elbowAngle = AxialAngleDegrees(
+                        outlet.X,
+                        outlet.Y,
+                        outlet.Z,
+                        effectiveBranchX,
+                        effectiveBranchY,
+                        effectiveBranchZ);
+                }
+                if (double.IsNaN(elbowAngle)
+                    || elbowAngle <= 2.0
+                    || elbowAngle >= 88.0)
+                {
+                    noSolution.FailureCode =
+                        "PERPENDICULAR_DROP_ELBOW_ANGLE_INVALID";
+                    continue;
+                }
+                double totalRouteLength =
+                    Math.Max(0, input.ExistingSourceLength)
+                    + sourceAdjustment
+                    + stubLength
+                    + effectiveBranchLength;
+                double routeShare =
+                    totalRouteLength <= 0.000001
+                        ? 1.0
+                        : effectiveBranchLength
+                            / totalRouteLength;
+                bool exceedsLength =
+                    input.MaximumPerpendicularDropLength
+                        .HasValue
+                    && effectiveBranchLength
+                        > input
+                            .MaximumPerpendicularDropLength
+                            .Value + 0.000001;
+                bool exceedsShare =
+                    input.MaximumPerpendicularDropRouteShare
+                        .HasValue
+                    && routeShare
+                        > input
+                            .MaximumPerpendicularDropRouteShare
+                            .Value + 0.000001;
+                double variableRouteLength =
+                    sourceAdjustment
+                    + stubLength
+                    + effectiveBranchLength;
+                var candidate =
+                    new DrainagePerpendicularDropSolution
+                {
+                    IsFeasible = true,
+                    FailureCode = "",
+                    StubEnd = stubEnd,
+                    MainTie = tie,
+                    StubTangentLength =
+                        stubLength - input.ElbowTakeout,
+                    BranchTangentLength =
+                        effectiveBranchLength
+                        - input.ElbowTakeout,
+                    ElbowAngleDegrees = elbowAngle,
+                    EntrySlope = entrySlope,
+                    CenterlineLength = effectiveBranchLength,
+                    VariableRouteLength =
+                        variableRouteLength,
+                    RouteShare = routeShare,
+                    SourceAxialAdjustment =
+                        sourceAdjustment,
+                    ExceedsPreferredLength =
+                        exceedsLength,
+                    ExceedsPreferredRouteShare =
+                        exceedsShare
+                };
+                double meaningfulImprovement =
+                    Math.Max(
+                        0.001,
+                        bestVariableRouteLength * 0.02);
+                if (bestSolution == null
+                    || variableRouteLength
+                        < bestVariableRouteLength
+                            - meaningfulImprovement)
+                {
+                    bestSolution = candidate;
+                    bestVariableRouteLength =
+                        variableRouteLength;
+                }
+            }
+            if (bestSolution != null)
+            {
+                return bestSolution;
+            }
+            if (!reachedUsableMainInterval
+                && noSolution.FailureCode
+                    == "PERPENDICULAR_DROP_INPUT_INVALID")
             {
                 noSolution.FailureCode =
-                    "PERPENDICULAR_DROP_SIDE_ENTRY_INVALID";
-                return noSolution;
+                    "TARGET_SEGMENT_CAPACITY_INSUFFICIENT";
             }
-            double elbowAngle = AxialAngleDegrees(
-                outlet.X,
-                outlet.Y,
-                outlet.Z,
-                branchX,
-                branchY,
-                branchZ);
-            if (double.IsNaN(elbowAngle)
-                || elbowAngle <= 2.0
-                || elbowAngle >= 88.0)
+            if (blockedByTargetFitting)
             {
                 noSolution.FailureCode =
-                    "PERPENDICULAR_DROP_ELBOW_ANGLE_INVALID";
-                return noSolution;
+                    "TARGET_FITTING_CLEARANCE_CONFLICT";
             }
-            return new DrainagePerpendicularDropSolution
-            {
-                IsFeasible = true,
-                FailureCode = "",
-                StubEnd = stubEnd,
-                MainTie = tie,
-                StubTangentLength =
-                    stubLength - input.ElbowTakeout,
-                BranchTangentLength =
-                    branchLength
-                    - input.ElbowTakeout
-                    - input.JunctionBranchTakeout,
-                ElbowAngleDegrees = elbowAngle,
-                EntrySlope = entrySlope
-            };
+            noSolution.BlockingElementId =
+                blockingElementId;
+            return noSolution;
         }
 
         public static DrainageAxisDirectSolution

@@ -22,8 +22,11 @@ namespace RfaMetadataAddin.Drainage
         ProfileNotMatched,
         SourceBelowTargetMain,
         SourceAxisRouteUnresolved,
+        SourceGeometryAdjustmentBlocked,
         SingleFortyFiveNotFeasible,
         NoFeasibleRoute,
+        TargetSegmentCapacityInsufficient,
+        TargetFittingClearanceConflict,
         TargetNotFound,
         TargetAmbiguous,
         TargetDownstreamUnresolved,
@@ -182,11 +185,13 @@ namespace RfaMetadataAddin.Drainage
         public string RouteKind { get; set; }
         public DrainageRouteRequest Request { get; set; }
         public IDictionary<string, object> PreviewPayload { get; set; }
+        public IList<string> Warnings { get; set; }
         public IList<string> Issues { get; set; }
         public bool ReadyToCreate { get; set; }
 
         public DrainageRoutePlan()
         {
+            Warnings = new List<string>();
             Issues = new List<string>();
         }
     }
@@ -198,11 +203,13 @@ namespace RfaMetadataAddin.Drainage
         public string Message { get; set; }
         public string RouteHash { get; set; }
         public string OperationId { get; set; }
+        public IList<string> Warnings { get; set; }
         public IList<ElementId> CreatedElementIds { get; set; }
 
         public DrainageExecutionResult()
         {
             FailureCode = DrainageFailureCode.None;
+            Warnings = new List<string>();
             CreatedElementIds = new List<ElementId>();
         }
 

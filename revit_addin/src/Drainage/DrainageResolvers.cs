@@ -69,6 +69,31 @@ namespace RfaMetadataAddin.Drainage
         }
     }
 
+    internal sealed class DrainageSpecificPipeSelectionFilter :
+        ISelectionFilter
+    {
+        private readonly ElementId _pipeId;
+
+        public DrainageSpecificPipeSelectionFilter(ElementId pipeId)
+        {
+            _pipeId = pipeId;
+        }
+
+        public bool AllowElement(Element element)
+        {
+            return element is Pipe
+                && _pipeId != null
+                && element.Id.Value == _pipeId.Value;
+        }
+
+        public bool AllowReference(Reference reference, XYZ position)
+        {
+            return reference != null
+                && _pipeId != null
+                && reference.ElementId.Value == _pipeId.Value;
+        }
+    }
+
     internal static class DrainageSourceResolver
     {
         public static DrainageSourceRef Resolve(

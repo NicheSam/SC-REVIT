@@ -21,12 +21,58 @@ internal static class DrainageEngineeringCoreTests
         Expect(DrainageEngineeringCore.ResolveDownstreamEndpoint(9, 10, 100, "auto", 0.001) == 0, "lower end0");
         Expect(DrainageEngineeringCore.ResolveDownstreamEndpoint(10, 10, 100, "auto", 0.001) == -1, "flat unresolved");
         Expect(DrainageEngineeringCore.ResolveDownstreamEndpoint(10, 10, 100, "end0", 0.001) == 0, "user end0");
+        Expect(
+            DrainageEngineeringCore.SelectPreferredDownstreamCandidate(
+                true,
+                false,
+                0,
+                10) == 0,
+            "physical feasibility overrides topology evidence");
+        Expect(
+            DrainageEngineeringCore.SelectPreferredDownstreamCandidate(
+                true,
+                true,
+                2,
+                4) == 1,
+            "stronger topology evidence selects end1");
+        Expect(
+            DrainageEngineeringCore.SelectPreferredDownstreamCandidate(
+                true,
+                true,
+                0,
+                0) == 0,
+            "ambiguous downstream uses stable end0 fallback");
+        Expect(
+            DrainageEngineeringCore.SelectPreferredDownstreamCandidate(
+                false,
+                false,
+                4,
+                2) == -1,
+            "no feasible downstream candidate stays unresolved");
         Expect(DrainageEngineeringCore.IsExpectedDescendingSlope(10, 9, 100, 0.01, 0.000001), "one percent");
         Expect(!DrainageEngineeringCore.IsExpectedDescendingSlope(9, 10, 100, 0.01, 0.000001), "reverse fails");
         Expect(DrainageEngineeringCore.ClassifyConnectorAxis(0, 0, -1) == "vertical", "floor outlet");
         Expect(DrainageEngineeringCore.ClassifyConnectorAxis(1, 0, 0) == "horizontal", "wall outlet");
         Expect(DrainageEngineeringCore.IsDownwardConnectorAxis(0, 0, -1), "downward outlet");
         Expect(!DrainageEngineeringCore.IsDownwardConnectorAxis(0, 0, 1), "upward outlet rejected");
+        Expect(
+            DrainageEngineeringCore.IsNearlyVerticalDownwardAxis(
+                0,
+                0,
+                -1),
+            "exact downward source uses vertical solver");
+        Expect(
+            !DrainageEngineeringCore.IsNearlyVerticalDownwardAxis(
+                Math.Cos(60 * Math.PI / 180.0),
+                0,
+                -Math.Sin(60 * Math.PI / 180.0)),
+            "inclined downward source stays in general solver");
+        Expect(
+            !DrainageEngineeringCore.IsNearlyVerticalDownwardAxis(
+                0,
+                0,
+                1),
+            "upward source never uses vertical solver");
         Expect(
             DrainageEngineeringCore.IsConnectorAxisDirectedTowardTarget(1, 0, 5, 1, 0.1),
             "wall outlet points toward main");
@@ -38,6 +84,67 @@ internal static class DrainageEngineeringCoreTests
             "stub respects diameter multiplier");
         Expect(DrainageEngineeringCore.IsMonotonicDescending(new List<double> { 10, 9.5, 9 }, 0.000001), "monotonic");
         Expect(!DrainageEngineeringCore.IsMonotonicDescending(new List<double> { 10, 9, 9.5 }, 0.000001), "local rise");
+        Expect(
+            Math.Abs(
+                DrainageEngineeringCore
+                    .ComputeGravityNearMainEndpointAdjustment(
+                        9.88,
+                        10.0,
+                        12.0,
+                        0.01))
+                < 0.000001,
+            "existing gravity slope reaches main at low end");
+        Expect(
+            Math.Abs(
+                DrainageEngineeringCore
+                    .ComputeGravityNearMainEndpointAdjustment(
+                        10.0,
+                        10.0,
+                        12.0,
+                        0.01)
+                + 0.12)
+                < 0.000001,
+            "flat source lowers near-main end");
+        Expect(
+            Math.Abs(
+                DrainageEngineeringCore
+                    .ComputeGravityNearMainEndpointAdjustment(
+                        10.12,
+                        10.0,
+                        12.0,
+                        0.01)
+                + 0.24)
+                < 0.000001,
+            "reverse source lowers near-main end past far end");
+        Expect(
+            DrainageEngineeringCore
+                .IsGravitySlopeDirectedTowardMain(
+                    9.88,
+                    10.0,
+                    12.0,
+                    0.01,
+                    0.000001),
+            "gravity flow is directed toward selected main");
+        Expect(
+            !DrainageEngineeringCore
+                .IsGravitySlopeDirectedTowardMain(
+                    10.12,
+                    10.0,
+                    12.0,
+                    0.01,
+                    0.000001),
+            "reverse gravity flow is rejected");
+        Expect(
+            Math.Abs(
+                DrainageEngineeringCore
+                    .ComputeSourceElevationAdjustmentLimit(
+                        1500,
+                        160,
+                        100,
+                        300)
+                - 150)
+                < 0.000001,
+            "vertical compensation uses route-derived limit");
         Expect(Math.Abs(DrainageEngineeringCore.AngleBetween2D(1, 0, 1, 1) - 45) < 0.000001, "45 degree entry");
         Expect(
             DrainageEngineeringCore.IsDirectedSideEntryAllowed(
@@ -335,6 +442,243 @@ internal static class DrainageEngineeringCoreTests
                         - repeatedPerpendicularDrop.MainTie.Z)
                     < 0.000001,
             "perpendicular drop result is deterministic");
+        var adjustablePerpendicularInput =
+            new DrainageWallRouteInput
+            {
+                Source = new DrainageGeometryPoint
+                {
+                    X = 0,
+                    Y = 0,
+                    Z = 340
+                },
+                OutletX = 0,
+                OutletY = 1,
+                OutletZ = -0.01,
+                MainStart = new DrainageGeometryPoint
+                {
+                    X = -1000,
+                    Y = 1174,
+                    Z = 0
+                },
+                MainEnd = new DrainageGeometryPoint
+                {
+                    X = 1000,
+                    Y = 1174,
+                    Z = 0
+                },
+                DownstreamEndpointIndex = 1,
+                SlopeRatio = 0.01,
+                StubLength = 160,
+                ElbowTakeout = 32,
+                JunctionBranchTakeout = 145,
+                MinimumTangentLength = 80,
+                MainEndClearance = 100,
+                MaximumOutletAdvance = 2000,
+                SearchStep = 5,
+                AllowSourceAxialAdjustment = true
+            };
+        DrainagePerpendicularDropSolution
+            adjustablePerpendicular =
+                DrainageEngineeringCore
+                    .SolvePerpendicularDropEntry(
+                        adjustablePerpendicularInput);
+        Expect(
+            adjustablePerpendicular.IsFeasible
+                && adjustablePerpendicular
+                    .SourceAxialAdjustment > 0
+                && adjustablePerpendicular.StubEnd.Z
+                    > adjustablePerpendicular.MainTie.Z,
+            "perpendicular drop extends an open pipe end before the downstream diagonal entry");
+        adjustablePerpendicularInput
+            .MainForbiddenIntervals =
+                new List<DrainageMainForbiddenInterval>
+                {
+                    new DrainageMainForbiddenInterval
+                    {
+                        MinimumParameter = 0.45,
+                        MaximumParameter = 1.0,
+                        ElementId = 98765
+                    }
+                };
+        DrainagePerpendicularDropSolution
+            blockedPerpendicular =
+                DrainageEngineeringCore
+                    .SolvePerpendicularDropEntry(
+                        adjustablePerpendicularInput);
+        Expect(
+            !blockedPerpendicular.IsFeasible
+                && blockedPerpendicular.FailureCode
+                    == "TARGET_FITTING_CLEARANCE_CONFLICT"
+                && blockedPerpendicular.BlockingElementId
+                    == 98765,
+            "perpendicular drop reports the blocking target fitting: "
+                + blockedPerpendicular.FailureCode
+                + " / "
+                + blockedPerpendicular.BlockingElementId);
+        adjustablePerpendicularInput
+            .MainForbiddenIntervals = null;
+        adjustablePerpendicularInput
+            .AllowSourceAxialAdjustment = false;
+        Expect(
+            DrainageEngineeringCore
+                    .SolvePerpendicularDropEntry(
+                        adjustablePerpendicularInput)
+                    .FailureCode
+                == "TARGET_SEGMENT_CAPACITY_INSUFFICIENT",
+            "fixed source end reports target segment capacity instead of generic tangent space");
+        perpendicularDropInput.AllowSourceAxialAdjustment =
+            true;
+        perpendicularDropInput.MaximumSourceAxialAdjustment =
+            800;
+        DrainagePerpendicularDropSolution
+            compactPerpendicularDrop =
+                DrainageEngineeringCore
+                    .SolvePerpendicularDropEntry(
+                        perpendicularDropInput);
+        DrainagePerpendicularDropSolution
+            repeatedCompactPerpendicularDrop =
+                DrainageEngineeringCore
+                    .SolvePerpendicularDropEntry(
+                        perpendicularDropInput);
+        Expect(
+            compactPerpendicularDrop.IsFeasible
+                && compactPerpendicularDrop
+                    .SourceAxialAdjustment > 0
+                && compactPerpendicularDrop
+                    .VariableRouteLength
+                    < perpendicularDrop.VariableRouteLength,
+            "perpendicular drop ranks a materially shorter adjustable route");
+        Expect(
+            repeatedCompactPerpendicularDrop.IsFeasible
+                && Math.Abs(
+                    compactPerpendicularDrop
+                        .SourceAxialAdjustment
+                    - repeatedCompactPerpendicularDrop
+                        .SourceAxialAdjustment)
+                    < 0.000001
+                && Math.Abs(
+                    compactPerpendicularDrop
+                        .VariableRouteLength
+                    - repeatedCompactPerpendicularDrop
+                        .VariableRouteLength)
+                    < 0.000001,
+            "compact perpendicular route ranking is deterministic");
+        var fittingAwarePerpendicularInput =
+            new DrainageWallRouteInput
+            {
+                Source = new DrainageGeometryPoint
+                {
+                    X = 154161.7518,
+                    Y = 51018.8287,
+                    Z = -4617.0624
+                },
+                OutletX = 0,
+                OutletY = -1,
+                OutletZ = -0.01,
+                MainStart = new DrainageGeometryPoint
+                {
+                    X = 153461.2393,
+                    Y = 50000,
+                    Z = -4834.6124
+                },
+                MainEnd = new DrainageGeometryPoint
+                {
+                    X = 156303.6370,
+                    Y = 50000,
+                    Z = -4863.0364
+                },
+                DownstreamEndpointIndex = 1,
+                SlopeRatio = 0.01,
+                StubLength = 160,
+                ElbowTakeout = 80,
+                JunctionBranchTakeout = 132.27,
+                JunctionBranchAngleDegrees = 45,
+                SideEntryAngleDegrees = 45,
+                SideEntryToleranceDegrees = 5,
+                RadialMinimumDegrees = 0,
+                RadialMaximumDegrees = 45,
+                RadialToleranceDegrees = 5,
+                JunctionBranchAxisMinimumAlignment = 0.95,
+                MinimumTangentLength = 80,
+                MainEndClearance = 230,
+                MaximumOutletAdvance = 25000,
+                ExistingSourceLength = 1706.323,
+                SearchStep = 5,
+                AllowSourceAxialAdjustment = true,
+                MaximumSourceAxialAdjustment = 1000
+            };
+        DrainagePerpendicularDropSolution
+            fittingAwarePerpendicularDrop =
+                DrainageEngineeringCore
+                    .SolvePerpendicularDropEntry(
+                        fittingAwarePerpendicularInput);
+        Expect(
+            fittingAwarePerpendicularDrop.IsFeasible
+                && fittingAwarePerpendicularDrop
+                    .SourceAxialAdjustment > 0
+                && fittingAwarePerpendicularDrop
+                    .SourceAxialAdjustment < 630,
+            "fitting-aware ranking skips the shortest junction-invalid candidate: "
+                + fittingAwarePerpendicularDrop.FailureCode
+                + " / "
+                + fittingAwarePerpendicularDrop
+                    .SourceAxialAdjustment);
+        DrainagePerpendicularDropSolution
+            repeatedFittingAwarePerpendicularDrop =
+                DrainageEngineeringCore
+                    .SolvePerpendicularDropEntry(
+                        fittingAwarePerpendicularInput);
+        Expect(
+            repeatedFittingAwarePerpendicularDrop.IsFeasible
+                && Math.Abs(
+                    fittingAwarePerpendicularDrop
+                        .SourceAxialAdjustment
+                    - repeatedFittingAwarePerpendicularDrop
+                        .SourceAxialAdjustment)
+                    < 0.000001,
+            "fitting-aware perpendicular route remains deterministic");
+        perpendicularDropInput.AllowSourceAxialAdjustment =
+            false;
+        perpendicularDropInput.MaximumSourceAxialAdjustment =
+            null;
+        perpendicularDropInput.MaximumPerpendicularDropLength =
+            1000;
+        perpendicularDropInput.MaximumPerpendicularDropRouteShare =
+            0.40;
+        perpendicularDropInput.ExistingSourceLength = 1000;
+        DrainagePerpendicularDropSolution boundedPerpendicularDrop =
+            DrainageEngineeringCore
+                .SolvePerpendicularDropEntry(
+                    perpendicularDropInput);
+        Expect(
+            boundedPerpendicularDrop.IsFeasible
+                && boundedPerpendicularDrop
+                    .ExceedsPreferredLength
+                && boundedPerpendicularDrop
+                    .ExceedsPreferredRouteShare,
+            "long direct drop remains feasible and reports preferred-bound warnings");
+        Expect(
+            DrainageEngineeringCore
+                    .SolveSingleFortyFive(
+                        perpendicularDropInput)
+                    .IsFeasible
+                || DrainageEngineeringCore
+                    .SolveWallOutletGeneralDoubleFortyFive(
+                        perpendicularDropInput)
+                    .IsFeasible,
+            "long direct drop can fall back to a fitting-valid routed candidate");
+        perpendicularDropInput.ExistingSourceLength = 5000;
+        Expect(
+            DrainageEngineeringCore
+                .SolvePerpendicularDropEntry(
+                    perpendicularDropInput)
+                .IsFeasible,
+            "long direct drop remains available when it is a bounded share of the full branch");
+        perpendicularDropInput.MaximumPerpendicularDropLength =
+            null;
+        perpendicularDropInput.MaximumPerpendicularDropRouteShare =
+            null;
+        perpendicularDropInput.ExistingSourceLength = 0;
         perpendicularDropInput.OutletX = 1;
         perpendicularDropInput.OutletY = 0;
         Expect(
@@ -579,10 +923,11 @@ internal static class DrainageEngineeringCoreTests
             "terminal-drop route descends near the main and keeps a constructible final approach");
         Expect(
             terminalDropRoute.IsFeasible
-                && Math.Abs(
-                    terminalDropRoute.PlanTurnAngleDegrees)
-                    <= 0.000001,
-            "terminal-drop route keeps the upper and final branches in one vertical routing plane");
+                && terminalDropRoute.PlanTurnAngleDegrees
+                    >= 30.0 - 0.000001
+                && terminalDropRoute.PlanTurnAngleDegrees
+                    <= 75.0 + 0.000001,
+            "terminal-drop route may vary its plan direction while preserving fitting angles");
         Expect(
             terminalDropRoute.IsFeasible
                 && Math.Abs(
@@ -1029,7 +1374,7 @@ internal static class DrainageEngineeringCoreTests
                 1,
                 50),
             "down 45 rejects wrong angle");
-        Console.WriteLine(_failures == 0 ? "PASS: 94 drainage engineering core tests" : "FAILED");
+        Console.WriteLine(_failures == 0 ? "PASS: 100 drainage engineering core tests" : "FAILED");
         return _failures == 0 ? 0 : 1;
     }
 }

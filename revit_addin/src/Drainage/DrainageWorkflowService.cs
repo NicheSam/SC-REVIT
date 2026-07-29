@@ -59,6 +59,21 @@ namespace RfaMetadataAddin.Drainage
                 }
             }
             ArrayList plans = ReadArray(preview, "plans");
+            ArrayList warnings = ReadArray(preview, "warnings");
+            if (warnings != null)
+            {
+                foreach (object warning in warnings)
+                {
+                    IDictionary<string, object> row =
+                        warning as IDictionary<string, object>;
+                    plan.Warnings.Add(
+                        row == null
+                            ? Convert.ToString(
+                                warning,
+                                CultureInfo.InvariantCulture)
+                            : ReadString(row, "code"));
+                }
+            }
             if (plans != null && plans.Count > 0)
             {
                 IDictionary<string, object> first =
@@ -161,8 +176,14 @@ namespace RfaMetadataAddin.Drainage
                     Succeeded = true,
                     RouteHash = snapshotHash,
                     OperationId = operationId,
-                    Message = "接管完成。"
+                    Message = plan.Warnings.Count == 0
+                        ? "\u63a5\u7ba1\u5b8c\u6210\u3002"
+                        : "\u63a5\u7ba1\u5b8c\u6210\uff0c\u4f46\u6709\u8def\u5f91\u63d0\u793a\u3002"
                 };
+                foreach (string warning in plan.Warnings)
+                {
+                    result.Warnings.Add(warning);
+                }
                 foreach (ElementId id in ReadCreatedElementIds(
                     committed))
                 {
@@ -194,6 +215,193 @@ namespace RfaMetadataAddin.Drainage
                     ClassifyFailure(ex.Message),
                     ex.Message);
             }
+        }
+
+        public DrainageExecutionResult
+            ConnectResolvingAmbiguousDownstream(
+                UIApplication uiApplication,
+                DrainageRouteRequest request)
+        {
+            try
+            {
+                DrainageRoutePlan automaticPlan =
+                    Plan(uiApplication, request);
+                if (automaticPlan.ReadyToCreate
+                    || !HasIssue(
+                        automaticPlan,
+                        "MAIN_DOWNSTREAM_UNRESOLVED"))
+                {
+                    return Execute(
+                        uiApplication,
+                        automaticPlan);
+                }
+
+                DrainageRoutePlan end0Plan = Plan(
+                    uiApplication,
+                    CloneRequest(
+                        request,
+                        "inferred_end0"));
+                DrainageRoutePlan end1Plan = Plan(
+                    uiApplication,
+                    CloneRequest(
+                        request,
+                        "inferred_end1"));
+                int end0Evidence =
+                    ReadEndpointTopologyEvidence(
+                        request.Target.MainPipe,
+                        0);
+                int end1Evidence =
+                    ReadEndpointTopologyEvidence(
+                        request.Target.MainPipe,
+                        1);
+                int selectedEndpoint =
+                    DrainageEngineeringCore
+                        .SelectPreferredDownstreamCandidate(
+                            end0Plan.ReadyToCreate,
+                            end1Plan.ReadyToCreate,
+                            end0Evidence,
+                            end1Evidence);
+                if (selectedEndpoint < 0)
+                {
+                    return Execute(
+                        uiApplication,
+                        ChooseMoreSpecificFailure(
+                            end0Plan,
+                            end1Plan));
+                }
+
+                DrainageRoutePlan selectedPlan = Plan(
+                    uiApplication,
+                    CloneRequest(
+                        request,
+                        selectedEndpoint == 0
+                            ? "inferred_end0"
+                            : "inferred_end1"));
+                return Execute(
+                    uiApplication,
+                    selectedPlan);
+            }
+            catch (Exception ex)
+            {
+                return DrainageExecutionResult.Failed(
+                    ClassifyFailure(ex.Message),
+                    ex.Message);
+            }
+        }
+
+        private static DrainageRouteRequest CloneRequest(
+            DrainageRouteRequest request,
+            string downstreamMode)
+        {
+            return new DrainageRouteRequest
+            {
+                Source = request.Source,
+                Target = request.Target,
+                Configuration = request.Configuration,
+                DiameterMm = request.DiameterMm,
+                MainDiameterMm = request.MainDiameterMm,
+                DownstreamMode = downstreamMode,
+                ActorKind = request.ActorKind,
+                IdempotencyKey = request.IdempotencyKey
+            };
+        }
+
+        private static bool HasIssue(
+            DrainageRoutePlan plan,
+            string code)
+        {
+            return plan != null
+                && plan.Issues != null
+                && plan.Issues.Any(issue =>
+                    string.Equals(
+                        issue,
+                        code,
+                        StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static DrainageRoutePlan ChooseMoreSpecificFailure(
+            DrainageRoutePlan end0Plan,
+            DrainageRoutePlan end1Plan)
+        {
+            int end0IssueCount = end0Plan == null
+                || end0Plan.Issues == null
+                    ? int.MaxValue
+                    : end0Plan.Issues.Count;
+            int end1IssueCount = end1Plan == null
+                || end1Plan.Issues == null
+                    ? int.MaxValue
+                    : end1Plan.Issues.Count;
+            return end1IssueCount < end0IssueCount
+                ? end1Plan
+                : end0Plan;
+        }
+
+        private static int ReadEndpointTopologyEvidence(
+            Pipe pipe,
+            int endpointIndex)
+        {
+            LocationCurve location = pipe == null
+                ? null
+                : pipe.Location as LocationCurve;
+            if (location == null
+                || location.Curve == null
+                || pipe.ConnectorManager == null)
+            {
+                return 0;
+            }
+
+            XYZ endpoint = location.Curve.GetEndPoint(
+                endpointIndex == 0 ? 0 : 1);
+            Connector connector = pipe.ConnectorManager.Connectors
+                .Cast<Connector>()
+                .Where(item =>
+                    item.ConnectorType == ConnectorType.End)
+                .OrderBy(item =>
+                    item.Origin.DistanceTo(endpoint))
+                .FirstOrDefault();
+            if (connector == null)
+            {
+                return 0;
+            }
+
+            int evidence = 0;
+            var ownerIds = new HashSet<long>();
+            foreach (Connector reference in connector.AllRefs)
+            {
+                if (reference == null
+                    || reference.ConnectorType
+                        != ConnectorType.End
+                    || reference.Owner == null
+                    || reference.Owner.Id == pipe.Id
+                    || !ownerIds.Add(
+                        reference.Owner.Id.Value))
+                {
+                    continue;
+                }
+
+                FamilyInstance fitting =
+                    reference.Owner as FamilyInstance;
+                if (fitting != null
+                    && fitting.MEPModel != null
+                    && fitting.MEPModel.ConnectorManager != null)
+                {
+                    int portCount = fitting.MEPModel
+                        .ConnectorManager.Connectors
+                        .Cast<Connector>()
+                        .Count(item =>
+                            item.ConnectorType
+                                == ConnectorType.End);
+                    evidence = Math.Max(
+                        evidence,
+                        portCount >= 3 ? 4 : 2);
+                    continue;
+                }
+                if (reference.Owner is Pipe)
+                {
+                    evidence = Math.Max(evidence, 2);
+                }
+            }
+            return evidence;
         }
 
         private static Dictionary<string, object> BuildPreviewPayload(
@@ -326,7 +534,7 @@ namespace RfaMetadataAddin.Drainage
                         },
                         {
                             "route_policy_version",
-                            "1.2.0"
+                            "1.4.0"
                         },
                         {
                             "side_entry_angle_degrees",
@@ -366,6 +574,16 @@ namespace RfaMetadataAddin.Drainage
                         {
                             "maximum_double45_lateral_offset_mm",
                             25.0
+                        },
+                        {
+                            "maximum_perpendicular_drop_length_mm",
+                            Math.Max(
+                                1000.0,
+                                request.DiameterMm * 10.0)
+                        },
+                        {
+                            "maximum_perpendicular_drop_route_share",
+                            0.40
                         }
                     }
                 }
@@ -500,6 +718,26 @@ namespace RfaMetadataAddin.Drainage
             {
                 return DrainageFailureCode
                     .SourceAxisRouteUnresolved;
+            }
+            if (value.Contains(
+                "SOURCE_GEOMETRY_ADJUSTMENT")
+                || value.Contains(
+                    "SOURCE_CONNECTED_END_VERIFY_FAILED"))
+            {
+                return DrainageFailureCode
+                    .SourceGeometryAdjustmentBlocked;
+            }
+            if (value.Contains(
+                "TARGET_FITTING_CLEARANCE_CONFLICT"))
+            {
+                return DrainageFailureCode
+                    .TargetFittingClearanceConflict;
+            }
+            if (value.Contains(
+                "TARGET_SEGMENT_CAPACITY_INSUFFICIENT"))
+            {
+                return DrainageFailureCode
+                    .TargetSegmentCapacityInsufficient;
             }
             if (value.Contains("SINGLE45_NOT_FEASIBLE"))
             {

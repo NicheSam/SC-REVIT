@@ -394,7 +394,9 @@ namespace RfaMetadataAddin
             material.Append(policy.MinimumTangentMm.ToString("R", CultureInfo.InvariantCulture)).Append(':');
             material.Append(policy.MinimumJunctionSpacingMm.ToString("R", CultureInfo.InvariantCulture)).Append(':');
             material.Append(policy.CollisionClearanceMm.ToString("R", CultureInfo.InvariantCulture)).Append(':');
-            material.Append(policy.MaximumDouble45LateralOffsetMm.ToString("R", CultureInfo.InvariantCulture)).Append('|');
+            material.Append(policy.MaximumDouble45LateralOffsetMm.ToString("R", CultureInfo.InvariantCulture)).Append(':');
+            material.Append(policy.MaximumPerpendicularDropLengthMm.ToString("R", CultureInfo.InvariantCulture)).Append(':');
+            material.Append(policy.MaximumPerpendicularDropRouteShare.ToString("R", CultureInfo.InvariantCulture)).Append('|');
         }
 
         private static string RequireDrainageUniqueId(

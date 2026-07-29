@@ -112,7 +112,7 @@ namespace RfaMetadataAddin
                     ConfirmationId = confirmation.ConfirmationId,
                     ConfirmationActorKind = confirmation.ActorKind,
                     InitiatorSurface = initiatorSurface,
-                    ToolContractVersion = "1.3.0",
+                    ToolContractVersion = "1.4.0",
                     AssemblyModuleVersionId = typeof(
                         RfaMetadataApplication)
                         .Assembly.ManifestModule.ModuleVersionId
