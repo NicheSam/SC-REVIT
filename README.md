@@ -3,9 +3,9 @@
 SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提供測試使用。  
 目前請使用 GitHub Releases 下載安裝包，不要使用 GitHub 的 `Code > Download ZIP`。
 
-目前 `main` 的排水功能基準為 `snapshot-676ce995fd74`；可直接執行的完整安裝包仍為 `v0.5.0-drainage-dev`。
+目前 `main` 的排水功能基準為 `snapshot-676ce995fd74`；可直接執行的完整安裝包為 `v0.5.1-drainage-dev`。
 
-## v0.5.0-drainage-dev 開發狀態
+## v0.5.1-drainage-dev 開發狀態
 
 本開發版新增 Revit 2024 排水接入幹管工作流程，包括：
 
@@ -15,7 +15,7 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 - 支援不同管徑與專案管件設定。
 - 建立後檢查管件角度、接入方向、管段長度與拓撲。
 
-目前立管路型已完成實機驗證；坡度同步及不同情境下的坡度編輯仍在調整。`v0.5.0-drainage-dev` 提供開發預覽安裝包，僅建議用於測試模型，不應直接用於正式專案。
+目前立管路型已完成實機驗證；坡度同步及不同情境下的坡度編輯仍在調整。`v0.5.1-drainage-dev` 提供開發預覽安裝包，僅建議用於測試模型，不應直接用於正式專案。
 
 ## 排水操作手冊
 
@@ -51,9 +51,11 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 
 最新排水開發預覽版：
 
-[下載 SC_REVIT_v0.5.0-drainage-dev_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.0-drainage-dev/SC_REVIT_v0.5.0-drainage-dev_installer.zip)
+[下載 SC_REVIT_v0.5.1-drainage-dev_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.1-drainage-dev/SC_REVIT_v0.5.1-drainage-dev_installer.zip)
 
-[SC REVIT v0.5.0-drainage-dev Release](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.0-drainage-dev)
+[SC REVIT v0.5.1-drainage-dev Release](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.1-drainage-dev)
+
+請勿下載 Release 頁面自動列出的 `Source code (zip)` 或 `Source code (tar.gz)` 作為安裝包；那是給開發者使用的原始碼，不含可直接安裝的完整執行環境。
 
 前一個一般測試版：
 
@@ -159,6 +161,6 @@ Release 頁面：
 ## 給開發者
 
 這個 public repo 同時保存可下載安裝版的版本說明，以及目前公開的開發原始碼。  
-`v0.5.0-drainage-dev` 尚未升格為正式安裝版本，使用前請自行建置並在測試模型驗證。
+`v0.5.1-drainage-dev` 尚未升格為正式版本，請先在測試模型驗證後再決定是否用於實際專案。
 
 開發者打包新版 installer 時，請使用專案內的 release 打包腳本產生 installer ZIP，再上傳到 GitHub Releases。

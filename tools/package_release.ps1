@@ -1,5 +1,7 @@
 param(
-  [string]$Version = ""
+  [string]$Version = "",
+  [switch]$SkipAddinBuild,
+  [string]$ExpectedAddinSha256 = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,11 +31,30 @@ Write-Host "Version: $Version"
 
 Write-Host ""
 Write-Host "[1/5] Build Revit addin DLL..."
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "revit_addin\build.ps1")
+$addinDll = Join-Path $root "revit_addin\bin\RfaMetadataAddin.dll"
+if ($SkipAddinBuild) {
+  Write-Host "Using prebuilt Revit addin DLL."
+}
+else {
+  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "revit_addin\build.ps1")
+  if ($LASTEXITCODE -ne 0) {
+    throw "Revit addin build failed with exit code $LASTEXITCODE."
+  }
+}
+if (!(Test-Path -LiteralPath $addinDll -PathType Leaf)) {
+  throw "Revit addin DLL was not found: $addinDll"
+}
+$addinHash = (Get-FileHash -LiteralPath $addinDll -Algorithm SHA256).Hash
+if (-not [string]::IsNullOrWhiteSpace($ExpectedAddinSha256) -and $addinHash -ne $ExpectedAddinSha256) {
+  throw "Revit addin DLL hash does not match the required release snapshot."
+}
 
 Write-Host ""
 Write-Host "[2/5] Build GUI executable..."
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "build_gui_exe.ps1")
+if ($LASTEXITCODE -ne 0) {
+  throw "GUI build failed with exit code $LASTEXITCODE."
+}
 
 $releaseRoot = Join-Path $root "release"
 $packageRoot = Join-Path $releaseRoot ("SC_REVIT_" + $safeVersion + "_installer")
@@ -63,6 +84,41 @@ if (Test-Path -LiteralPath $docsPath) {
   Copy-Item -LiteralPath $docsPath -Destination (Join-Path $payloadRoot "docs") -Recurse -Force
 }
 
+$payloadFiles = @(
+  "payload/revit_addin/bin/RfaMetadataAddin.dll",
+  "payload/dist/RevitFamilyClassifier/_internal/revit_addin/bin/RfaMetadataAddin.dll",
+  "payload/dist/RevitFamilyClassifier/RevitFamilyClassifier.exe",
+  "payload/VERSION.txt"
+)
+$releaseFiles = @()
+foreach ($relativePath in $payloadFiles) {
+  $nativePath = Join-Path $packageRoot ($relativePath.Replace("/", "\"))
+  if (!(Test-Path -LiteralPath $nativePath -PathType Leaf)) {
+    throw "Release payload file is missing: $relativePath"
+  }
+  $releaseFiles += [ordered]@{
+    path = $relativePath
+    sha256 = (Get-FileHash -LiteralPath $nativePath -Algorithm SHA256).Hash
+    size = (Get-Item -LiteralPath $nativePath).Length
+  }
+}
+if (
+  $releaseFiles[0].sha256 -ne $addinHash -or
+  $releaseFiles[1].sha256 -ne $addinHash
+) {
+  throw "Packaged Revit DLL copies do not match the selected release DLL."
+}
+$releaseManifest = [ordered]@{
+  version = $Version
+  createdUtc = [DateTime]::UtcNow.ToString("o")
+  files = $releaseFiles
+}
+[System.IO.File]::WriteAllText(
+  (Join-Path $packageRoot "release_manifest.json"),
+  ($releaseManifest | ConvertTo-Json -Depth 5),
+  [System.Text.UTF8Encoding]::new($false)
+)
+
 Write-Host "[5/5] Create ZIP..."
 if (Test-Path -LiteralPath $zipPath) {
   Remove-Item -LiteralPath $zipPath -Force
@@ -76,8 +132,10 @@ try {
   $requiredEntries = @(
     "Install_SC_REVIT.bat",
     "install_sc_revit.ps1",
+    "release_manifest.json",
     "payload/dist/RevitFamilyClassifier/RevitFamilyClassifier.exe",
-    "payload/revit_addin/bin/RfaMetadataAddin.dll"
+    "payload/revit_addin/bin/RfaMetadataAddin.dll",
+    "payload/VERSION.txt"
   )
   $entryNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
   foreach ($entry in $requiredEntries) {
@@ -95,6 +153,16 @@ finally {
   $zip.Dispose()
 }
 
+$zipHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash
+$zipHashPath = $zipPath + ".sha256"
+[System.IO.File]::WriteAllText(
+  $zipHashPath,
+  ($zipHash + "  " + (Split-Path -Leaf $zipPath) + [Environment]::NewLine),
+  [System.Text.UTF8Encoding]::new($false)
+)
+
 Write-Host ""
 Write-Host "Release package ready:" -ForegroundColor Green
 Write-Host $zipPath
+Write-Host "SHA-256: $zipHash"
+Write-Host "Checksum: $zipHashPath"

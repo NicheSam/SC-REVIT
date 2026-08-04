@@ -3,6 +3,16 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
+function Assert-NativeStepSucceeded {
+  param(
+    [string]$StepName
+  )
+
+  if ($LASTEXITCODE -ne 0) {
+    throw "$StepName failed with exit code $LASTEXITCODE."
+  }
+}
+
 Write-Host "SC REVIT: install / update" -ForegroundColor Cyan
 Write-Host "Project root: $root"
 
@@ -17,6 +27,7 @@ if ($revitProcess) {
 Write-Host ""
 Write-Host "[1/3] Build Revit addin DLL..."
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "revit_addin\build.ps1")
+Assert-NativeStepSucceeded "Revit addin build"
 
 Write-Host ""
 Write-Host "[2/3] Build GUI executable..."
@@ -26,10 +37,12 @@ if ($runningGui) {
   $runningGui | Stop-Process -Force
 }
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "build_gui_exe.ps1")
+Assert-NativeStepSucceeded "GUI build"
 
 Write-Host ""
 Write-Host "[3/3] Install / update Revit addin manifest..."
-python (Join-Path $root "addin_installer.py")
+python (Join-Path $root "addin_installer.py") --force
+Assert-NativeStepSucceeded "Revit addin manifest installation"
 
 $addinPath = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\RfaMetadataAddin.addin"
 [xml]$addinXml = Get-Content -LiteralPath $addinPath -Encoding UTF8

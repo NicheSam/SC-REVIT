@@ -6,6 +6,7 @@ __pycache__/
 
 build/
 dist/
+.build_tmp/
 runtime/
 notion/
 release/

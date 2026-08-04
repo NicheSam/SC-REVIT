@@ -2,6 +2,7 @@ import os
 import shutil
 import hashlib
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,19 +33,37 @@ def get_ascii_deploy_dir() -> Path:
     return Path(local_appdata) / "RfaMetadataAddin"
 
 
-def ensure_revit_addin_installed() -> AddinInstallResult:
+def get_manifest_assembly_paths(manifest_path: Path) -> tuple[Path, ...]:
+    if not manifest_path.is_file():
+        return ()
+    try:
+        root = ET.fromstring(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ET.ParseError):
+        return ()
+
+    paths = []
+    for node in root.findall(".//AddIn/Assembly"):
+        value = (node.text or "").strip()
+        if not value:
+            continue
+        assembly_path = Path(value)
+        if not assembly_path.is_absolute():
+            assembly_path = manifest_path.parent / assembly_path
+        paths.append(assembly_path)
+    return tuple(paths)
+
+
+def existing_manifest_is_usable(manifest_path: Path) -> bool:
+    assembly_paths = get_manifest_assembly_paths(manifest_path)
+    return bool(assembly_paths) and all(path.is_file() for path in assembly_paths)
+
+
+def ensure_revit_addin_installed(force: bool = False) -> AddinInstallResult:
     if not SOURCE_DLL.exists():
         raise RuntimeError("找不到 RfaMetadataAddin.dll，請先建置外掛")
 
     ascii_deploy_dir = get_ascii_deploy_dir()
     ascii_deploy_dir.mkdir(parents=True, exist_ok=True)
-    ascii_deploy_dll = ascii_deploy_dir / versioned_dll_name(SOURCE_DLL)
-    if (
-        not ascii_deploy_dll.exists()
-        or hashlib.sha256(ascii_deploy_dll.read_bytes()).digest()
-        != hashlib.sha256(SOURCE_DLL.read_bytes()).digest()
-    ):
-        shutil.copy2(SOURCE_DLL, ascii_deploy_dll)
     (ascii_deploy_dir / "sc_revit_home.txt").write_text(
         str(get_launcher_root()),
         encoding="utf-8",
@@ -62,6 +81,20 @@ def ensure_revit_addin_installed() -> AddinInstallResult:
             raise RuntimeError("Revit 外掛目標路徑不是資料夾") from exc
     target_path = target_dir / ADDIN_FILE_NAME
     existed_before = target_path.exists()
+    if not force and existing_manifest_is_usable(target_path):
+        return AddinInstallResult(
+            installed=False,
+            target_path=target_path,
+            message="保留現有 Revit 外掛部署",
+        )
+
+    ascii_deploy_dll = ascii_deploy_dir / versioned_dll_name(SOURCE_DLL)
+    if (
+        not ascii_deploy_dll.exists()
+        or hashlib.sha256(ascii_deploy_dll.read_bytes()).digest()
+        != hashlib.sha256(SOURCE_DLL.read_bytes()).digest()
+    ):
+        shutil.copy2(SOURCE_DLL, ascii_deploy_dll)
 
     try:
         if existed_before:
@@ -124,6 +157,6 @@ def versioned_dll_name(source_dll: Path) -> str:
 
 
 if __name__ == "__main__":
-    result = ensure_revit_addin_installed()
+    result = ensure_revit_addin_installed(force="--force" in sys.argv[1:])
     print(result.message)
     print(result.target_path)

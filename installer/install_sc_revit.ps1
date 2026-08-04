@@ -1,17 +1,40 @@
 param(
-  [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "SC_REVIT")
+  [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "SC_REVIT"),
+  [switch]$SkipUserEnvironmentUpdate
 )
 
 $ErrorActionPreference = "Stop"
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $payloadRoot = Join-Path $scriptRoot "payload"
+$releaseManifestPath = Join-Path $scriptRoot "release_manifest.json"
 
 Write-Host "SC REVIT installer" -ForegroundColor Cyan
 Write-Host "Install root: $InstallRoot"
 
 if (!(Test-Path -LiteralPath $payloadRoot)) {
   throw "Payload folder was not found: $payloadRoot"
+}
+if (!(Test-Path -LiteralPath $releaseManifestPath)) {
+  throw "Release manifest was not found: $releaseManifestPath"
+}
+
+Write-Host "[0/4] Verify release payload..."
+$releaseManifest = Get-Content -LiteralPath $releaseManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$scriptRootFull = [System.IO.Path]::GetFullPath($scriptRoot)
+$scriptRootPrefix = $scriptRootFull.TrimEnd('\') + '\'
+foreach ($file in $releaseManifest.files) {
+  $candidate = [System.IO.Path]::GetFullPath((Join-Path $scriptRoot $file.path))
+  if (-not $candidate.StartsWith($scriptRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Release manifest path escapes the package root: $($file.path)"
+  }
+  if (!(Test-Path -LiteralPath $candidate -PathType Leaf)) {
+    throw "Release payload file is missing: $($file.path)"
+  }
+  $actualHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
+  if ($actualHash -ne $file.sha256) {
+    throw "Release payload hash mismatch: $($file.path)"
+  }
 }
 
 $revitProcess = Get-Process -Name "Revit" -ErrorAction SilentlyContinue
@@ -52,7 +75,9 @@ Copy-Item -LiteralPath $sourceDll -Destination $deployDll -Force
   $InstallRoot,
   [System.Text.UTF8Encoding]::new($false)
 )
-[Environment]::SetEnvironmentVariable("SC_REVIT_HOME", $InstallRoot, "User")
+if (-not $SkipUserEnvironmentUpdate) {
+  [Environment]::SetEnvironmentVariable("SC_REVIT_HOME", $InstallRoot, "User")
+}
 
 Write-Host "[3/4] Write Revit 2024 addin manifest..."
 $addinDir = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024"
@@ -80,6 +105,14 @@ $manifest = @"
     <VendorId>DEX</VendorId>
     <VendorDescription>SC REVIT command entry</VendorDescription>
   </AddIn>
+  <AddIn Type="Command">
+    <Name>SC Drainage Runtime Self Test</Name>
+    <Assembly>$deployDll</Assembly>
+    <AddInId>A60D2AB6-D860-43D0-91D6-82F4EAC7216A</AddInId>
+    <FullClassName>RfaMetadataAddin.DrainageRuntimeSelfTestCommand</FullClassName>
+    <VendorId>DEX</VendorId>
+    <VendorDescription>Development-only runtime verification for SC drainage tools</VendorDescription>
+  </AddIn>
 </RevitAddIns>
 "@
 [System.IO.File]::WriteAllText($addinPath, $manifest, [System.Text.UTF8Encoding]::new($false))
@@ -94,11 +127,17 @@ if ($assemblyPath -ne $deployDll) {
 if (!(Test-Path -LiteralPath $assemblyPath)) {
   throw "Manifest points to a DLL that does not exist: $assemblyPath"
 }
+$sourceHash = (Get-FileHash -LiteralPath $sourceDll -Algorithm SHA256).Hash
+$deployHash = (Get-FileHash -LiteralPath $assemblyPath -Algorithm SHA256).Hash
+if ($sourceHash -ne $deployHash) {
+  throw "Installed Revit DLL hash does not match the release payload."
+}
 
 Write-Host ""
 Write-Host "Installed SC REVIT successfully." -ForegroundColor Green
 Write-Host "Manifest: $addinPath"
 Write-Host "Assembly: $deployDll"
 Write-Host "GUI: $guiExe"
+Write-Host "Version: $($releaseManifest.version)"
 Write-Host ""
 Write-Host "Restart Revit 2024, then open the SC REVIT ribbon tab."
