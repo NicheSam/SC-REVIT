@@ -21,6 +21,7 @@ REQUEST_DIR = QUEUE_DIR / "requests"
 RESPONSE_DIR = QUEUE_DIR / "responses"
 ERROR_DIR = QUEUE_DIR / "errors"
 HEARTBEAT_FILE = QUEUE_DIR / "listener_heartbeat.json"
+AGENT_LISTENER_ENABLED_FILE = QUEUE_DIR / "agent_listener.enabled"
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,19 @@ class QueueRequest:
 def ensure_queue_dirs() -> None:
     for path in (REQUEST_DIR, RESPONSE_DIR, ERROR_DIR):
         path.mkdir(parents=True, exist_ok=True)
+
+
+def is_agent_listener_enabled() -> bool:
+    return AGENT_LISTENER_ENABLED_FILE.is_file()
+
+
+def set_agent_listener_enabled(enabled: bool) -> None:
+    ensure_queue_dirs()
+    if enabled:
+        AGENT_LISTENER_ENABLED_FILE.write_text("enabled\n", encoding="ascii")
+        return
+    AGENT_LISTENER_ENABLED_FILE.unlink(missing_ok=True)
+    HEARTBEAT_FILE.unlink(missing_ok=True)
 
 
 

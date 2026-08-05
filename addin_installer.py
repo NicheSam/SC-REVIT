@@ -10,6 +10,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 SOURCE_DLL = BASE_DIR / "revit_addin" / "bin" / "RfaMetadataAddin.dll"
 ADDIN_FILE_NAME = "RfaMetadataAddin.addin"
+DEPLOY_DLL_NAME = "RfaMetadataAddin.dll"
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ def get_ascii_deploy_dir() -> Path:
     local_appdata = os.environ.get("LOCALAPPDATA")
     if not local_appdata:
         raise RuntimeError("找不到 LOCALAPPDATA 環境變數")
-    return Path(local_appdata) / "RfaMetadataAddin"
+    return Path(local_appdata) / "SCRevit" / "Revit2024"
 
 
 def get_manifest_assembly_paths(manifest_path: Path) -> tuple[Path, ...]:
@@ -88,7 +89,7 @@ def ensure_revit_addin_installed(force: bool = False) -> AddinInstallResult:
             message="保留現有 Revit 外掛部署",
         )
 
-    ascii_deploy_dll = ascii_deploy_dir / versioned_dll_name(SOURCE_DLL)
+    ascii_deploy_dll = ascii_deploy_dir / DEPLOY_DLL_NAME
     if (
         not ascii_deploy_dll.exists()
         or hashlib.sha256(ascii_deploy_dll.read_bytes()).digest()
@@ -124,38 +125,15 @@ def render_manifest(dll_path: Path) -> str:
     return f"""<?xml version="1.0" encoding="utf-8" standalone="no"?>
 <RevitAddIns>
   <AddIn Type="Application">
-    <Name>RfaMetadataListener</Name>
+    <Name>SC REVIT</Name>
     <Assembly>{normalized}</Assembly>
     <AddInId>6DCCB516-9F7B-4AF4-90D4-6BE5B8B9B1D8</AddInId>
     <FullClassName>RfaMetadataAddin.RfaMetadataBootstrapApplication</FullClassName>
     <VendorId>DEX</VendorId>
-    <VendorDescription>Background queue listener for RFA metadata requests</VendorDescription>
-  </AddIn>
-  <AddIn Type="Command">
-    <Name>RfaMetadataAddin</Name>
-    <Assembly>{normalized}</Assembly>
-    <AddInId>1C9F98C5-50C8-4C1E-9D1F-7BEAD9A6762C</AddInId>
-    <FullClassName>RfaMetadataAddin.RfaMetadataCommand</FullClassName>
-    <VendorId>DEX</VendorId>
-    <VendorDescription>RFA metadata reader for internal classifier</VendorDescription>
-  </AddIn>
-  <AddIn Type="Command">
-    <Name>SC Drainage Runtime Self Test</Name>
-    <Assembly>{normalized}</Assembly>
-    <AddInId>A60D2AB6-D860-43D0-91D6-82F4EAC7216A</AddInId>
-    <FullClassName>RfaMetadataAddin.DrainageRuntimeSelfTestCommand</FullClassName>
-    <VendorId>DEX</VendorId>
-    <VendorDescription>Development-only runtime verification for SC drainage tools</VendorDescription>
+    <VendorDescription>SC REVIT tools for Autodesk Revit 2024</VendorDescription>
   </AddIn>
 </RevitAddIns>
 """
-
-
-def versioned_dll_name(source_dll: Path) -> str:
-    digest = hashlib.sha256(source_dll.read_bytes()).hexdigest()[:12]
-    return f"RfaMetadataAddin.{digest}.dll"
-
-
 if __name__ == "__main__":
     result = ensure_revit_addin_installed(force="--force" in sys.argv[1:])
     print(result.message)

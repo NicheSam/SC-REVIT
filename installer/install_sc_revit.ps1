@@ -1,6 +1,7 @@
 param(
   [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "SC_REVIT"),
-  [switch]$SkipUserEnvironmentUpdate
+  [switch]$SkipUserEnvironmentUpdate,
+  [switch]$SkipProcessCheck
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,11 +38,12 @@ foreach ($file in $releaseManifest.files) {
   }
 }
 
-$revitProcess = Get-Process -Name "Revit" -ErrorAction SilentlyContinue
-if ($revitProcess) {
-  Write-Host ""
-  Write-Host "Revit is currently running." -ForegroundColor Yellow
-  Write-Host "Close and restart Revit after installation to load SC REVIT."
+$blockingProcesses = @(
+  Get-Process -Name "Revit" -ErrorAction SilentlyContinue
+  Get-Process -Name "RevitFamilyClassifier" -ErrorAction SilentlyContinue
+)
+if (-not $SkipProcessCheck -and $blockingProcesses.Count -gt 0) {
+  throw "Close Revit and SC REVIT before installation."
 }
 
 Write-Host ""
@@ -54,6 +56,22 @@ if ($payloadItems.Count -eq 0) {
 foreach ($item in $payloadItems) {
   Copy-Item -LiteralPath $item.FullName -Destination $InstallRoot -Recurse -Force
 }
+$helperNames = @(
+  "Enable_SC_REVIT_Agent.bat",
+  "Disable_SC_REVIT_Agent.bat",
+  "Set_SC_REVIT_Agent.ps1",
+  "Collect_SC_REVIT_Diagnostics.bat",
+  "Collect_SC_REVIT_Diagnostics.ps1",
+  "Uninstall_SC_REVIT.bat",
+  "uninstall_sc_revit.ps1"
+)
+foreach ($helperName in $helperNames) {
+  $helperPath = Join-Path $scriptRoot $helperName
+  if (!(Test-Path -LiteralPath $helperPath -PathType Leaf)) {
+    throw "Installer helper was not found: $helperName"
+  }
+  Copy-Item -LiteralPath $helperPath -Destination (Join-Path $InstallRoot $helperName) -Force
+}
 
 $guiExe = Join-Path $InstallRoot "dist\RevitFamilyClassifier\RevitFamilyClassifier.exe"
 $sourceDll = Join-Path $InstallRoot "revit_addin\bin\RfaMetadataAddin.dll"
@@ -65,10 +83,9 @@ if (!(Test-Path -LiteralPath $sourceDll)) {
 }
 
 Write-Host "[2/4] Prepare Revit addin DLL..."
-$deployDir = Join-Path $env:LOCALAPPDATA "RfaMetadataAddin"
+$deployDir = Join-Path $env:LOCALAPPDATA "SCRevit\Revit2024"
 New-Item -ItemType Directory -Force -Path $deployDir | Out-Null
-$hash = (Get-FileHash -LiteralPath $sourceDll -Algorithm SHA256).Hash.ToLower().Substring(0, 12)
-$deployDll = Join-Path $deployDir ("RfaMetadataAddin." + $hash + ".dll")
+$deployDll = Join-Path $deployDir "RfaMetadataAddin.dll"
 Copy-Item -LiteralPath $sourceDll -Destination $deployDll -Force
 [System.IO.File]::WriteAllText(
   (Join-Path $deployDir "sc_revit_home.txt"),
@@ -84,39 +101,27 @@ $addinDir = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024"
 New-Item -ItemType Directory -Force -Path $addinDir | Out-Null
 $addinPath = Join-Path $addinDir "RfaMetadataAddin.addin"
 if (Test-Path -LiteralPath $addinPath) {
+  $backupDir = Join-Path $env:LOCALAPPDATA (
+    "SCRevit\backups\" + [DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss")
+  )
+  New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+  Copy-Item -LiteralPath $addinPath -Destination (Join-Path $backupDir "RfaMetadataAddin.addin") -Force
   Set-ItemProperty -LiteralPath $addinPath -Name IsReadOnly -Value $false
 }
 $manifest = @"
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <RevitAddIns>
   <AddIn Type="Application">
-    <Name>RfaMetadataListener</Name>
+    <Name>SC REVIT</Name>
     <Assembly>$deployDll</Assembly>
     <AddInId>6DCCB516-9F7B-4AF4-90D4-6BE5B8B9B1D8</AddInId>
     <FullClassName>RfaMetadataAddin.RfaMetadataBootstrapApplication</FullClassName>
     <VendorId>DEX</VendorId>
-    <VendorDescription>Background queue listener for SC REVIT requests</VendorDescription>
-  </AddIn>
-  <AddIn Type="Command">
-    <Name>RfaMetadataAddin</Name>
-    <Assembly>$deployDll</Assembly>
-    <AddInId>1C9F98C5-50C8-4C1E-9D1F-7BEAD9A6762C</AddInId>
-    <FullClassName>RfaMetadataAddin.RfaMetadataCommand</FullClassName>
-    <VendorId>DEX</VendorId>
-    <VendorDescription>SC REVIT command entry</VendorDescription>
-  </AddIn>
-  <AddIn Type="Command">
-    <Name>SC Drainage Runtime Self Test</Name>
-    <Assembly>$deployDll</Assembly>
-    <AddInId>A60D2AB6-D860-43D0-91D6-82F4EAC7216A</AddInId>
-    <FullClassName>RfaMetadataAddin.DrainageRuntimeSelfTestCommand</FullClassName>
-    <VendorId>DEX</VendorId>
-    <VendorDescription>Development-only runtime verification for SC drainage tools</VendorDescription>
+    <VendorDescription>SC REVIT tools for Autodesk Revit 2024</VendorDescription>
   </AddIn>
 </RevitAddIns>
 "@
 [System.IO.File]::WriteAllText($addinPath, $manifest, [System.Text.UTF8Encoding]::new($false))
-Set-ItemProperty -LiteralPath $addinPath -Name IsReadOnly -Value $true
 
 Write-Host "[4/4] Verify installation..."
 [xml]$addinXml = Get-Content -LiteralPath $addinPath -Encoding UTF8
@@ -132,6 +137,9 @@ $deployHash = (Get-FileHash -LiteralPath $assemblyPath -Algorithm SHA256).Hash
 if ($sourceHash -ne $deployHash) {
   throw "Installed Revit DLL hash does not match the release payload."
 }
+if (@($addinXml.RevitAddIns.AddIn).Count -ne 1) {
+  throw "Manifest must contain exactly one SC REVIT application entry."
+}
 
 Write-Host ""
 Write-Host "Installed SC REVIT successfully." -ForegroundColor Green
@@ -139,5 +147,7 @@ Write-Host "Manifest: $addinPath"
 Write-Host "Assembly: $deployDll"
 Write-Host "GUI: $guiExe"
 Write-Host "Version: $($releaseManifest.version)"
+Write-Host "Agent listener: disabled by default"
+Write-Host "First Revit launch: choose Always Load for this unsigned development build."
 Write-Host ""
 Write-Host "Restart Revit 2024, then open the SC REVIT ribbon tab."

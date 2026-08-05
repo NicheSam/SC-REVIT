@@ -69,8 +69,20 @@ if (Test-Path -LiteralPath $packageRoot) {
 New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
 
-Copy-Item -LiteralPath (Join-Path $root "installer\Install_SC_REVIT.bat") -Destination $packageRoot -Force
-Copy-Item -LiteralPath (Join-Path $root "installer\install_sc_revit.ps1") -Destination $packageRoot -Force
+$installerFiles = @(
+  "Install_SC_REVIT.bat",
+  "install_sc_revit.ps1",
+  "Enable_SC_REVIT_Agent.bat",
+  "Disable_SC_REVIT_Agent.bat",
+  "Set_SC_REVIT_Agent.ps1",
+  "Collect_SC_REVIT_Diagnostics.bat",
+  "Collect_SC_REVIT_Diagnostics.ps1",
+  "Uninstall_SC_REVIT.bat",
+  "uninstall_sc_revit.ps1"
+)
+foreach ($installerFile in $installerFiles) {
+  Copy-Item -LiteralPath (Join-Path $root ("installer\" + $installerFile)) -Destination $packageRoot -Force
+}
 
 Write-Host "[4/5] Copy payload..."
 New-Item -ItemType Directory -Force -Path (Join-Path $payloadRoot "dist") | Out-Null
@@ -79,6 +91,10 @@ New-Item -ItemType Directory -Force -Path (Join-Path $payloadRoot "revit_addin\b
 Copy-Item -LiteralPath (Join-Path $root "revit_addin\bin\RfaMetadataAddin.dll") -Destination (Join-Path $payloadRoot "revit_addin\bin\RfaMetadataAddin.dll") -Force
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination (Join-Path $payloadRoot "README.md") -Force
 Copy-Item -LiteralPath (Join-Path $root "VERSION.txt") -Destination (Join-Path $payloadRoot "VERSION.txt") -Force
+$releaseNotesPath = Join-Path $root ("RELEASE_NOTES_" + $safeVersion + ".md")
+if (Test-Path -LiteralPath $releaseNotesPath) {
+  Copy-Item -LiteralPath $releaseNotesPath -Destination (Join-Path $payloadRoot (Split-Path -Leaf $releaseNotesPath)) -Force
+}
 $docsPath = Join-Path $root "docs"
 if (Test-Path -LiteralPath $docsPath) {
   Copy-Item -LiteralPath $docsPath -Destination (Join-Path $payloadRoot "docs") -Recurse -Force
@@ -88,7 +104,16 @@ $payloadFiles = @(
   "payload/revit_addin/bin/RfaMetadataAddin.dll",
   "payload/dist/RevitFamilyClassifier/_internal/revit_addin/bin/RfaMetadataAddin.dll",
   "payload/dist/RevitFamilyClassifier/RevitFamilyClassifier.exe",
-  "payload/VERSION.txt"
+  "payload/VERSION.txt",
+  "Install_SC_REVIT.bat",
+  "install_sc_revit.ps1",
+  "Enable_SC_REVIT_Agent.bat",
+  "Disable_SC_REVIT_Agent.bat",
+  "Set_SC_REVIT_Agent.ps1",
+  "Collect_SC_REVIT_Diagnostics.bat",
+  "Collect_SC_REVIT_Diagnostics.ps1",
+  "Uninstall_SC_REVIT.bat",
+  "uninstall_sc_revit.ps1"
 )
 $releaseFiles = @()
 foreach ($relativePath in $payloadFiles) {
@@ -132,6 +157,10 @@ try {
   $requiredEntries = @(
     "Install_SC_REVIT.bat",
     "install_sc_revit.ps1",
+    "Enable_SC_REVIT_Agent.bat",
+    "Disable_SC_REVIT_Agent.bat",
+    "Collect_SC_REVIT_Diagnostics.bat",
+    "Uninstall_SC_REVIT.bat",
     "release_manifest.json",
     "payload/dist/RevitFamilyClassifier/RevitFamilyClassifier.exe",
     "payload/revit_addin/bin/RfaMetadataAddin.dll",

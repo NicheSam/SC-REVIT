@@ -1,5 +1,5 @@
 SC REVIT
-Version: v0.5.1-drainage-dev
+Version: v0.5.2-distribution-safe
 Status: Active development
 TargetRevit: 2024
-ReleaseAsset: SC_REVIT_v0.5.1-drainage-dev_installer.zip
+ReleaseAsset: SC_REVIT_v0.5.2-distribution-safe_installer.zip

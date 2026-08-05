@@ -3,11 +3,22 @@
 SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提供測試使用。  
 目前請使用 GitHub Releases 下載安裝包，不要使用 GitHub 的 `Code > Download ZIP`。
 
-目前 `main` 的排水功能基準為 `snapshot-676ce995fd74`；可直接執行的完整安裝包為 `v0.5.1-drainage-dev`。
+目前 `main` 的排水功能仍以 `snapshot-676ce995fd74` 為基準；`v0.5.2-distribution-safe` 專注於同事電腦的安裝、穩定性與診斷。
 
-## v0.5.1-drainage-dev 開發狀態
+## 快速下載
 
-本開發版新增 Revit 2024 排水接入幹管工作流程，包括：
+| 項目 | 連結 |
+| --- | --- |
+| Windows 安裝包 | [下載 `SC_REVIT_v0.5.2-distribution-safe_installer.zip`](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.2-distribution-safe/SC_REVIT_v0.5.2-distribution-safe_installer.zip) |
+| SHA-256 校驗檔 | [下載 `SC_REVIT_v0.5.2-distribution-safe_installer.zip.sha256`](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.2-distribution-safe/SC_REVIT_v0.5.2-distribution-safe_installer.zip.sha256) |
+| 版本說明 | [GitHub Release：v0.5.2-distribution-safe](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.2-distribution-safe) |
+| 排水操作手冊 | [Markdown](docs/SC_REVIT_drainage_operation_manual.md) · [PDF](docs/SC_REVIT_drainage_operation_manual.pdf) |
+
+> 請完整解壓縮下載的 installer ZIP，再執行裡面的 `Install_SC_REVIT.bat`。GitHub 自動提供的 `Source code (zip)` 與 `Source code (tar.gz)` 不是安裝包。
+
+## v0.5.2-distribution-safe 開發狀態
+
+目前公開基準包含 Revit 2024 排水接入幹管工作流程：
 
 - 以開放 piping connector 作為支管來源。
 - 依序選取支管與目標主管。
@@ -15,7 +26,7 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 - 支援不同管徑與專案管件設定。
 - 建立後檢查管件角度、接入方向、管段長度與拓撲。
 
-目前立管路型已完成實機驗證；坡度同步及不同情境下的坡度編輯仍在調整。`v0.5.1-drainage-dev` 提供開發預覽安裝包，僅建議用於測試模型，不應直接用於正式專案。
+本版不改動排水路徑求解邏輯。Agent listener 預設停用，Revit Ribbon 人工功能仍可正常使用；只在需要 Agent 功能時才手動啟用監聽。
 
 ## 排水操作手冊
 
@@ -49,21 +60,13 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 
 ## 下載安裝包
 
-最新排水開發預覽版：
+最新的 Revit 2024 測試安裝包：
 
-[下載 SC_REVIT_v0.5.1-drainage-dev_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.1-drainage-dev/SC_REVIT_v0.5.1-drainage-dev_installer.zip)
+[下載 SC_REVIT_v0.5.2-distribution-safe_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.2-distribution-safe/SC_REVIT_v0.5.2-distribution-safe_installer.zip)
 
-[SC REVIT v0.5.1-drainage-dev Release](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.1-drainage-dev)
+[SC REVIT v0.5.2-distribution-safe Release](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.2-distribution-safe)
 
 請勿下載 Release 頁面自動列出的 `Source code (zip)` 或 `Source code (tar.gz)` 作為安裝包；那是給開發者使用的原始碼，不含可直接安裝的完整執行環境。
-
-前一個一般測試版：
-
-[下載 SC_REVIT_v0.4.1-dev_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.4.1-dev/SC_REVIT_v0.4.1-dev_installer.zip)
-
-Release 頁面：
-
-[SC REVIT v0.4.1-dev installer](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.4.1-dev)
 
 ## 環境需求
 
@@ -81,19 +84,28 @@ Release 頁面：
 
 1. 下載所需版本的 `SC_REVIT_*_installer.zip`。
 2. 解壓縮 ZIP。
-3. 執行 `Install_SC_REVIT.bat`。
-4. 等待安裝完成。
-5. 重新啟動 Revit 2024。
-6. 在 Revit Ribbon 找到 `SC 族群工具`。
+3. 關閉 Revit 2024 與所有 SC REVIT 視窗。
+4. 執行 `Install_SC_REVIT.bat`。
+5. 看到 `Installed SC REVIT successfully.` 後再開啟 Revit 2024。
+6. 第一次出現未簽章外掛詢問時，確認外掛名稱為 `SC REVIT`，選擇「永遠載入」。
+7. 在 Revit Ribbon 找到 `SC 族群工具`；一般 Ribbon 操作不需要開啟 Agent。
 
 安裝腳本會自動：
 
 - 複製 SC REVIT 到 `%LOCALAPPDATA%\SC_REVIT`
-- 部署 Revit add-in DLL 到 `%LOCALAPPDATA%\RfaMetadataAddin`
+- 部署固定路徑的 Revit add-in DLL 到 `%LOCALAPPDATA%\SCRevit\Revit2024`
 - 寫入 Revit 2024 addin manifest
 - 設定 `SC_REVIT_HOME`
 
-如果安裝時 Revit 正在執行，請關閉並重新開啟 Revit，外掛才會載入新版 DLL。
+安裝時如 Revit 或 SC REVIT 正在執行，安裝程式會停止，避免覆寫正在載入的 DLL。
+
+Agent listener 預設停用。需要 Agent 功能時，可在 SC REVIT GUI 按「啟用 Agent」，或執行安裝目錄內的 `Enable_SC_REVIT_Agent.bat`。
+
+安裝目錄另外提供：
+
+- `Enable_SC_REVIT_Agent.bat`／`Disable_SC_REVIT_Agent.bat`：明確啟用或停用 Agent listener。
+- `Collect_SC_REVIT_Diagnostics.bat`：建立可交給開發者檢查的診斷 ZIP。
+- `Uninstall_SC_REVIT.bat`：移除外掛程式與 manifest；預設保留 runtime 診斷資料。
 
 ## 更新方式
 
@@ -109,7 +121,7 @@ Release 頁面：
 新版安裝會覆蓋：
 
 - `%LOCALAPPDATA%\SC_REVIT`
-- `%LOCALAPPDATA%\RfaMetadataAddin`
+- `%LOCALAPPDATA%\SCRevit\Revit2024`
 - Revit 2024 addin manifest
 
 通常不需要手動移除舊版。
@@ -153,6 +165,16 @@ Release 頁面：
 目前安裝包未做程式碼簽章，Windows SmartScreen 或防毒軟體可能提醒。  
 請確認檔案是從本 repo 的 GitHub Releases 下載。
 
+Revit 第一次載入此外掛時也會顯示未簽章警告。確認外掛名稱及下載來源後選擇「永遠載入」；固定 DLL 路徑與相同 AddIn ID 可避免每次更新都被當成不同外掛。
+
+### Revit 卡頓、無回應或需要回報問題
+
+1. 先執行 `Disable_SC_REVIT_Agent.bat`，確認人工 Ribbon 功能是否恢復正常。
+2. 關閉 Revit 後重新測試。
+3. 執行 `Collect_SC_REVIT_Diagnostics.bat`，將桌面產生的診斷 ZIP 交給開發者。
+
+`v0.5.2-distribution-safe` 的 Agent listener 預設停用；停用 Agent 不會移除或停用 Revit Ribbon 人工功能。
+
 ### 點工具後沒有資料
 
 部分工具依賴目前 Revit 模型狀態。  
@@ -161,6 +183,6 @@ Release 頁面：
 ## 給開發者
 
 這個 public repo 同時保存可下載安裝版的版本說明，以及目前公開的開發原始碼。  
-`v0.5.1-drainage-dev` 尚未升格為正式版本，請先在測試模型驗證後再決定是否用於實際專案。
+`v0.5.2-distribution-safe` 尚未升格為正式版本，請先完成多電腦小規模驗收後再用於實際專案。
 
 開發者打包新版 installer 時，請使用專案內的 release 打包腳本產生 installer ZIP，再上傳到 GitHub Releases。

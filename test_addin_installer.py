@@ -70,7 +70,7 @@ class AddinInstallerTests(unittest.TestCase):
                 result = addin_installer.ensure_revit_addin_installed()
                 deployed_dll = (
                     addin_installer.get_ascii_deploy_dir()
-                    / addin_installer.versioned_dll_name(source_dll)
+                    / addin_installer.DEPLOY_DLL_NAME
                 )
 
                 self.assertFalse(result.installed)
@@ -110,7 +110,7 @@ class AddinInstallerTests(unittest.TestCase):
                 )
                 deployed_dll = (
                     addin_installer.get_ascii_deploy_dir()
-                    / addin_installer.versioned_dll_name(source_dll)
+                    / addin_installer.DEPLOY_DLL_NAME
                 )
 
                 self.assertFalse(result.installed)
@@ -141,6 +141,12 @@ class AddinInstallerTests(unittest.TestCase):
         ):
             root = addin_installer.get_launcher_root()
         self.assertEqual(root, executable.parent.resolve())
+
+    def test_release_manifest_has_one_application_entry(self) -> None:
+        manifest = addin_installer.render_manifest(Path("C:/SCRevit/RfaMetadataAddin.dll"))
+        self.assertEqual(manifest.count('<AddIn Type="Application">'), 1)
+        self.assertNotIn('<AddIn Type="Command">', manifest)
+        self.assertIn("RfaMetadataBootstrapApplication", manifest)
 
 
 if __name__ == "__main__":

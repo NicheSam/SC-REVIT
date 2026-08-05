@@ -12,6 +12,7 @@ from gui_models import RfaTask
 from addin_installer import ensure_revit_addin_installed
 from dwg_block_reader import DwgBlockReaderError, read_dwg_blocks
 from listener_status import get_listener_status
+from queue_protocol import set_agent_listener_enabled
 from xlsx_exporter import export_library_index_xlsx, export_opening_candidates_xlsx, write_xlsx
 from sc_revit.family_library import (
     IngestError,
@@ -259,6 +260,12 @@ class FamilyClassifierApp(tk.Tk):
                 top,
                 textvariable=self.listener_var,
             ).grid(row=0, column=2, padx=(8, 0))
+            self.agent_listener_button = ttk.Button(
+                top,
+                text="啟用 Agent",
+                command=self._toggle_agent_listener,
+            )
+            self.agent_listener_button.grid(row=0, column=3, padx=(8, 0))
         else:
             ttk.Label(
                 top,
@@ -277,11 +284,17 @@ class FamilyClassifierApp(tk.Tk):
                 top,
                 textvariable=self.listener_var,
             ).grid(row=0, column=2, padx=(8, 12))
+            self.agent_listener_button = ttk.Button(
+                top,
+                text="啟用 Agent",
+                command=self._toggle_agent_listener,
+            )
+            self.agent_listener_button.grid(row=0, column=3, padx=(8, 0))
             ttk.Button(
                 top,
                 text="重新選擇",
                 command=lambda: self._choose_library_root(force=True),
-            ).grid(row=0, column=3, padx=(8, 0))
+            ).grid(row=0, column=4, padx=(8, 0))
 
         if self.app_mode == "archive":
             actions = ttk.Frame(self, padding=(12, 0, 12, 12))
@@ -4486,10 +4499,26 @@ class FamilyClassifierApp(tk.Tk):
         self.library_var.set(self.library_root)
         save_library_root(self.library_root)
 
-    def _refresh_listener_status(self) -> None:
+    def _refresh_listener_status(self, schedule: bool = True) -> None:
         status = get_listener_status()
         self.listener_var.set(f"Revit：{status['label']}")
-        self.after(3000, self._refresh_listener_status)
+        self.agent_listener_button.configure(
+            text="停用 Agent" if status.get("enabled") else "啟用 Agent"
+        )
+        if schedule:
+            self.after(3000, self._refresh_listener_status)
+
+    def _toggle_agent_listener(self) -> None:
+        status = get_listener_status()
+        enabled = not bool(status.get("enabled"))
+        set_agent_listener_enabled(enabled)
+        self._refresh_listener_status(schedule=False)
+        if enabled:
+            messagebox.showinfo(
+                "Agent 監聽已啟用",
+                "Revit 開啟時會在數秒內連線。\n"
+                "如 Revit 尚未開啟，請開啟 Revit 2024。",
+            )
 
     def _load_point_placement_context(self) -> None:
         self.placement_status_var.set("讀取中…")

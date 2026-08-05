@@ -3,7 +3,7 @@ from library_validator import validate_library_root
 from rfa_reader import RfaMetadata, RfaReaderError, validate_rfa_path
 from rfa_reader import read_metadata_from_json
 from queue_protocol import create_request, REQUEST_DIR
-from addin_installer import SOURCE_DLL, get_ascii_deploy_dir, render_manifest, versioned_dll_name
+from addin_installer import DEPLOY_DLL_NAME, SOURCE_DLL, get_ascii_deploy_dir, render_manifest
 from listener_status import get_listener_status
 from naming_rules import analyze_source_name, generate_planned_name
 from duplicate_checker import build_available_copy_name, find_duplicate_names
@@ -221,7 +221,7 @@ def test_addin_sources_exist() -> None:
 
 
 def test_manifest_uses_dynamic_dll_path() -> None:
-    deploy_dll = get_ascii_deploy_dir() / versioned_dll_name(SOURCE_DLL)
+    deploy_dll = get_ascii_deploy_dir() / DEPLOY_DLL_NAME
     manifest = render_manifest(deploy_dll)
     assert str(deploy_dll.resolve()) in manifest
 

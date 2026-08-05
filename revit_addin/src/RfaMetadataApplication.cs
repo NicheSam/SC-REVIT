@@ -31,6 +31,12 @@ namespace RfaMetadataAddin
         private static readonly string ResponseDir = Path.Combine(BaseDir, "responses");
         private static readonly string ErrorDir = Path.Combine(BaseDir, "errors");
         private static readonly string HeartbeatFile = Path.Combine(BaseDir, "listener_heartbeat.json");
+        private static readonly string AgentListenerEnabledFile = Path.Combine(BaseDir, "agent_listener.enabled");
+        private static readonly string InFlightRequestFile = Path.Combine(BaseDir, "listener_in_flight.json");
+        private static readonly string QuarantineDir = Path.Combine(BaseDir, "quarantine");
+        private DateTime _nextListenerPollUtc = DateTime.MinValue;
+        private DateTime _nextHeartbeatUtc = DateTime.MinValue;
+        private bool _agentListenerWasEnabled;
         private class FireBranchItem
         {
             public FamilyInstance Sprinkler { get; set; }
@@ -71,6 +77,12 @@ namespace RfaMetadataAddin
                 Directory.CreateDirectory(RequestDir);
                 Directory.CreateDirectory(ResponseDir);
                 Directory.CreateDirectory(ErrorDir);
+                Directory.CreateDirectory(QuarantineDir);
+                QuarantinePendingRequests("startup");
+                if (!File.Exists(AgentListenerEnabledFile))
+                {
+                    DeleteFileQuietly(HeartbeatFile);
+                }
                 string startupFault = Path.Combine(
                     ErrorDir,
                     "startup_fault.json");
@@ -141,6 +153,7 @@ namespace RfaMetadataAddin
         public Result OnShutdown(UIControlledApplication application)
         {
             application.Idling -= OnIdling;
+            DeleteFileQuietly(HeartbeatFile);
             DrainagePreviewServer.Unregister();
             ShutdownDrainageDocumentState(application);
             return Result.Succeeded;
@@ -150,17 +163,52 @@ namespace RfaMetadataAddin
         {
             try
             {
+                DateTime now = DateTime.UtcNow;
+                if (now < _nextListenerPollUtc)
+                {
+                    return;
+                }
+                _nextListenerPollUtc = now.AddSeconds(1);
+
                 UIApplication uiApp = sender as UIApplication;
                 if (uiApp == null)
                 {
                     return;
                 }
 
-                WriteHeartbeat();
-
-                foreach (string requestFile in Directory.GetFiles(RequestDir, "*.json").Take(3))
+                bool agentListenerEnabled = File.Exists(AgentListenerEnabledFile);
+                if (!agentListenerEnabled)
                 {
-                    ProcessRequest(uiApp, requestFile);
+                    if (_agentListenerWasEnabled)
+                    {
+                        QuarantinePendingRequests("listener_disabled");
+                        DeleteFileQuietly(HeartbeatFile);
+                    }
+                    _agentListenerWasEnabled = false;
+                    return;
+                }
+
+                _agentListenerWasEnabled = true;
+                if (now >= _nextHeartbeatUtc)
+                {
+                    WriteHeartbeat();
+                    _nextHeartbeatUtc = now.AddSeconds(3);
+                }
+
+                string requestFile = Directory
+                    .EnumerateFiles(RequestDir, "*.json")
+                    .FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(requestFile))
+                {
+                    TryWriteInFlightRequest(requestFile);
+                    try
+                    {
+                        ProcessRequest(uiApp, requestFile);
+                    }
+                    finally
+                    {
+                        DeleteFileQuietly(InFlightRequestFile);
+                    }
                 }
             }
             catch (Exception ex)
@@ -187,6 +235,99 @@ namespace RfaMetadataAddin
                 utc = DateTime.UtcNow.ToString("o")
             });
             File.WriteAllText(HeartbeatFile, payload, Encoding.UTF8);
+        }
+
+        private static void TryWriteInFlightRequest(string requestFile)
+        {
+            try
+            {
+                var serializer = new JavaScriptSerializer();
+                string payload = serializer.Serialize(new
+                {
+                    request_id = Path.GetFileNameWithoutExtension(requestFile),
+                    request_file = requestFile,
+                    started_utc = DateTime.UtcNow.ToString("o")
+                });
+                File.WriteAllText(InFlightRequestFile, payload, Encoding.UTF8);
+            }
+            catch
+            {
+                // Diagnostics must not block a valid Agent request.
+            }
+        }
+
+        private static void QuarantinePendingRequests(string reason)
+        {
+            try
+            {
+                string[] requestFiles = Directory.GetFiles(RequestDir, "*.json");
+                bool suspectedPreviousCrash = File.Exists(InFlightRequestFile);
+                if (requestFiles.Length == 0 && !suspectedPreviousCrash)
+                {
+                    return;
+                }
+                string batchDir = Path.Combine(
+                    QuarantineDir,
+                    DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" +
+                    Guid.NewGuid().ToString("N").Substring(0, 8));
+                Directory.CreateDirectory(batchDir);
+                foreach (string requestFile in requestFiles)
+                {
+                    string destination = Path.Combine(
+                        batchDir,
+                        Path.GetFileName(requestFile));
+                    File.Move(requestFile, destination);
+                }
+                if (suspectedPreviousCrash)
+                {
+                    File.Move(
+                        InFlightRequestFile,
+                        Path.Combine(batchDir, "previous_in_flight.json"));
+                }
+                File.WriteAllText(
+                    Path.Combine(batchDir, "quarantine.json"),
+                    new JavaScriptSerializer().Serialize(new
+                    {
+                        reason = reason,
+                        quarantined_utc = DateTime.UtcNow.ToString("o"),
+                        request_count = requestFiles.Length,
+                        suspected_previous_crash = suspectedPreviousCrash
+                    }),
+                    Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    File.WriteAllText(
+                        Path.Combine(ErrorDir, "request_quarantine_fault.json"),
+                        new JavaScriptSerializer().Serialize(new
+                        {
+                            reason = reason,
+                            error = ex.ToString()
+                        }),
+                        Encoding.UTF8);
+                }
+                catch
+                {
+                    // Quarantine diagnostics must not block Revit startup.
+                }
+            }
+        }
+
+        private static void DeleteFileQuietly(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch
+            {
+                // Runtime cleanup must not block Revit interaction.
+            }
         }
 
         private static void EnsureRibbon(UIControlledApplication application)
