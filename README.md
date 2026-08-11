@@ -10,7 +10,6 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 | 項目 | 連結 |
 | --- | --- |
 | Windows 一鍵安裝／更新包 | [下載 `SC_REVIT_v0.5.3_installer.zip`](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.3/SC_REVIT_v0.5.3_installer.zip) |
-| SHA-256 校驗檔 | [下載 `SC_REVIT_v0.5.3_installer.zip.sha256`](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.3/SC_REVIT_v0.5.3_installer.zip.sha256) |
 | 版本說明 | [GitHub Release：v0.5.3](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.3) |
 | 排水操作手冊 | [Markdown](docs/SC_REVIT_drainage_operation_manual.md) · [PDF](docs/SC_REVIT_drainage_operation_manual.pdf) |
 
