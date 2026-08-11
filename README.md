@@ -154,7 +154,7 @@ flowchart TB
 
 1. 關閉 SC REVIT 視窗與 Revit。
 2. 重新開啟 Revit，確認是否可重現。
-3. 執行安裝目錄內的 `Collect_SC_REVIT_Diagnostics.bat`，將桌面產生的診斷 ZIP 交給開發者。
+3. 執行安裝目錄內的 `收集_SC_REVIT_診斷資料.bat`，將桌面產生的診斷 ZIP 交給開發者。
 
 ### 點工具後沒有資料
 

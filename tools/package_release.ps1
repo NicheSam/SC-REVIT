@@ -9,6 +9,14 @@ $ErrorActionPreference = "Stop"
 $toolRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $toolRoot
 Set-Location $root
+$collectDiagnosticsLauncher = (
+  -join (0x6536, 0x96C6 | ForEach-Object { [char]$_ })
+) + "_SC_REVIT_" + (
+  -join (0x8A3A, 0x65B7, 0x8CC7, 0x6599 | ForEach-Object { [char]$_ })
+) + ".bat"
+$uninstallLauncher = (
+  -join (0x89E3, 0x9664, 0x5B89, 0x88DD | ForEach-Object { [char]$_ })
+) + "_SC_REVIT.bat"
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
   $versionPath = Join-Path $root "VERSION.txt"
@@ -72,9 +80,9 @@ New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
 $installerFiles = @(
   "Install_SC_REVIT.bat",
   "install_sc_revit.ps1",
-  "Collect_SC_REVIT_Diagnostics.bat",
+  $collectDiagnosticsLauncher,
   "Collect_SC_REVIT_Diagnostics.ps1",
-  "Uninstall_SC_REVIT.bat",
+  $uninstallLauncher,
   "uninstall_sc_revit.ps1"
 )
 foreach ($installerFile in $installerFiles) {
@@ -114,9 +122,9 @@ $payloadFiles = @(
   "payload/VERSION.txt",
   "Install_SC_REVIT.bat",
   "install_sc_revit.ps1",
-  "Collect_SC_REVIT_Diagnostics.bat",
+  $collectDiagnosticsLauncher,
   "Collect_SC_REVIT_Diagnostics.ps1",
-  "Uninstall_SC_REVIT.bat",
+  $uninstallLauncher,
   "uninstall_sc_revit.ps1"
 )
 $releaseFiles = @()
@@ -161,8 +169,8 @@ try {
   $requiredEntries = @(
     "Install_SC_REVIT.bat",
     "install_sc_revit.ps1",
-    "Collect_SC_REVIT_Diagnostics.bat",
-    "Uninstall_SC_REVIT.bat",
+    $collectDiagnosticsLauncher,
+    $uninstallLauncher,
     "release_manifest.json",
     "payload/dist/RevitFamilyClassifier/RevitFamilyClassifier.exe",
     "payload/revit_addin/bin/RfaMetadataAddin.dll",

@@ -9,6 +9,14 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $payloadRoot = Join-Path $scriptRoot "payload"
 $releaseManifestPath = Join-Path $scriptRoot "release_manifest.json"
+$collectDiagnosticsLauncher = (
+  -join (0x6536, 0x96C6 | ForEach-Object { [char]$_ })
+) + "_SC_REVIT_" + (
+  -join (0x8A3A, 0x65B7, 0x8CC7, 0x6599 | ForEach-Object { [char]$_ })
+) + ".bat"
+$uninstallLauncher = (
+  -join (0x89E3, 0x9664, 0x5B89, 0x88DD | ForEach-Object { [char]$_ })
+) + "_SC_REVIT.bat"
 
 Write-Host "SC REVIT installer" -ForegroundColor Cyan
 Write-Host "Install root: $InstallRoot"
@@ -57,9 +65,9 @@ foreach ($item in $payloadItems) {
   Copy-Item -LiteralPath $item.FullName -Destination $InstallRoot -Recurse -Force
 }
 $helperNames = @(
-  "Collect_SC_REVIT_Diagnostics.bat",
+  $collectDiagnosticsLauncher,
   "Collect_SC_REVIT_Diagnostics.ps1",
-  "Uninstall_SC_REVIT.bat",
+  $uninstallLauncher,
   "uninstall_sc_revit.ps1"
 )
 foreach ($helperName in $helperNames) {
