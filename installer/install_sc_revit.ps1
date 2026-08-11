@@ -57,9 +57,6 @@ foreach ($item in $payloadItems) {
   Copy-Item -LiteralPath $item.FullName -Destination $InstallRoot -Recurse -Force
 }
 $helperNames = @(
-  "Enable_SC_REVIT_Agent.bat",
-  "Disable_SC_REVIT_Agent.bat",
-  "Set_SC_REVIT_Agent.ps1",
   "Collect_SC_REVIT_Diagnostics.bat",
   "Collect_SC_REVIT_Diagnostics.ps1",
   "Uninstall_SC_REVIT.bat",
@@ -147,7 +144,6 @@ Write-Host "Manifest: $addinPath"
 Write-Host "Assembly: $deployDll"
 Write-Host "GUI: $guiExe"
 Write-Host "Version: $($releaseManifest.version)"
-Write-Host "Agent listener: disabled by default"
 Write-Host "First Revit launch: choose Always Load for this unsigned development build."
 Write-Host ""
 Write-Host "Restart Revit 2024, then open the SC REVIT ribbon tab."

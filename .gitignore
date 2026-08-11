@@ -31,3 +31,14 @@ tmp_*.png
 PROJECT_CONTEXT.md
 .env
 .env.*
+
+# BIM Agent integration belongs to a separate project and is not published with SC REVIT.
+docs/drainage_agent_gateway.md
+docs/drainage_configuration_resolution.md
+docs/drainage_mcp_config.example.json
+installer/Enable_SC_REVIT_Agent.bat
+installer/Disable_SC_REVIT_Agent.bat
+installer/Set_SC_REVIT_Agent.ps1
+sc_revit/drainage/agent_cli.py
+sc_revit/drainage/agent_tools.py
+sc_revit/drainage/mcp_server.py

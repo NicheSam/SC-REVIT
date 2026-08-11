@@ -25,7 +25,7 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 - 支援不同管徑與專案管件設定。
 - 建立後檢查管件角度、接入方向、管段長度與拓撲。
 
-本版同時修正 CAD 點位與消防支管預覽殘留、異常座標、螢光路徑顯示及消防管網連接／系統類型問題。Agent listener 預設停用，Revit Ribbon 人工功能仍可正常使用；只在需要 Agent 功能時才手動啟用監聽。
+本版同時修正 CAD 點位與消防支管預覽殘留、異常座標、螢光路徑顯示及消防管網連接／系統類型問題。
 
 ## 功能狀態
 
@@ -122,7 +122,7 @@ flowchart TB
 3. 執行 `Install_SC_REVIT.bat`。
 4. 安裝完成後重新開啟 Revit，在 Ribbon 找到 `SC 族群工具`。
 
-同一個安裝檔同時支援首次安裝與覆蓋更新，不需先移除舊版。第一次載入若 Revit 顯示未簽章警告，確認名稱為 `SC REVIT` 與下載來源正確後再允許載入。一般 Ribbon 操作不需要啟用 Agent。
+同一個安裝檔同時支援首次安裝與覆蓋更新，不需先移除舊版。第一次載入若 Revit 顯示未簽章警告，確認名稱為 `SC REVIT` 與下載來源正確後再允許載入。
 
 ## 基本使用方式
 
@@ -152,11 +152,9 @@ flowchart TB
 
 ### Revit 卡頓、無回應或需要回報問題
 
-1. 先執行 `Disable_SC_REVIT_Agent.bat`，確認人工 Ribbon 功能是否恢復正常。
-2. 關閉 Revit 後重新測試。
-3. 執行 `Collect_SC_REVIT_Diagnostics.bat`，將桌面產生的診斷 ZIP 交給開發者。
-
-`v0.5.3` 的 Agent listener 預設停用；停用 Agent 不會移除或停用 Revit Ribbon 人工功能。
+1. 關閉 SC REVIT 視窗與 Revit。
+2. 重新開啟 Revit，確認是否可重現。
+3. 執行安裝目錄內的 `Collect_SC_REVIT_Diagnostics.bat`，將桌面產生的診斷 ZIP 交給開發者。
 
 ### 點工具後沒有資料
 

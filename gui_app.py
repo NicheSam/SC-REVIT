@@ -3707,7 +3707,7 @@ class FamilyClassifierApp(tk.Tk):
             messagebox.showwarning(
                 "請確認管件選擇",
                 "目前只有 Routing Preference 順序或不足量的使用紀錄，"
-                "系統已填入排名第一的候選，但不允許 Agent 自動建立。"
+                "系統已填入排名第一的候選，但不會直接自動建立。"
                 "請在下拉選單確認三通與 45° 彎頭後再分析路徑。",
             )
 

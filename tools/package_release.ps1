@@ -72,9 +72,6 @@ New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
 $installerFiles = @(
   "Install_SC_REVIT.bat",
   "install_sc_revit.ps1",
-  "Enable_SC_REVIT_Agent.bat",
-  "Disable_SC_REVIT_Agent.bat",
-  "Set_SC_REVIT_Agent.ps1",
   "Collect_SC_REVIT_Diagnostics.bat",
   "Collect_SC_REVIT_Diagnostics.ps1",
   "Uninstall_SC_REVIT.bat",
@@ -98,6 +95,16 @@ if (Test-Path -LiteralPath $releaseNotesPath) {
 $docsPath = Join-Path $root "docs"
 if (Test-Path -LiteralPath $docsPath) {
   Copy-Item -LiteralPath $docsPath -Destination (Join-Path $payloadRoot "docs") -Recurse -Force
+  @(
+    "drainage_agent_gateway.md",
+    "drainage_configuration_resolution.md",
+    "drainage_mcp_config.example.json"
+  ) | ForEach-Object {
+    $agentDocPath = Join-Path $payloadRoot ("docs\" + $_)
+    if (Test-Path -LiteralPath $agentDocPath) {
+      Remove-Item -LiteralPath $agentDocPath -Force
+    }
+  }
 }
 
 $payloadFiles = @(
@@ -107,9 +114,6 @@ $payloadFiles = @(
   "payload/VERSION.txt",
   "Install_SC_REVIT.bat",
   "install_sc_revit.ps1",
-  "Enable_SC_REVIT_Agent.bat",
-  "Disable_SC_REVIT_Agent.bat",
-  "Set_SC_REVIT_Agent.ps1",
   "Collect_SC_REVIT_Diagnostics.bat",
   "Collect_SC_REVIT_Diagnostics.ps1",
   "Uninstall_SC_REVIT.bat",
@@ -157,8 +161,6 @@ try {
   $requiredEntries = @(
     "Install_SC_REVIT.bat",
     "install_sc_revit.ps1",
-    "Enable_SC_REVIT_Agent.bat",
-    "Disable_SC_REVIT_Agent.bat",
     "Collect_SC_REVIT_Diagnostics.bat",
     "Uninstall_SC_REVIT.bat",
     "release_manifest.json",

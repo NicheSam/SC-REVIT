@@ -22,10 +22,10 @@
 ## GUI、效能與部署
 
 - GUI 與 Revit DLL 同步更新，避免混用新 GUI 與舊 DLL。
-- 改善 Agent listener 輪詢、heartbeat 與 request 恢復流程，降低工具結束後持續卡頓的風險。
+- 改善 GUI 與 Revit 間的背景通訊及 request 恢復流程，降低工具結束後持續卡頓的風險。
 - `Install_SC_REVIT.bat` 可用於首次安裝及覆蓋更新，會檢查 Revit／SC REVIT 是否關閉。
 - 安裝包會驗證 payload SHA-256，部署固定 DLL 路徑並寫入唯一 Revit 2024 manifest。
-- 提供 Agent 啟用／停用、診斷收集與解除安裝工具。
+- 提供診斷收集與解除安裝工具。
 
 ## 安裝或更新
 
