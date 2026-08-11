@@ -330,6 +330,16 @@ namespace RfaMetadataAddin
             }
         }
 
+        private static void MarkDevelopmentButton(PushButton button, string iconName)
+        {
+            button.ToolTip = "\u3010\u958b\u767c\u4e2d\u3011 " + (button.ToolTip ?? string.Empty);
+            button.LongDescription =
+                "This feature is still under development and is not yet classified as a stable, general-purpose workflow. "
+                + (button.LongDescription ?? string.Empty);
+            button.Image = ScIconFactory.CreateDevelopment(iconName, 16);
+            button.LargeImage = ScIconFactory.CreateDevelopment(iconName, 32);
+        }
+
         private static void EnsureRibbon(UIControlledApplication application)
         {
             try
@@ -349,13 +359,13 @@ namespace RfaMetadataAddin
             string assemblyPath = Assembly.GetExecutingAssembly().Location;
             PushButtonData archiveButtonData = new PushButtonData(
                 "OpenFamilyArchive",
-                "族群歸檔",
+                "族群歸檔\n\u958b\u767c\u4e2d",
                 assemblyPath,
                 "RfaMetadataAddin.OpenFamilyArchiveCommand"
             );
             PushButtonData recoveryButtonData = new PushButtonData(
                 "OpenProjectRecovery",
-                "專案回收",
+                "專案回收\n\u958b\u767c\u4e2d",
                 assemblyPath,
                 "RfaMetadataAddin.OpenProjectRecoveryCommand"
             );
@@ -391,7 +401,7 @@ namespace RfaMetadataAddin
             );
             PushButtonData openingButtonData = new PushButtonData(
                 "OpenOpeningCheck",
-                "開孔定位",
+                "開孔定位\n\u958b\u767c\u4e2d",
                 assemblyPath,
                 "RfaMetadataAddin.OpenOpeningCheckCommand"
             );
@@ -404,25 +414,25 @@ namespace RfaMetadataAddin
             );
             PushButtonData elementInspectorButtonData = new PushButtonData(
                 "OpenElementInspector",
-                "\u8eab\u4efd\u6aa2\u67e5",
+                "\u8eab\u4efd\u6aa2\u67e5\n\u958b\u767c\u4e2d",
                 assemblyPath,
                 "RfaMetadataAddin.OpenElementInspectorCommand"
             );
             PushButtonData parameterAuditButtonData = new PushButtonData(
                 "OpenParameterAudit",
-                "\u53c3\u6578\u5065\u6aa2",
+                "\u53c3\u6578\u5065\u6aa2\n\u958b\u767c\u4e2d",
                 assemblyPath,
                 "RfaMetadataAddin.OpenParameterAuditCommand"
             );
             PushButtonData connectFittingButtonData = new PushButtonData(
                 "OpenConnectFitting",
-                "\u65b7\u9ede\u6aa2\u67e5",
+                "\u65b7\u9ede\u6aa2\u67e5\n\u958b\u767c\u4e2d",
                 assemblyPath,
                 "RfaMetadataAddin.OpenConnectFittingCommand"
             );
             PushButtonData pipingSupportButtonData = new PushButtonData(
                 "OpenPipingSupport",
-                "\u7ba1\u652f\u6490\u9810\u89bd",
+                "\u7ba1\u652f\u6490\u9810\u89bd\n\u958b\u767c\u4e2d",
                 assemblyPath,
                 "RfaMetadataAddin.OpenPipingSupportCommand"
             );
@@ -432,8 +442,7 @@ namespace RfaMetadataAddin
             {
                 archiveButton.ToolTip = "開啟族群歸檔工具";
                 archiveButton.LongDescription = "Classify, rename, standardize and ingest external RFA files.";
-                archiveButton.Image = ScIconFactory.Create("family_archive", 16);
-                archiveButton.LargeImage = ScIconFactory.Create("family_archive", 32);
+                MarkDevelopmentButton(archiveButton, "family_archive");
             }
 
             PushButton recoveryButton = panel.AddItem(recoveryButtonData) as PushButton;
@@ -441,8 +450,7 @@ namespace RfaMetadataAddin
             {
                 recoveryButton.ToolTip = "開啟專案族群回收工具";
                 recoveryButton.LongDescription = "Scan loaded and used families in the active Revit project.";
-                recoveryButton.Image = ScIconFactory.Create("project_recovery", 16);
-                recoveryButton.LargeImage = ScIconFactory.Create("project_recovery", 32);
+                MarkDevelopmentButton(recoveryButton, "project_recovery");
             }
 
             PushButton placementButton = panel.AddItem(placementButtonData) as PushButton;
@@ -527,8 +535,7 @@ namespace RfaMetadataAddin
             {
                 openingButton.ToolTip = "開啟套管 / 開孔定位工具";
                 openingButton.LongDescription = "Scan MEP elements against linked architectural elements and list opening candidates.";
-                openingButton.Image = ScIconFactory.Create("opening_locator", 16);
-                openingButton.LargeImage = ScIconFactory.Create("opening_locator", 32);
+                MarkDevelopmentButton(openingButton, "opening_locator");
             }
 
             RibbonPanel mepCheckPanel = application
@@ -540,16 +547,14 @@ namespace RfaMetadataAddin
             {
                 elementInspectorButton.ToolTip = "\u5224\u65b7\u9078\u53d6\u5143\u4ef6\u80fd\u5426\u88ab SC \u5f8c\u53f0\u8ffd\u8e64\u3001\u5831\u8868\u6216\u540c\u6b65\u7ba1\u7406";
                 elementInspectorButton.LongDescription = "Check whether selected elements have usable identity data for SC REVIT management.";
-                elementInspectorButton.Image = ScIconFactory.Create("element_inspector", 16);
-                elementInspectorButton.LargeImage = ScIconFactory.Create("element_inspector", 32);
+                MarkDevelopmentButton(elementInspectorButton, "element_inspector");
             }
             PushButton parameterAuditButton = mepCheckPanel.AddItem(parameterAuditButtonData) as PushButton;
             if (parameterAuditButton != null)
             {
                 parameterAuditButton.ToolTip = "\u6aa2\u67e5\u9078\u53d6\u6216\u76ee\u524d\u8996\u5716\u5167\u5143\u4ef6\u7684 SC_ \u53c3\u6578\u662f\u5426\u7f3a\u5c11\u6216\u7a7a\u503c";
                 parameterAuditButton.LongDescription = "Check SC-prefixed parameters and explain missing or empty values.";
-                parameterAuditButton.Image = ScIconFactory.Create("parameter_audit", 16);
-                parameterAuditButton.LargeImage = ScIconFactory.Create("parameter_audit", 32);
+                MarkDevelopmentButton(parameterAuditButton, "parameter_audit");
             }
 
             RibbonPanel mepAssistPanel = application
@@ -561,16 +566,14 @@ namespace RfaMetadataAddin
             {
                 connectFittingButton.ToolTip = "\u627e\u51fa pipe / duct / conduit \u65b7\u9ede\uff0c\u4e26\u53ea\u5c0d\u53ef\u4fee\u5fa9\u7684 pipe \u57f7\u884c\u81ea\u52d5\u4fee\u5fa9";
                 connectFittingButton.LongDescription = "Find disconnected MEP endpoints and repair only eligible pipe endpoint pairs.";
-                connectFittingButton.Image = ScIconFactory.Create("breakpoint_check", 16);
-                connectFittingButton.LargeImage = ScIconFactory.Create("breakpoint_check", 32);
+                MarkDevelopmentButton(connectFittingButton, "breakpoint_check");
             }
             PushButton pipingSupportButton = mepAssistPanel.AddItem(pipingSupportButtonData) as PushButton;
             if (pipingSupportButton != null)
             {
                 pipingSupportButton.ToolTip = "\u4f9d\u9078\u53d6 pipe \u7522\u751f\u652f\u6490\u5019\u9078\u9ede\u8207\u9810\u89bd\u6a19\u8a18";
                 pipingSupportButton.LongDescription = "Create preview markers for candidate pipe support points. Family placement is reserved for the next phase.";
-                pipingSupportButton.Image = ScIconFactory.Create("piping_support", 16);
-                pipingSupportButton.LargeImage = ScIconFactory.Create("piping_support", 32);
+                MarkDevelopmentButton(pipingSupportButton, "piping_support");
             }
         }
 
@@ -601,7 +604,8 @@ namespace RfaMetadataAddin
         private static void TraverseGeometryInstances(
             Document doc,
             GeometryElement geometry,
-            Autodesk.Revit.DB.Transform transform,
+            Autodesk.Revit.DB.Transform pathTransform,
+            Autodesk.Revit.DB.Transform importTransform,
             string filter,
             int limit,
             List<Dictionary<string, object>> points)
@@ -622,10 +626,12 @@ namespace RfaMetadataAddin
                     continue;
                 }
 
-                Autodesk.Revit.DB.Transform instanceTransform = transform.Multiply(instance.Transform);
+                Autodesk.Revit.DB.Transform instanceTransform = pathTransform.Multiply(instance.Transform);
+                Autodesk.Revit.DB.Transform validationTransform = importTransform.Multiply(instance.Transform);
                 string blockName = GetGeometryInstanceName(doc, instance);
                 bool matched = string.IsNullOrWhiteSpace(filter)
-                    || string.Equals(blockName, filter, StringComparison.OrdinalIgnoreCase);
+                    || string.Equals(blockName, filter, StringComparison.OrdinalIgnoreCase)
+                    || blockName.EndsWith("." + filter, StringComparison.OrdinalIgnoreCase);
                 if (matched)
                 {
                     XYZ origin = instanceTransform.Origin;
@@ -636,7 +642,12 @@ namespace RfaMetadataAddin
                         { "x", origin.X },
                         { "y", origin.Y },
                         { "z", origin.Z },
-                        { "rotation_degrees", rotationRadians * 180.0 / Math.PI }
+                        { "rotation_degrees", rotationRadians * 180.0 / Math.PI },
+                        { "revit_geometry_name", blockName },
+                        { "coordinate_space", "revit_model" },
+                        { "anchor_residual_mm", origin.DistanceTo(validationTransform.Origin) * 304.8 },
+                        { "conformal", instanceTransform.IsConformal },
+                        { "uniform_scale", instanceTransform.IsConformal ? instanceTransform.Scale : double.NaN }
                     });
                 }
 
@@ -644,8 +655,9 @@ namespace RfaMetadataAddin
                 {
                     TraverseGeometryInstances(
                         doc,
-                        instance.GetInstanceGeometry(),
+                        instance.GetSymbolGeometry(),
                         instanceTransform,
+                        validationTransform,
                         filter,
                         limit,
                         points
@@ -747,14 +759,34 @@ namespace RfaMetadataAddin
             };
             GeometryElement geometry = importInstance.get_Geometry(options);
             var points = new List<Dictionary<string, object>>();
-            TraverseGeometryInstances(
-                doc,
-                geometry,
-                importInstance.GetTotalTransform(),
-                blockFilter,
-                Math.Max(limit, 1),
-                points
-            );
+            Autodesk.Revit.DB.Transform importTransform = importInstance.GetTotalTransform();
+            if (geometry != null)
+            {
+                foreach (GeometryObject geometryObject in geometry)
+                {
+                    GeometryInstance root = geometryObject as GeometryInstance;
+                    if (root == null || points.Count >= Math.Max(limit, 1))
+                    {
+                        continue;
+                    }
+                    try
+                    {
+                        TraverseGeometryInstances(
+                            doc,
+                            root.GetSymbolGeometry(),
+                            root.Transform,
+                            importTransform,
+                            blockFilter,
+                            Math.Max(limit, 1),
+                            points
+                        );
+                    }
+                    catch
+                    {
+                        // Continue with other roots; individual unreadable CAD symbols must not hide valid blocks.
+                    }
+                }
+            }
             return points;
         }
 
@@ -782,11 +814,16 @@ namespace RfaMetadataAddin
         private static List<Dictionary<string, object>> TransformDwgBlockPoints(
             ImportInstance importInstance,
             List<Dictionary<string, object>> rawPoints,
-            int limit)
+            int limit,
+            bool pointsAreModelCoordinates)
         {
             var transformedPoints = new List<Dictionary<string, object>>();
             Autodesk.Revit.DB.Transform transform = importInstance.GetTotalTransform();
             double baseRotationDegrees = Math.Atan2(transform.BasisX.Y, transform.BasisX.X) * 180.0 / Math.PI;
+            if (pointsAreModelCoordinates)
+            {
+                ValidateRevitModelPoints(rawPoints);
+            }
             foreach (Dictionary<string, object> rawPoint in rawPoints.Take(Math.Max(limit, 1)))
             {
                 double x = rawPoint.ContainsKey("x") ? Convert.ToDouble(rawPoint["x"]) : 0;
@@ -796,14 +833,14 @@ namespace RfaMetadataAddin
                     ? Convert.ToDouble(rawPoint["rotation_degrees"])
                     : 0;
                 XYZ sourcePoint = new XYZ(x, y, z);
-                XYZ targetPoint = transform.OfPoint(sourcePoint);
+                XYZ targetPoint = pointsAreModelCoordinates ? sourcePoint : transform.OfPoint(sourcePoint);
                 transformedPoints.Add(new Dictionary<string, object>
                 {
                     { "block_name", rawPoint.ContainsKey("block_name") ? rawPoint["block_name"] : "" },
                     { "x", targetPoint.X },
                     { "y", targetPoint.Y },
                     { "z", targetPoint.Z },
-                    { "rotation_degrees", rotation + baseRotationDegrees },
+                    { "rotation_degrees", pointsAreModelCoordinates ? rotation : rotation + baseRotationDegrees },
                     { "source_x", x },
                     { "source_y", y },
                     { "source_z", z },
@@ -812,6 +849,73 @@ namespace RfaMetadataAddin
                 });
             }
             return transformedPoints;
+        }
+
+        private static void ValidateCadPreviewPointsAgainstImport(
+            ImportInstance importInstance,
+            List<Dictionary<string, object>> points)
+        {
+            if (importInstance == null || points == null || points.Count == 0)
+            {
+                throw new InvalidOperationException("CAD preview contains no valid points.");
+            }
+            BoundingBoxXYZ bounds = importInstance.get_BoundingBox(null);
+            double margin = UnitUtils.ConvertToInternalUnits(30000, UnitTypeId.Millimeters);
+            foreach (Dictionary<string, object> point in points)
+            {
+                double x = point.ContainsKey("x") ? Convert.ToDouble(point["x"]) : double.NaN;
+                double y = point.ContainsKey("y") ? Convert.ToDouble(point["y"]) : double.NaN;
+                double z = point.ContainsKey("z") ? Convert.ToDouble(point["z"]) : double.NaN;
+                if (double.IsNaN(x) || double.IsInfinity(x)
+                    || double.IsNaN(y) || double.IsInfinity(y)
+                    || double.IsNaN(z) || double.IsInfinity(z))
+                {
+                    throw new InvalidOperationException("CAD preview contains a non-finite coordinate.");
+                }
+                if (bounds != null
+                    && (x < bounds.Min.X - margin || x > bounds.Max.X + margin
+                        || y < bounds.Min.Y - margin || y > bounds.Max.Y + margin))
+                {
+                    throw new InvalidOperationException(
+                        "CAD preview point is outside the linked CAD bounds by more than 30 m. "
+                        + "The request was stopped to prevent remote preview geometry.");
+                }
+            }
+        }
+
+        private static void ValidateRevitModelPoints(List<Dictionary<string, object>> points)
+        {
+            if (points.Count == 0)
+            {
+                throw new InvalidOperationException("Linked DWG 中找不到可用的圖塊點位");
+            }
+            foreach (Dictionary<string, object> point in points)
+            {
+                double x = point.ContainsKey("x") ? Convert.ToDouble(point["x"]) : double.NaN;
+                double y = point.ContainsKey("y") ? Convert.ToDouble(point["y"]) : double.NaN;
+                double z = point.ContainsKey("z") ? Convert.ToDouble(point["z"]) : double.NaN;
+                if (double.IsNaN(x) || double.IsInfinity(x)
+                    || double.IsNaN(y) || double.IsInfinity(y)
+                    || double.IsNaN(z) || double.IsInfinity(z))
+                {
+                    throw new InvalidOperationException("Linked DWG 圖塊包含無效座標，已停止建立");
+                }
+                if (point.ContainsKey("conformal") && !Convert.ToBoolean(point["conformal"]))
+                {
+                    throw new InvalidOperationException("Linked DWG 圖塊使用非等比例 Transform，已停止建立");
+                }
+                double residualMm = point.ContainsKey("anchor_residual_mm")
+                    ? Convert.ToDouble(point["anchor_residual_mm"])
+                    : 0;
+                if (residualMm > 1.0)
+                {
+                    throw new InvalidOperationException(
+                        "Linked DWG 座標鏈殘差超過 1 mm，已停止建立；最大單點殘差="
+                        + residualMm.ToString("0.###")
+                        + " mm"
+                    );
+                }
+            }
         }
 
         private static bool IsDuplicatePoint(
@@ -1390,9 +1494,11 @@ namespace RfaMetadataAddin
         {
             if (mainA == null || mainB == null || branch == null)
             {
+                SetFireBranchConnectionDiagnostic("NewTeeFitting | one or more connectors are missing");
                 return null;
             }
 
+            var errors = new List<string>();
             Connector[][] orders = new Connector[][]
             {
                 new Connector[] { mainA, mainB, branch },
@@ -1413,11 +1519,14 @@ namespace RfaMetadataAddin
                         return fitting;
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Revit API fitting creation is order-sensitive.
+                    errors.Add(ex.GetType().Name + ": " + ex.Message);
                 }
             }
+            SetFireBranchConnectionDiagnostic(
+                "NewTeeFitting | "
+                + string.Join(" | ", errors.Distinct().ToArray()));
             return null;
         }
 
@@ -1425,34 +1534,127 @@ namespace RfaMetadataAddin
         {
             if (branchPipe == null)
             {
+                SetFireBranchConnectionDiagnostic("TryCreateTeeAtPoint | branch pipe is missing");
                 return false;
             }
             double tolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Centimeters);
-            Pipe target = mainSegments.FirstOrDefault(pipe => IsPointOnPipeXY(pipe, tiePoint, tolerance));
+            Pipe target = mainSegments.FirstOrDefault(
+                pipe => IsPointOnPipeXY(pipe, tiePoint, tolerance)
+                    && !IsPointAtPipeEnd(pipe, tiePoint, tolerance));
             if (target == null)
             {
+                target = mainSegments.FirstOrDefault(
+                    pipe => IsPointOnPipeXY(pipe, tiePoint, tolerance));
+            }
+            if (target == null)
+            {
+                SetFireBranchConnectionDiagnostic("TryCreateTeeAtPoint | no run segment contains the tie point");
                 return false;
             }
-            try
+            using (SubTransaction subTransaction = new SubTransaction(doc))
             {
-                doc.Regenerate();
-                ElementId newSegmentId = PlumbingUtils.BreakCurve(doc, target.Id, tiePoint);
-                Pipe newSegment = doc.GetElement(newSegmentId) as Pipe;
-                if (newSegment != null)
+                try
                 {
-                    mainSegments.Add(newSegment);
-                }
-                doc.Regenerate();
+                    subTransaction.Start();
+                    doc.Regenerate();
+                    if (IsPointAtPipeEnd(target, tiePoint, tolerance))
+                    {
+                        Connector runConnector = FindConnectorNear(target, tiePoint);
+                        Connector endpointBranchConnector = FindConnectorNear(branchPipe, tiePoint);
+                        if (runConnector == null || endpointBranchConnector == null)
+                        {
+                            SetFireBranchConnectionDiagnostic(
+                                "TryCreateTeeAtPoint.endpoint | endpoint connector is missing");
+                            subTransaction.RollBack();
+                            return false;
+                        }
 
-                Connector mainA = FindConnectorNear(target, tiePoint);
-                Connector mainB = newSegment != null ? FindConnectorNear(newSegment, tiePoint) : null;
-                Connector branchConnector = FindConnectorNear(branchPipe, tiePoint);
-                return TryNewTeeFitting(doc, mainA, mainB, branchConnector) != null;
-            }
-            catch
-            {
-                // Revit API fitting creation may fail; fallback below.
+                        Connector adjacentConnector = runConnector.AllRefs
+                            .Cast<Connector>()
+                            .FirstOrDefault(reference =>
+                                reference != null
+                                && reference.Owner is Pipe
+                                && reference.Owner.Id != target.Id);
+                        if (adjacentConnector != null)
+                        {
+                            runConnector.DisconnectFrom(adjacentConnector);
+                            FamilyInstance endpointTee = TryNewTeeFitting(
+                                doc,
+                                runConnector,
+                                adjacentConnector,
+                                endpointBranchConnector);
+                            doc.Regenerate();
+                            if (endpointTee == null)
+                            {
+                                subTransaction.RollBack();
+                                return false;
+                            }
+                            subTransaction.Commit();
+                            Pipe adjacentPipe = adjacentConnector.Owner as Pipe;
+                            if (adjacentPipe != null
+                                && !mainSegments.Any(pipe => pipe.Id == adjacentPipe.Id))
+                            {
+                                mainSegments.Add(adjacentPipe);
+                            }
+                            return true;
+                        }
+
+                        if (runConnector.IsConnected)
+                        {
+                            SetFireBranchConnectionDiagnostic(
+                                "TryCreateTeeAtPoint.endpoint | an existing fitting occupies the run endpoint");
+                            subTransaction.RollBack();
+                            return false;
+                        }
+
+                        FamilyInstance endpointElbow = doc.Create.NewElbowFitting(
+                            runConnector,
+                            endpointBranchConnector);
+                        doc.Regenerate();
+                        if (endpointElbow == null
+                            || !runConnector.IsConnected
+                            || !endpointBranchConnector.IsConnected)
+                        {
+                            SetFireBranchConnectionDiagnostic(
+                                "TryCreateTeeAtPoint.endpoint | elbow connection was not verified");
+                            subTransaction.RollBack();
+                            return false;
+                        }
+                        subTransaction.Commit();
+                        return true;
+                    }
+
+                    ElementId newSegmentId = PlumbingUtils.BreakCurve(doc, target.Id, tiePoint);
+                    Pipe newSegment = doc.GetElement(newSegmentId) as Pipe;
+                    doc.Regenerate();
+
+                    Connector mainA = FindConnectorNear(target, tiePoint);
+                    Connector mainB = newSegment != null ? FindConnectorNear(newSegment, tiePoint) : null;
+                    Connector branchConnector = FindConnectorNear(branchPipe, tiePoint);
+                    FamilyInstance fitting = TryNewTeeFitting(doc, mainA, mainB, branchConnector);
+                    if (fitting == null)
+                    {
+                        subTransaction.RollBack();
+                        return false;
+                    }
+
+                    subTransaction.Commit();
+                    if (newSegment != null)
+                    {
+                        mainSegments.Add(newSegment);
+                    }
+                    return true;
                 }
+                catch (Exception ex)
+                {
+                    SetFireBranchConnectionDiagnostic("TryCreateTeeAtPoint", ex);
+                    if (subTransaction.GetStatus() == TransactionStatus.Started)
+                    {
+                        subTransaction.RollBack();
+                    }
+                    // Revit API fitting creation may fail; fallback below.
+                }
+            }
             return false;
         }
 
@@ -1460,12 +1662,14 @@ namespace RfaMetadataAddin
         {
             if (connectingPipe == null)
             {
+                SetFireBranchConnectionDiagnostic("TryCreateElbowAtPipeEnd | connecting pipe is missing");
                 return false;
             }
             double tolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Centimeters);
             Pipe target = pipeSegments.FirstOrDefault(pipe => IsPointAtPipeEnd(pipe, tiePoint, tolerance));
             if (target == null)
             {
+                SetFireBranchConnectionDiagnostic("TryCreateElbowAtPipeEnd | no run endpoint contains the tie point");
                 return false;
             }
             try
@@ -1480,10 +1684,10 @@ namespace RfaMetadataAddin
                     return fitting != null;
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Revit API fitting creation may fail; fallback below.
-                }
+                SetFireBranchConnectionDiagnostic("TryCreateElbowAtPipeEnd", ex);
+            }
             return false;
         }
 
@@ -1491,8 +1695,10 @@ namespace RfaMetadataAddin
         {
             if (a == null || b == null || c == null || d == null)
             {
+                SetFireBranchConnectionDiagnostic("NewCrossFitting | one or more connectors are missing");
                 return null;
             }
+            var errors = new List<string>();
             Connector[][] orders = new Connector[][]
             {
                 new Connector[] { a, b, c, d },
@@ -1513,11 +1719,14 @@ namespace RfaMetadataAddin
                         return fitting;
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Revit API fitting creation may fail; fallback below.
+                    errors.Add(ex.GetType().Name + ": " + ex.Message);
+                }
             }
-            }
+            SetFireBranchConnectionDiagnostic(
+                "NewCrossFitting | "
+                + string.Join(" | ", errors.Distinct().ToArray()));
             return null;
         }
 
@@ -1528,34 +1737,113 @@ namespace RfaMetadataAddin
             Pipe branchTarget = branchSegments.FirstOrDefault(pipe => IsPointOnPipeXY(pipe, tiePoint, tolerance));
             if (mainTarget == null || branchTarget == null)
             {
+                SetFireBranchConnectionDiagnostic("TryCreateCrossAtPoint | a run segment does not contain the tie point");
                 return false;
             }
-            try
+            using (SubTransaction subTransaction = new SubTransaction(doc))
             {
-                doc.Regenerate();
-                ElementId newMainId = PlumbingUtils.BreakCurve(doc, mainTarget.Id, tiePoint);
-                ElementId newBranchId = PlumbingUtils.BreakCurve(doc, branchTarget.Id, tiePoint);
-                Pipe newMain = doc.GetElement(newMainId) as Pipe;
-                Pipe newBranch = doc.GetElement(newBranchId) as Pipe;
-                if (newMain != null)
+                try
                 {
-                    mainSegments.Add(newMain);
-                }
-                if (newBranch != null)
-                {
-                    branchSegments.Add(newBranch);
-                }
-                doc.Regenerate();
+                    subTransaction.Start();
+                    doc.Regenerate();
+                    ElementId newMainId = PlumbingUtils.BreakCurve(doc, mainTarget.Id, tiePoint);
+                    ElementId newBranchId = PlumbingUtils.BreakCurve(doc, branchTarget.Id, tiePoint);
+                    Pipe newMain = doc.GetElement(newMainId) as Pipe;
+                    Pipe newBranch = doc.GetElement(newBranchId) as Pipe;
+                    doc.Regenerate();
 
-                Connector mainA = FindConnectorNear(mainTarget, tiePoint);
-                Connector mainB = newMain != null ? FindConnectorNear(newMain, tiePoint) : null;
-                Connector branchA = FindConnectorNear(branchTarget, tiePoint);
-                Connector branchB = newBranch != null ? FindConnectorNear(newBranch, tiePoint) : null;
-                return TryNewCrossFitting(doc, mainA, mainB, branchA, branchB) != null;
+                    Connector mainA = FindConnectorNear(mainTarget, tiePoint);
+                    Connector mainB = newMain != null ? FindConnectorNear(newMain, tiePoint) : null;
+                    Connector branchA = FindConnectorNear(branchTarget, tiePoint);
+                    Connector branchB = newBranch != null ? FindConnectorNear(newBranch, tiePoint) : null;
+                    FamilyInstance fitting = TryNewCrossFitting(doc, mainA, mainB, branchA, branchB);
+                    if (fitting == null)
+                    {
+                        subTransaction.RollBack();
+                        return false;
+                    }
+
+                    subTransaction.Commit();
+                    if (newMain != null)
+                    {
+                        mainSegments.Add(newMain);
+                    }
+                    if (newBranch != null)
+                    {
+                        branchSegments.Add(newBranch);
+                    }
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    SetFireBranchConnectionDiagnostic("TryCreateCrossAtPoint", ex);
+                    if (subTransaction.GetStatus() == TransactionStatus.Started)
+                    {
+                        subTransaction.RollBack();
+                    }
+                    return false;
+                }
             }
-            catch
+        }
+
+        private static bool TryCreateCrossAtPipeEnds(
+            Document doc,
+            List<Pipe> mainSegments,
+            Pipe branchA,
+            Pipe branchB,
+            XYZ tiePoint)
+        {
+            if (branchA == null || branchB == null || branchA.Id == branchB.Id)
             {
                 return false;
+            }
+            double tolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Centimeters);
+            Pipe mainTarget = mainSegments.FirstOrDefault(pipe => IsPointOnPipeXY(pipe, tiePoint, tolerance));
+            if (mainTarget == null
+                || !IsPointAtPipeEnd(branchA, tiePoint, tolerance)
+                || !IsPointAtPipeEnd(branchB, tiePoint, tolerance))
+            {
+                SetFireBranchConnectionDiagnostic("TryCreateCrossAtPipeEnds | tie point is not valid on all four runs");
+                return false;
+            }
+
+            using (SubTransaction subTransaction = new SubTransaction(doc))
+            {
+                try
+                {
+                    subTransaction.Start();
+                    doc.Regenerate();
+                    ElementId newMainId = PlumbingUtils.BreakCurve(doc, mainTarget.Id, tiePoint);
+                    Pipe newMain = doc.GetElement(newMainId) as Pipe;
+                    doc.Regenerate();
+
+                    Connector mainA = FindConnectorNear(mainTarget, tiePoint);
+                    Connector mainB = newMain != null ? FindConnectorNear(newMain, tiePoint) : null;
+                    Connector sideA = FindConnectorNear(branchA, tiePoint);
+                    Connector sideB = FindConnectorNear(branchB, tiePoint);
+                    FamilyInstance fitting = TryNewCrossFitting(doc, mainA, mainB, sideA, sideB);
+                    if (fitting == null)
+                    {
+                        subTransaction.RollBack();
+                        return false;
+                    }
+
+                    subTransaction.Commit();
+                    if (newMain != null)
+                    {
+                        mainSegments.Add(newMain);
+                    }
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    SetFireBranchConnectionDiagnostic("TryCreateCrossAtPipeEnds", ex);
+                    if (subTransaction.GetStatus() == TransactionStatus.Started)
+                    {
+                        subTransaction.RollBack();
+                    }
+                    return false;
+                }
             }
         }
 
@@ -1565,6 +1853,7 @@ namespace RfaMetadataAddin
             Pipe target = runSegments.FirstOrDefault(pipe => IsPointOnPipeXYIncludingEnds(pipe, tiePoint, tolerance));
             if (target == null)
             {
+                SetFireBranchConnectionDiagnostic("TryConnectPipeToRun | no run segment contains the tie point");
                 return false;
             }
             if (IsPointAtPipeEnd(target, tiePoint, tolerance))
@@ -1572,6 +1861,151 @@ namespace RfaMetadataAddin
                 return TryCreateElbowAtPipeEnd(doc, runSegments, connectingPipe, tiePoint);
             }
             return TryCreateTeeAtPoint(doc, runSegments, connectingPipe, tiePoint);
+        }
+
+        private static bool TryCreateTeeAtPipeEnds(
+            Document doc,
+            Pipe firstRun,
+            Pipe secondRun,
+            Pipe connectingPipe,
+            XYZ tiePoint)
+        {
+            if (firstRun == null || secondRun == null || connectingPipe == null)
+            {
+                SetFireBranchConnectionDiagnostic("TryCreateTeeAtPipeEnds | one or more pipes are missing");
+                return false;
+            }
+            using (SubTransaction subTransaction = new SubTransaction(doc))
+            {
+                try
+                {
+                    subTransaction.Start();
+                    doc.Regenerate();
+                    Connector first = FindConnectorNear(firstRun, tiePoint);
+                    Connector second = FindConnectorNear(secondRun, tiePoint);
+                    Connector connecting = FindConnectorNear(connectingPipe, tiePoint);
+                    FamilyInstance fitting = TryNewTeeFitting(doc, first, second, connecting);
+                    doc.Regenerate();
+                    if (fitting == null
+                        || first == null
+                        || second == null
+                        || connecting == null
+                        || !first.IsConnected
+                        || !second.IsConnected
+                        || !connecting.IsConnected)
+                    {
+                        subTransaction.RollBack();
+                        return false;
+                    }
+                    subTransaction.Commit();
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    SetFireBranchConnectionDiagnostic("TryCreateTeeAtPipeEnds", ex);
+                    if (subTransaction.GetStatus() == TransactionStatus.Started)
+                    {
+                        subTransaction.RollBack();
+                    }
+                    return false;
+                }
+            }
+        }
+
+        private static bool TryConnectSprinklerToRun(
+            Document doc,
+            List<Pipe> runSegments,
+            Connector sprinklerConnector,
+            XYZ tiePoint,
+            string batchId,
+            List<ElementId> additionalCreatedIds)
+        {
+            if (sprinklerConnector == null)
+            {
+                SetFireBranchConnectionDiagnostic("TryConnectSprinklerToRun | sprinkler connector is missing");
+                return false;
+            }
+            double tolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Centimeters);
+            Pipe target = runSegments.FirstOrDefault(
+                pipe => IsPointOnPipeXYIncludingEnds(pipe, tiePoint, tolerance));
+            if (target == null)
+            {
+                SetFireBranchConnectionDiagnostic("TryConnectSprinklerToRun | no branch segment contains the tie point");
+                return false;
+            }
+
+            using (SubTransaction subTransaction = new SubTransaction(doc))
+            {
+                try
+                {
+                    subTransaction.Start();
+                    doc.Regenerate();
+                    if (IsPointAtPipeEnd(target, tiePoint, tolerance))
+                    {
+                        Connector pipeConnector = FindConnectorNear(target, tiePoint);
+                        if (pipeConnector == null)
+                        {
+                            SetFireBranchConnectionDiagnostic("TryConnectSprinklerToRun.endpoint | pipe connector is missing");
+                            subTransaction.RollBack();
+                            return false;
+                        }
+                        if (!pipeConnector.IsConnectedTo(sprinklerConnector))
+                        {
+                            pipeConnector.ConnectTo(sprinklerConnector);
+                        }
+                        doc.Regenerate();
+                        if (!pipeConnector.IsConnectedTo(sprinklerConnector))
+                        {
+                            SetFireBranchConnectionDiagnostic("TryConnectSprinklerToRun.endpoint | ConnectTo did not persist");
+                            subTransaction.RollBack();
+                            return false;
+                        }
+                        subTransaction.Commit();
+                        return true;
+                    }
+
+                    ElementId newSegmentId = PlumbingUtils.BreakCurve(doc, target.Id, tiePoint);
+                    Pipe newSegment = doc.GetElement(newSegmentId) as Pipe;
+                    doc.Regenerate();
+                    Connector runA = FindConnectorNear(target, tiePoint);
+                    Connector runB = newSegment != null ? FindConnectorNear(newSegment, tiePoint) : null;
+                    FamilyInstance fitting = TryNewTeeFitting(
+                        doc,
+                        runA,
+                        runB,
+                        sprinklerConnector);
+                    doc.Regenerate();
+                    if (newSegment == null
+                        || fitting == null
+                        || runA == null
+                        || runB == null
+                        || !runA.IsConnected
+                        || !runB.IsConnected
+                        || !sprinklerConnector.IsConnected)
+                    {
+                        subTransaction.RollBack();
+                        return false;
+                    }
+                    TrySetScFireBranchMetadata(newSegment, "branch", batchId);
+                    subTransaction.Commit();
+                    runSegments.Add(newSegment);
+                    if (additionalCreatedIds != null)
+                    {
+                        additionalCreatedIds.Add(newSegment.Id);
+                        additionalCreatedIds.Add(fitting.Id);
+                    }
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    SetFireBranchConnectionDiagnostic("TryConnectSprinklerToRun", ex);
+                    if (subTransaction.GetStatus() == TransactionStatus.Started)
+                    {
+                        subTransaction.RollBack();
+                    }
+                    return false;
+                }
+            }
         }
 
 
@@ -3818,19 +4252,198 @@ namespace RfaMetadataAddin
             };
         }
 
+        private static bool IsManagedLegacyPreviewGroupTypeName(string name, string prefix)
+        {
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(prefix))
+            {
+                return false;
+            }
+            return Regex.IsMatch(
+                name,
+                "^" + Regex.Escape(prefix) + @"\d{8}-\d{6}(?:_\d{2})?$",
+                RegexOptions.CultureInvariant);
+        }
+
+        private static Dictionary<string, object> TryDeletePreviewGroupsByPrefix(Document doc, string prefix)
+        {
+            var result = new Dictionary<string, object>
+            {
+                { "candidate_group_instances", 0 },
+                { "candidate_group_types", 0 },
+                { "deleted_group_instances", 0 },
+                { "deleted_group_types", 0 },
+                { "remaining_group_instances", 0 },
+                { "remaining_group_types", 0 }
+            };
+            if (doc == null || string.IsNullOrWhiteSpace(prefix))
+            {
+                return result;
+            }
+            try
+            {
+                List<GroupType> previewTypes = new FilteredElementCollector(doc)
+                    .OfClass(typeof(GroupType))
+                    .Cast<GroupType>()
+                    .Where(groupType => IsManagedLegacyPreviewGroupTypeName(groupType.Name, prefix))
+                    .ToList();
+                var previewTypeIds = new HashSet<long>(previewTypes.Select(groupType => groupType.Id.Value));
+                List<ElementId> previewGroupIds = new FilteredElementCollector(doc)
+                    .OfClass(typeof(Autodesk.Revit.DB.Group))
+                    .Cast<Autodesk.Revit.DB.Group>()
+                    .Where(group => group.GroupType != null
+                        && previewTypeIds.Contains(group.GroupType.Id.Value))
+                    .Select(group => group.Id)
+                    .ToList();
+                result["candidate_group_instances"] = previewGroupIds.Count;
+                result["candidate_group_types"] = previewTypes.Count;
+                if (previewGroupIds.Count == 0 && previewTypes.Count == 0)
+                {
+                    return result;
+                }
+                using (Transaction transaction = new Transaction(doc, "SC cleanup legacy preview"))
+                {
+                    transaction.Start();
+                    if (previewGroupIds.Count > 0)
+                    {
+                        doc.Delete(previewGroupIds);
+                    }
+                    doc.Regenerate();
+                    int deletedTypes = 0;
+                    foreach (GroupType previewType in previewTypes)
+                    {
+                        GroupType currentType = doc.GetElement(previewType.Id) as GroupType;
+                        if (currentType == null)
+                        {
+                            continue;
+                        }
+                        bool hasInstances = new FilteredElementCollector(doc)
+                            .OfClass(typeof(Autodesk.Revit.DB.Group))
+                            .Cast<Autodesk.Revit.DB.Group>()
+                            .Any(group => group.GroupType != null
+                                && group.GroupType.Id == currentType.Id);
+                        if (!hasInstances)
+                        {
+                            doc.Delete(currentType.Id);
+                            deletedTypes++;
+                        }
+                    }
+                    transaction.Commit();
+                    result["deleted_group_instances"] = previewGroupIds.Count;
+                    result["deleted_group_types"] = deletedTypes;
+                }
+            }
+            catch
+            {
+                // Legacy preview cleanup must not block a new transient preview.
+            }
+            result["remaining_group_instances"] = new FilteredElementCollector(doc)
+                .OfClass(typeof(Autodesk.Revit.DB.Group))
+                .Cast<Autodesk.Revit.DB.Group>()
+                .Count(group => group.GroupType != null
+                    && IsManagedLegacyPreviewGroupTypeName(group.GroupType.Name, prefix));
+            result["remaining_group_types"] = new FilteredElementCollector(doc)
+                .OfClass(typeof(GroupType))
+                .Cast<GroupType>()
+                .Count(groupType => IsManagedLegacyPreviewGroupTypeName(groupType.Name, prefix));
+            return result;
+        }
+
+        private static void TryDeletePreviewGroupById(Document doc, long previewGroupId)
+        {
+            if (doc == null || previewGroupId <= 0)
+            {
+                return;
+            }
+            try
+            {
+                Element previewGroup = doc.GetElement(new ElementId(previewGroupId));
+                if (previewGroup == null)
+                {
+                    return;
+                }
+                using (Transaction transaction = new Transaction(doc, "SC cleanup failed preview"))
+                {
+                    transaction.Start();
+                    Autodesk.Revit.DB.Group group = previewGroup as Autodesk.Revit.DB.Group;
+                    ElementId groupTypeId = group != null && group.GroupType != null
+                        ? group.GroupType.Id
+                        : ElementId.InvalidElementId;
+                    doc.Delete(previewGroup.Id);
+                    doc.Regenerate();
+                    GroupType groupType = doc.GetElement(groupTypeId) as GroupType;
+                    if (groupType != null
+                        && (IsManagedLegacyPreviewGroupTypeName(groupType.Name, "SC_preview_points_")
+                            || IsManagedLegacyPreviewGroupTypeName(groupType.Name, "SC_fire_branch_preview_")))
+                    {
+                        bool hasInstances = new FilteredElementCollector(doc)
+                            .OfClass(typeof(Autodesk.Revit.DB.Group))
+                            .Cast<Autodesk.Revit.DB.Group>()
+                            .Any(item => item.GroupType != null && item.GroupType.Id == groupType.Id);
+                        if (!hasInstances)
+                        {
+                            doc.Delete(groupType.Id);
+                        }
+                    }
+                    transaction.Commit();
+                }
+            }
+            catch
+            {
+                // Preserve the original request failure.
+            }
+        }
+
+        private static void TryCleanupPreviewAfterFailedRequest(
+            UIApplication uiApp,
+            Dictionary<string, object> payload,
+            string action)
+        {
+            try
+            {
+                if (uiApp == null || uiApp.ActiveUIDocument == null || payload == null)
+                {
+                    return;
+                }
+                Document doc = uiApp.ActiveUIDocument.Document;
+                if (action == "create_fire_branch_pipes"
+                    || action == "create_fire_branch_preview")
+                {
+                    DrainagePreviewServer.Clear(doc);
+                    TryDeletePreviewGroupById(doc, ReadLong(payload, "preview_group_id", 0));
+                }
+                else if (action == "place_dwg_block_points"
+                    || action == "create_dwg_preview_markers")
+                {
+                    DrainagePreviewServer.ClearCadPointMarkers(doc);
+                    TryDeletePreviewGroupById(doc, ReadLong(payload, "preview_group_id", 0));
+                }
+                else
+                {
+                    return;
+                }
+                uiApp.ActiveUIDocument.RefreshActiveView();
+            }
+            catch
+            {
+                // Cleanup must not replace the original request error.
+            }
+        }
+
         private static void ProcessRequest(UIApplication uiApp, string requestFile)
         {
             string requestId = Path.GetFileNameWithoutExtension(requestFile);
             string responseFile = Path.Combine(ResponseDir, requestId + ".json");
             string errorFile = Path.Combine(ErrorDir, requestId + ".json");
+            Dictionary<string, object> payload = null;
+            string action = "";
 
             try
             {
                 var serializer = new JavaScriptSerializer();
-                var payload = serializer.Deserialize<Dictionary<string, object>>(
+                payload = serializer.Deserialize<Dictionary<string, object>>(
                     File.ReadAllText(requestFile)
                 );
-                string action = payload.ContainsKey("action")
+                action = payload.ContainsKey("action")
                     ? payload["action"].ToString()
                     : "read_metadata";
 
@@ -3916,8 +4529,19 @@ namespace RfaMetadataAddin
             }
             catch (Exception ex)
             {
+                TryCleanupPreviewAfterFailedRequest(uiApp, payload, action);
                 var serializer = new JavaScriptSerializer();
-                File.WriteAllText(errorFile, serializer.Serialize(new { error = ex.Message }));
+                FireBranchConnectorVerificationException fireBranchException =
+                    ex as FireBranchConnectorVerificationException;
+                object errorPayload = fireBranchException == null
+                    ? (object)new { error = ex.Message }
+                    : new
+                    {
+                        error = ex.Message,
+                        action = action,
+                        failure_details = fireBranchException.FailureDetails
+                    };
+                File.WriteAllText(errorFile, serializer.Serialize(errorPayload));
             }
             finally
             {

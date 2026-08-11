@@ -17,6 +17,7 @@ namespace RfaMetadataAddin
 
     internal sealed class DrainagePreviewServer : IDirectContext3DServer
     {
+        private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(5);
         private static readonly Guid ServerId =
             new Guid("c274c85d-1917-42c4-9e4a-2b5c9c7c0703");
         private static readonly object SyncRoot = new object();
@@ -24,6 +25,12 @@ namespace RfaMetadataAddin
             new Dictionary<int, List<DrainagePreviewSegment>>();
         private static readonly Dictionary<int, string> SnapshotByDocument =
             new Dictionary<int, string>();
+        private static readonly Dictionary<int, List<DrainagePreviewSegment>> CadPointSegmentsByDocument =
+            new Dictionary<int, List<DrainagePreviewSegment>>();
+        private static readonly Dictionary<int, string> CadPointSnapshotByDocument =
+            new Dictionary<int, string>();
+        private static readonly Dictionary<int, DateTime> PreviewExpiresByDocument =
+            new Dictionary<int, DateTime>();
 
         public static void Register()
         {
@@ -47,6 +54,16 @@ namespace RfaMetadataAddin
             }
         }
 
+        public static bool IsRegisteredAndActive()
+        {
+            MultiServerService service = ExternalServiceRegistry.GetService(
+                ExternalServices.BuiltInExternalServices.DirectContext3DService)
+                as MultiServerService;
+            return service != null
+                && service.IsRegisteredServerId(ServerId)
+                && service.GetActiveServerIds().Contains(ServerId);
+        }
+
         public static void Unregister()
         {
             MultiServerService service = ExternalServiceRegistry.GetService(
@@ -60,6 +77,9 @@ namespace RfaMetadataAddin
             {
                 SegmentsByDocument.Clear();
                 SnapshotByDocument.Clear();
+                CadPointSegmentsByDocument.Clear();
+                CadPointSnapshotByDocument.Clear();
+                PreviewExpiresByDocument.Clear();
             }
         }
 
@@ -70,8 +90,12 @@ namespace RfaMetadataAddin
         {
             lock (SyncRoot)
             {
-                SegmentsByDocument[document.GetHashCode()] = segments.ToList();
-                SnapshotByDocument[document.GetHashCode()] = snapshotId;
+                int documentKey = document.GetHashCode();
+                CadPointSegmentsByDocument.Remove(documentKey);
+                CadPointSnapshotByDocument.Remove(documentKey);
+                SegmentsByDocument[documentKey] = segments.ToList();
+                SnapshotByDocument[documentKey] = snapshotId;
+                PreviewExpiresByDocument[documentKey] = DateTime.UtcNow.Add(PreviewLifetime);
             }
         }
 
@@ -93,6 +117,7 @@ namespace RfaMetadataAddin
                 }
                 SegmentsByDocument.Remove(documentKey);
                 SnapshotByDocument.Remove(documentKey);
+                PreviewExpiresByDocument.Remove(documentKey);
                 return true;
             }
         }
@@ -104,6 +129,58 @@ namespace RfaMetadataAddin
                 int documentKey = document.GetHashCode();
                 SegmentsByDocument.Remove(documentKey);
                 SnapshotByDocument.Remove(documentKey);
+                PreviewExpiresByDocument.Remove(documentKey);
+            }
+        }
+
+        public static void SetCadPointMarkers(
+            Document document,
+            string snapshotId,
+            IEnumerable<XYZ> centers,
+            double radius)
+        {
+            lock (SyncRoot)
+            {
+                int documentKey = document.GetHashCode();
+                XYZ diagonalA = (XYZ.BasisX + XYZ.BasisY).Normalize();
+                XYZ diagonalB = (XYZ.BasisX - XYZ.BasisY).Normalize();
+                XYZ[] markerDirections =
+                {
+                    XYZ.BasisX,
+                    XYZ.BasisY,
+                    diagonalA,
+                    diagonalB
+                };
+                var previewSegments = new List<DrainagePreviewSegment>();
+                foreach (XYZ center in centers)
+                {
+                    foreach (XYZ direction in markerDirections)
+                    {
+                        previewSegments.Add(new DrainagePreviewSegment
+                        {
+                            Start = center - (direction * radius),
+                            End = center + (direction * radius),
+                            Kind = "cad_point_preview"
+                        });
+                    }
+                }
+                SegmentsByDocument.Remove(documentKey);
+                SnapshotByDocument.Remove(documentKey);
+                CadPointSegmentsByDocument[documentKey] = previewSegments;
+                CadPointSnapshotByDocument[documentKey] = snapshotId;
+                PreviewExpiresByDocument[documentKey] = DateTime.UtcNow.Add(PreviewLifetime);
+            }
+        }
+
+        public static bool ClearCadPointMarkers(Document document)
+        {
+            lock (SyncRoot)
+            {
+                int documentKey = document.GetHashCode();
+                bool removed = CadPointSegmentsByDocument.Remove(documentKey);
+                CadPointSnapshotByDocument.Remove(documentKey);
+                PreviewExpiresByDocument.Remove(documentKey);
+                return removed;
             }
         }
 
@@ -156,16 +233,20 @@ namespace RfaMetadataAddin
             lock (SyncRoot)
             {
                 List<DrainagePreviewSegment> segments;
-                return SegmentsByDocument.TryGetValue(
-                    view.Document.GetHashCode(),
-                    out segments)
-                    && segments.Count > 0;
+                int documentKey = view.Document.GetHashCode();
+                PruneExpiredLocked(documentKey);
+                List<DrainagePreviewSegment> markerSegments;
+                return (SegmentsByDocument.TryGetValue(documentKey, out segments)
+                        && segments.Count > 0)
+                    || (CadPointSegmentsByDocument.TryGetValue(documentKey, out markerSegments)
+                        && markerSegments.Count > 0);
             }
         }
 
         public Outline GetBoundingBox(View view)
         {
             List<DrainagePreviewSegment> segments = GetSegments(view);
+            segments.AddRange(GetCadPointSegments(view));
             if (segments.Count == 0)
             {
                 return null;
@@ -191,6 +272,7 @@ namespace RfaMetadataAddin
         public void RenderScene(View view, DisplayStyle displayStyle)
         {
             List<DrainagePreviewSegment> segments = GetSegments(view);
+            segments.AddRange(GetCadPointSegments(view));
             if (segments.Count == 0)
             {
                 return;
@@ -223,6 +305,14 @@ namespace RfaMetadataAddin
                     {
                         color = new ColorWithTransparency(203, 75, 22, 0);
                     }
+                    else if (segment.Kind == "cad_point_preview")
+                    {
+                        color = new ColorWithTransparency(0, 255, 80, 0);
+                    }
+                    else if (segment.Kind == "fire_branch_preview")
+                    {
+                        color = new ColorWithTransparency(0, 255, 255, 0);
+                    }
                     else
                     {
                         color = new ColorWithTransparency(38, 139, 210, 0);
@@ -254,16 +344,49 @@ namespace RfaMetadataAddin
             }
         }
 
+        private static void PruneExpiredLocked(int documentKey)
+        {
+            DateTime expiresUtc;
+            if (PreviewExpiresByDocument.TryGetValue(documentKey, out expiresUtc)
+                && DateTime.UtcNow >= expiresUtc)
+            {
+                SegmentsByDocument.Remove(documentKey);
+                SnapshotByDocument.Remove(documentKey);
+                CadPointSegmentsByDocument.Remove(documentKey);
+                CadPointSnapshotByDocument.Remove(documentKey);
+                PreviewExpiresByDocument.Remove(documentKey);
+            }
+        }
+
         private static List<DrainagePreviewSegment> GetSegments(View view)
         {
             lock (SyncRoot)
             {
                 List<DrainagePreviewSegment> segments;
-                return view != null
-                    && view.Document != null
-                    && SegmentsByDocument.TryGetValue(
-                        view.Document.GetHashCode(),
-                        out segments)
+                if (view == null || view.Document == null)
+                {
+                    return new List<DrainagePreviewSegment>();
+                }
+                int documentKey = view.Document.GetHashCode();
+                PruneExpiredLocked(documentKey);
+                return SegmentsByDocument.TryGetValue(documentKey, out segments)
+                    ? segments.ToList()
+                    : new List<DrainagePreviewSegment>();
+            }
+        }
+
+        private static List<DrainagePreviewSegment> GetCadPointSegments(View view)
+        {
+            lock (SyncRoot)
+            {
+                List<DrainagePreviewSegment> segments;
+                if (view == null || view.Document == null)
+                {
+                    return new List<DrainagePreviewSegment>();
+                }
+                int documentKey = view.Document.GetHashCode();
+                PruneExpiredLocked(documentKey);
+                return CadPointSegmentsByDocument.TryGetValue(documentKey, out segments)
                     ? segments.ToList()
                     : new List<DrainagePreviewSegment>();
             }

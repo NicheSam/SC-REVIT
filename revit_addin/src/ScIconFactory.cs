@@ -15,10 +15,27 @@ namespace RfaMetadataAddin
 
         public static ImageSource Create(string iconName, int size)
         {
+            return CreateInternal(iconName, size, false);
+        }
+
+        public static ImageSource CreateDevelopment(string iconName, int size)
+        {
+            return CreateInternal(iconName, size, true);
+        }
+
+        private static ImageSource CreateInternal(
+            string iconName,
+            int size,
+            bool showDevelopmentBadge)
+        {
             DrawingVisual visual = new DrawingVisual();
             using (DrawingContext context = visual.RenderOpen())
             {
                 Draw(context, iconName ?? string.Empty, size);
+                if (showDevelopmentBadge)
+                {
+                    DrawDevelopmentBadge(context, size);
+                }
             }
 
             RenderTargetBitmap bitmap = new RenderTargetBitmap(
@@ -30,6 +47,28 @@ namespace RfaMetadataAddin
             bitmap.Render(visual);
             bitmap.Freeze();
             return bitmap;
+        }
+
+        private static void DrawDevelopmentBadge(DrawingContext context, int size)
+        {
+            double scale = size / 32.0;
+            Point center = P(26, 6, scale);
+            context.DrawEllipse(
+                Brush(Red),
+                Pen(White, 1.0, scale),
+                center,
+                5 * scale,
+                5 * scale);
+            context.DrawLine(
+                Pen(White, 1.8, scale),
+                P(26, 3, scale),
+                P(26, 6.5, scale));
+            context.DrawEllipse(
+                Brush(White),
+                null,
+                P(26, 8.5, scale),
+                0.9 * scale,
+                0.9 * scale);
         }
 
         private static void Draw(DrawingContext context, string name, int size)

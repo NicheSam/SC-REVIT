@@ -30,6 +30,67 @@ namespace RfaMetadataAddin
         };
         private const string ScFireBranchCommentPrefix = "SC_FIRE_BRANCH:";
 
+        [ThreadStatic]
+        private static string _fireBranchConnectionDiagnostic;
+
+        private sealed class FireBranchConnectorVerificationException : InvalidOperationException
+        {
+            public object FailureDetails { get; private set; }
+
+            public FireBranchConnectorVerificationException(string message, object failureDetails)
+                : base(message)
+            {
+                FailureDetails = failureDetails;
+            }
+        }
+
+        private static void ResetFireBranchConnectionDiagnostic()
+        {
+            _fireBranchConnectionDiagnostic = null;
+        }
+
+        private static void SetFireBranchConnectionDiagnostic(string stage, Exception exception)
+        {
+            string detail = exception == null
+                ? "unknown failure"
+                : exception.GetType().Name + ": " + exception.Message;
+            _fireBranchConnectionDiagnostic = stage + " | " + detail;
+        }
+
+        private static void SetFireBranchConnectionDiagnostic(string detail)
+        {
+            _fireBranchConnectionDiagnostic = detail;
+        }
+
+        private static string ReadFireBranchConnectionDiagnostic()
+        {
+            return string.IsNullOrWhiteSpace(_fireBranchConnectionDiagnostic)
+                ? "Revit rejected the fitting without an exception detail."
+                : _fireBranchConnectionDiagnostic;
+        }
+
+        private enum FireBranchJunctionTopology
+        {
+            SingleSideSameElevation,
+            OppositeSidesSameElevation,
+            SingleSideOffsetElevation,
+            OppositeSidesOffsetElevation,
+            Complex
+        }
+
+        private class FireBranchJunctionPlan
+        {
+            public long MainPipeId { get; set; }
+            public double MainParameter { get; set; }
+            public FireBranchJunctionTopology Topology { get; set; }
+            public List<List<FireBranchItem>> Rows { get; private set; }
+
+            public FireBranchJunctionPlan()
+            {
+                Rows = new List<List<FireBranchItem>>();
+            }
+        }
+
         private class FireMainPipeData
         {
             public Pipe Pipe { get; set; }
@@ -481,6 +542,64 @@ namespace RfaMetadataAddin
             return rows;
         }
 
+        private static List<FireBranchJunctionPlan> BuildFireBranchJunctionPlans(
+            List<List<FireBranchItem>> rows,
+            double junctionTolerance,
+            double branchZ)
+        {
+            var plans = new List<FireBranchJunctionPlan>();
+            foreach (var pipeRows in rows
+                .GroupBy(row => row[0].MainPipeId)
+                .OrderBy(group => group.Key))
+            {
+                var pipePlans = new List<FireBranchJunctionPlan>();
+                foreach (List<FireBranchItem> row in pipeRows.OrderBy(item => item.Average(value => value.MainParameter)))
+                {
+                    double rowMain = row.Average(item => item.MainParameter);
+                    FireBranchJunctionPlan plan = pipePlans.LastOrDefault();
+                    if (plan == null || Math.Abs(rowMain - plan.MainParameter) > junctionTolerance)
+                    {
+                        plan = new FireBranchJunctionPlan
+                        {
+                            MainPipeId = row[0].MainPipeId,
+                            MainParameter = rowMain
+                        };
+                        pipePlans.Add(plan);
+                    }
+                    plan.Rows.Add(row);
+                    plan.MainParameter = plan.Rows.Average(item => item.Average(value => value.MainParameter));
+                }
+
+                foreach (FireBranchJunctionPlan plan in pipePlans)
+                {
+                    bool offsetElevation = Math.Abs(plan.Rows[0][0].MainZ - branchZ) > 0.01;
+                    int[] sides = plan.Rows.Select(row => row[0].SideSign).Distinct().OrderBy(value => value).ToArray();
+                    bool hasOppositeSides = plan.Rows.Count == 2
+                        && sides.Length == 2
+                        && sides[0] == -1
+                        && sides[1] == 1;
+                    if (hasOppositeSides)
+                    {
+                        plan.Topology = offsetElevation
+                            ? FireBranchJunctionTopology.OppositeSidesOffsetElevation
+                            : FireBranchJunctionTopology.OppositeSidesSameElevation;
+                    }
+                    else if (plan.Rows.Count == 1)
+                    {
+                        plan.Topology = offsetElevation
+                            ? FireBranchJunctionTopology.SingleSideOffsetElevation
+                            : FireBranchJunctionTopology.SingleSideSameElevation;
+                    }
+                    else
+                    {
+                        plan.Topology = FireBranchJunctionTopology.Complex;
+                    }
+                    plans.Add(plan);
+                }
+            }
+            return plans;
+        }
+
         private static double GetPipeDiameterFeet(Pipe pipe)
         {
             Parameter diameter = pipe != null ? pipe.get_Parameter(BuiltInParameter.RBS_PIPE_DIAMETER_PARAM) : null;
@@ -545,6 +664,62 @@ namespace RfaMetadataAddin
             }
         }
 
+        private static Pipe CreateFireDropForSystem(
+            Document doc,
+            ElementId systemTypeId,
+            ElementId pipeTypeId,
+            ElementId levelId,
+            Connector startConnector,
+            XYZ end,
+            double diameterFeet)
+        {
+            if (startConnector == null || startConnector.Origin.DistanceTo(end) < 0.01)
+            {
+                SetFireBranchConnectionDiagnostic("CreateFireDropForSystem | sprinkler connector or drop geometry is invalid");
+                return null;
+            }
+
+            try
+            {
+                Pipe pipe = CreateFirePipe(doc, systemTypeId, pipeTypeId, levelId, startConnector.Origin, end, diameterFeet);
+                if (pipe == null)
+                {
+                    SetFireBranchConnectionDiagnostic("CreateFireDropForSystem | explicit-system pipe creation returned null");
+                    return null;
+                }
+
+                Connector pipeConnector = FindConnectorNear(pipe, startConnector.Origin);
+                if (pipeConnector == null)
+                {
+                    SetFireBranchConnectionDiagnostic("CreateFireDropForSystem | pipe connector is missing at sprinkler point");
+                    return null;
+                }
+                if (!pipeConnector.IsConnectedTo(startConnector))
+                {
+                    pipeConnector.ConnectTo(startConnector);
+                }
+                doc.Regenerate();
+                if (!pipeConnector.IsConnectedTo(startConnector))
+                {
+                    SetFireBranchConnectionDiagnostic("CreateFireDropForSystem | sprinkler connection did not persist");
+                    return null;
+                }
+
+                MEPSystem system = pipe.MEPSystem;
+                if (system == null || system.GetTypeId().Value != systemTypeId.Value)
+                {
+                    SetFireBranchConnectionDiagnostic("CreateFireDropForSystem | explicit system type did not persist after sprinkler connection");
+                    return null;
+                }
+                return pipe;
+            }
+            catch (Exception ex)
+            {
+                SetFireBranchConnectionDiagnostic("CreateFireDropForSystem", ex);
+                return null;
+            }
+        }
+
         private static void ValidateFireBranchPlan(
             List<List<FireBranchItem>> rows,
             out int rowCount,
@@ -569,6 +744,84 @@ namespace RfaMetadataAddin
                     "最長支管距離主管約 " + maxBranchLengthMeters.ToString("0.0")
                     + " m，可能選到不屬於這支主管的撒水頭。請縮小框選範圍或改選正確主管。");
             }
+        }
+
+        private static double ResolveFireBranchPreviewDisplayZ(
+            Document doc,
+            View view,
+            double modelZ)
+        {
+            ViewPlan viewPlan = view as ViewPlan;
+            if (viewPlan == null)
+            {
+                return modelZ;
+            }
+            try
+            {
+                PlanViewRange viewRange = viewPlan.GetViewRange();
+                ElementId cutLevelId = viewRange.GetLevelId(PlanViewPlane.CutPlane);
+                Level cutLevel = doc.GetElement(cutLevelId) as Level;
+                if (cutLevel != null)
+                {
+                    return cutLevel.Elevation + viewRange.GetOffset(PlanViewPlane.CutPlane);
+                }
+            }
+            catch
+            {
+            }
+            return viewPlan.GenLevel != null ? viewPlan.GenLevel.Elevation : modelZ;
+        }
+
+        private static List<DrainagePreviewSegment> BuildFireBranchPreviewSegments(
+            List<List<FireBranchItem>> rows,
+            double displayZ,
+            double extension)
+        {
+            var segments = new List<DrainagePreviewSegment>();
+            double markerSize = UnitUtils.ConvertToInternalUnits(30, UnitTypeId.Centimeters);
+            foreach (List<FireBranchItem> row in rows)
+            {
+                double rowMain = row.Average(item => item.MainParameter);
+                double rowMin = 0 - extension;
+                double rowMax = row.Max(item => item.BranchParameter) + extension;
+                XYZ mainStart = row[0].MainStart;
+                XYZ mainDirection = row[0].MainDirection;
+                XYZ branchDirection = row[0].BranchDirection;
+                XYZ branchStart = new XYZ(
+                    mainStart.X + mainDirection.X * rowMain + branchDirection.X * rowMin,
+                    mainStart.Y + mainDirection.Y * rowMain + branchDirection.Y * rowMin,
+                    displayZ);
+                XYZ branchEnd = new XYZ(
+                    mainStart.X + mainDirection.X * rowMain + branchDirection.X * rowMax,
+                    mainStart.Y + mainDirection.Y * rowMain + branchDirection.Y * rowMax,
+                    displayZ);
+                segments.Add(new DrainagePreviewSegment
+                {
+                    Start = branchStart,
+                    End = branchEnd,
+                    Kind = "fire_branch_preview"
+                });
+                foreach (FireBranchItem item in row)
+                {
+                    XYZ center = new XYZ(
+                        mainStart.X + mainDirection.X * rowMain + branchDirection.X * item.BranchParameter,
+                        mainStart.Y + mainDirection.Y * rowMain + branchDirection.Y * item.BranchParameter,
+                        displayZ);
+                    segments.Add(new DrainagePreviewSegment
+                    {
+                        Start = center + new XYZ(-markerSize, 0, 0),
+                        End = center + new XYZ(markerSize, 0, 0),
+                        Kind = "fire_branch_preview"
+                    });
+                    segments.Add(new DrainagePreviewSegment
+                    {
+                        Start = center + new XYZ(0, -markerSize, 0),
+                        End = center + new XYZ(0, markerSize, 0),
+                        Kind = "fire_branch_preview"
+                    });
+                }
+            }
+            return segments;
         }
 
         private static bool TryHandleFireBranchAction(
@@ -738,71 +991,27 @@ namespace RfaMetadataAddin
                                     out plannedRowCount,
                                     out estimatedPipeCount,
                                     out maxBranchLengthMeters);
+                                object cadPathCheck = BuildFireBranchCadPathShadowReport(
+                                    doc,
+                                    rows,
+                                    branchZ,
+                                    extension);
 
-                                var createdElementIds = new List<ElementId>();
                                 string batchId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
                                 long previewGroupId = 0;
                                 string previewGroupName = "";
-                                using (Transaction transaction = new Transaction(doc, "SC 消防支管螢光預覽"))
-                                {
-                                    transaction.Start();
-                                    SketchPlane sketchPlane = SketchPlane.Create(
-                                        doc,
-                                        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, new XYZ(0, 0, branchZ))
-                                    );
-                                    OverrideGraphicSettings overrides = new OverrideGraphicSettings();
-                                    overrides.SetProjectionLineColor(new Autodesk.Revit.DB.Color(0, 255, 255));
-                                    overrides.SetProjectionLineWeight(16);
-                                    foreach (var row in rows)
-                                    {
-                                        double rowMain = row.Average(item => item.MainParameter);
-                                        double rowMin = 0 - extension;
-                                        double rowMax = row.Max(item => item.BranchParameter) + extension;
-                                        XYZ mainStart = row[0].MainStart;
-                                        XYZ mainDirection = row[0].MainDirection;
-                                        XYZ branchDirection = row[0].BranchDirection;
-                                        XYZ branchStart = new XYZ(
-                                            mainStart.X + mainDirection.X * rowMain + branchDirection.X * rowMin,
-                                            mainStart.Y + mainDirection.Y * rowMain + branchDirection.Y * rowMin,
-                                            branchZ
-                                        );
-                                        XYZ branchEnd = new XYZ(
-                                            mainStart.X + mainDirection.X * rowMain + branchDirection.X * rowMax,
-                                            mainStart.Y + mainDirection.Y * rowMain + branchDirection.Y * rowMax,
-                                            branchZ
-                                        );
-                                        ModelCurve branchCurve = doc.Create.NewModelCurve(Line.CreateBound(branchStart, branchEnd), sketchPlane);
-                                        createdElementIds.Add(branchCurve.Id);
-                                        try { doc.ActiveView.SetElementOverrides(branchCurve.Id, overrides); } catch { }
-                                        foreach (FireBranchItem item in row)
-                                        {
-                                            XYZ center = new XYZ(
-                                                mainStart.X + mainDirection.X * rowMain + branchDirection.X * item.BranchParameter,
-                                                mainStart.Y + mainDirection.Y * rowMain + branchDirection.Y * item.BranchParameter,
-                                                branchZ
-                                            );
-                                            double size = UnitUtils.ConvertToInternalUnits(30, UnitTypeId.Centimeters);
-                                            ModelCurve crossA = doc.Create.NewModelCurve(Line.CreateBound(center + new XYZ(-size, 0, 0), center + new XYZ(size, 0, 0)), sketchPlane);
-                                            ModelCurve crossB = doc.Create.NewModelCurve(Line.CreateBound(center + new XYZ(0, -size, 0), center + new XYZ(0, size, 0)), sketchPlane);
-                                            createdElementIds.Add(crossA.Id);
-                                            createdElementIds.Add(crossB.Id);
-                                            try
-                                            {
-                                                doc.ActiveView.SetElementOverrides(crossA.Id, overrides);
-                                                doc.ActiveView.SetElementOverrides(crossB.Id, overrides);
-                                            }
-                                            catch { }
-                                        }
-                                    }
-                                    if (createdElementIds.Count > 0)
-                                    {
-                                        Autodesk.Revit.DB.Group group = doc.Create.NewGroup(createdElementIds);
-                                        previewGroupName = MakeUniqueGroupTypeName(doc, "SC_fire_branch_preview_" + batchId);
-                                        group.GroupType.Name = previewGroupName;
-                                        previewGroupId = group.Id.Value;
-                                    }
-                                    transaction.Commit();
-                                }
+                                TryDeletePreviewGroupsByPrefix(doc, "SC_fire_branch_preview_");
+                                double previewDisplayZ = ResolveFireBranchPreviewDisplayZ(
+                                    doc,
+                                    doc.ActiveView,
+                                    branchZ);
+                                List<DrainagePreviewSegment> directPreviewSegments =
+                                    BuildFireBranchPreviewSegments(rows, previewDisplayZ, extension);
+                                DrainagePreviewServer.SetSegments(
+                                    doc,
+                                    batchId,
+                                    directPreviewSegments);
+                                uiApp.ActiveUIDocument.RefreshActiveView();
 
                                 File.WriteAllText(
                                     responseFile,
@@ -810,7 +1019,7 @@ namespace RfaMetadataAddin
                                     {
                                         action = action,
                                         batch_id = batchId,
-                                        segment_count = createdElementIds.Count,
+                                        segment_count = directPreviewSegments.Count,
                                         sprinkler_count = sprinklers.Count,
                                         main_candidate_count = mainCandidateCount,
                                         valid_main_count = mainPipes.Count,
@@ -818,9 +1027,15 @@ namespace RfaMetadataAddin
                                         row_count = plannedRowCount,
                                         estimated_pipe_count = estimatedPipeCount,
                                         max_branch_length_m = maxBranchLengthMeters,
+                                        cad_path_check = cadPathCheck,
                                         skipped = skipped,
                                         group_id = previewGroupId,
-                                        group_name = previewGroupName
+                                        group_name = previewGroupName,
+                                        preview_snapshot_id = batchId,
+                                        preview_rendering = "direct_context_3d",
+                                        preview_server_active = DrainagePreviewServer.IsRegisteredAndActive(),
+                                        direct_preview_segment_count = directPreviewSegments.Count,
+                                        preview_display_z = previewDisplayZ
                                     })
                                 );
                                 return;
@@ -902,13 +1117,21 @@ namespace RfaMetadataAddin
                                 List<XYZ> sprinklerPoints = sprinklers.Select(item => GetFamilyConnectionPoint(item)).ToList();
                                 double extension = 0;
                                 double rowTolerance = UnitUtils.ConvertToInternalUnits(10, UnitTypeId.Centimeters);
+                                double junctionTolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Millimeters);
                                 var skipped = new List<object>();
                                 List<FireBranchItem> sprinklerData = BuildFireBranchItems(sprinklers, sprinklerPoints, mainPipes, skipped);
                                 if (sprinklerData.Count == 0)
                                 {
                                     throw new InvalidOperationException("選取撒水頭都無法投影到主管，請改選主管或縮小撒水頭範圍。");
                                 }
+                                List<FamilyInstance> plannedSprinklers = sprinklerData
+                                    .Select(item => item.Sprinkler)
+                                    .Where(instance => instance != null)
+                                    .GroupBy(instance => instance.Id.Value)
+                                    .Select(group => group.First())
+                                    .ToList();
                                 var rows = BuildFireBranchRows(sprinklerData, rowTolerance);
+                                var junctionPlans = BuildFireBranchJunctionPlans(rows, junctionTolerance, branchZ);
                                 int plannedRowCount = 0;
                                 int estimatedPipeCount = 0;
                                 double maxBranchLengthMeters = 0;
@@ -919,19 +1142,59 @@ namespace RfaMetadataAddin
                                     out maxBranchLengthMeters);
 
                                 var createdIds = new List<ElementId>();
+                                var additionalCreatedIds = new List<ElementId>();
+                                var createdPipeRoles = new Dictionary<long, string>();
                                 var created = new List<object>();
                                 var failed = new List<object>();
+                                var junctions = junctionPlans.Select(plan => new
+                                {
+                                    main_pipe_id = plan.MainPipeId,
+                                    main_parameter = plan.MainParameter,
+                                    topology = plan.Topology.ToString(),
+                                    row_count = plan.Rows.Count
+                                }).ToList();
                                 string batchId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
                                 long deletedPreviewGroupId = 0;
 
-                                using (Transaction transaction = new Transaction(doc, "SC \u6d88\u9632\u652f\u7ba1\u5efa\u7acb"))
+                                // Revit 2024 transactions become model state only after Commit; a TransactionGroup
+                                // can still roll back committed inner transactions or assimilate them into one Undo item.
+                                // Source: https://help.autodesk.com/cloudhelp/2024/ENU/Revit-API/files/Revit_API_Developers_Guide/Basic_Interaction_with_Revit_Elements/Revit_API_Revit_API_Developers_Guide_Basic_Interaction_with_Revit_Elements_Transactions_html.html
+                                using (TransactionGroup transactionGroup = new TransactionGroup(doc, "SC \u6d88\u9632\u652f\u7ba1\u5efa\u7acb"))
                                 {
-                                    transaction.Start();
+                                    TransactionStatus groupStartStatus = transactionGroup.Start();
+                                    if (groupStartStatus != TransactionStatus.Started)
+                                    {
+                                        throw new InvalidOperationException("Fire branch transaction group did not start: " + groupStartStatus);
+                                    }
+                                    try
+                                    {
+                                    using (Transaction creationTransaction = new Transaction(doc, "SC \u5efa\u7acb\u6d88\u9632\u652f\u7ba1\u5e7e\u4f55"))
+                                    {
+                                    TransactionStatus creationStartStatus = creationTransaction.Start();
+                                    if (creationStartStatus != TransactionStatus.Started)
+                                    {
+                                        throw new InvalidOperationException("Fire branch geometry transaction did not start: " + creationStartStatus);
+                                    }
                                     var mainSegmentsByPipeId = mainPipes.ToDictionary(item => item.PipeId, item => new List<Pipe> { item.Pipe });
+                                    var junctionPlanByRow = junctionPlans
+                                        .SelectMany(plan => plan.Rows.Select(row => new { row, plan }))
+                                        .ToDictionary(item => item.row, item => item.plan);
+                                    var crossBranchesByPlan = new Dictionary<FireBranchJunctionPlan, List<Pipe>>();
+                                    var attemptedCrossPlans = new HashSet<FireBranchJunctionPlan>();
+                                    var offsetFeedersByPlan = new Dictionary<FireBranchJunctionPlan, Pipe>();
+                                    var offsetBranchesByPlan = new Dictionary<FireBranchJunctionPlan, List<Pipe>>();
+                                    var attemptedOffsetPlans = new HashSet<FireBranchJunctionPlan>();
                                     foreach (var row in rows)
                                     {
-                                        double rowMain = row.Average(item => item.MainParameter);
-                                        double rowMin = 0 - extension;
+                                        FireBranchJunctionPlan junctionPlan = junctionPlanByRow[row];
+                                        bool isOppositeSideCross = junctionPlan.Topology == FireBranchJunctionTopology.OppositeSidesSameElevation;
+                                        bool isOppositeSideOffset = junctionPlan.Topology == FireBranchJunctionTopology.OppositeSidesOffsetElevation;
+                                        double rowMain = isOppositeSideCross || isOppositeSideOffset
+                                            ? junctionPlan.MainParameter
+                                            : row.Average(item => item.MainParameter);
+                                        double rowMin = isOppositeSideCross || isOppositeSideOffset
+                                            ? 0
+                                            : 0 - extension;
                                         double rowMax = row.Max(item => item.BranchParameter) + extension;
                                         XYZ mainStart = row[0].MainStart;
                                         XYZ mainDirection = row[0].MainDirection;
@@ -958,13 +1221,53 @@ namespace RfaMetadataAddin
                                         Pipe feeder = null;
                                         if (mainTie.DistanceTo(branchTie) > 0.01)
                                         {
-                                            feeder = CreateFirePipe(doc, systemType.Id, pipeType.Id, levelId, mainTie, branchTie, diameterFeet);
-                                            if (feeder != null)
+                                            if (isOppositeSideOffset)
                                             {
-                                                TrySetScFireBranchMetadata(feeder, "feeder", batchId);
-                                                createdIds.Add(feeder.Id);
-                                                created.Add(new { element_id = feeder.Id.Value, kind = "feeder" });
-                                                TryCreateTeeAtPoint(doc, mainSegments, feeder, mainTie);
+                                                if (!offsetFeedersByPlan.TryGetValue(junctionPlan, out feeder))
+                                                {
+                                                    feeder = CreateFirePipe(doc, systemType.Id, pipeType.Id, levelId, mainTie, branchTie, diameterFeet);
+                                                    if (feeder != null)
+                                                    {
+                                                        offsetFeedersByPlan[junctionPlan] = feeder;
+                                                        TrySetScFireBranchMetadata(feeder, "feeder", batchId);
+                                                        createdIds.Add(feeder.Id);
+                                                        createdPipeRoles[feeder.Id.Value] = "feeder";
+                                                        created.Add(new { element_id = feeder.Id.Value, kind = "feeder" });
+                                                        ResetFireBranchConnectionDiagnostic();
+                                                        if (!TryCreateTeeAtPoint(doc, mainSegments, feeder, mainTie))
+                                                        {
+                                                            failed.Add(new
+                                                            {
+                                                                row = rowMain,
+                                                                topology = junctionPlan.Topology.ToString(),
+                                                                reason = "main_to_shared_feeder_connection_failed",
+                                                                detail = ReadFireBranchConnectionDiagnostic()
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            else
+                                            {
+                                                feeder = CreateFirePipe(doc, systemType.Id, pipeType.Id, levelId, mainTie, branchTie, diameterFeet);
+                                                if (feeder != null)
+                                                {
+                                                    TrySetScFireBranchMetadata(feeder, "feeder", batchId);
+                                                    createdIds.Add(feeder.Id);
+                                                    createdPipeRoles[feeder.Id.Value] = "feeder";
+                                                    created.Add(new { element_id = feeder.Id.Value, kind = "feeder" });
+                                                    ResetFireBranchConnectionDiagnostic();
+                                                    if (!TryCreateTeeAtPoint(doc, mainSegments, feeder, mainTie))
+                                                    {
+                                                        failed.Add(new
+                                                        {
+                                                            row = rowMain,
+                                                            topology = junctionPlan.Topology.ToString(),
+                                                            reason = "main_to_feeder_connection_failed",
+                                                            detail = ReadFireBranchConnectionDiagnostic()
+                                                        });
+                                                    }
+                                                }
                                             }
                                         }
 
@@ -974,32 +1277,111 @@ namespace RfaMetadataAddin
                                         {
                                             TrySetScFireBranchMetadata(branch, "branch", batchId);
                                             createdIds.Add(branch.Id);
+                                            createdPipeRoles[branch.Id.Value] = "branch";
                                             created.Add(new { element_id = branch.Id.Value, kind = "branch" });
                                             branchSegments.Add(branch);
-                                            if (feeder != null)
+                                            if (feeder != null && isOppositeSideOffset)
                                             {
+                                                List<Pipe> offsetBranches;
+                                                if (!offsetBranchesByPlan.TryGetValue(junctionPlan, out offsetBranches))
+                                                {
+                                                    offsetBranches = new List<Pipe>();
+                                                    offsetBranchesByPlan[junctionPlan] = offsetBranches;
+                                                }
+                                                offsetBranches.Add(branch);
+                                                if (offsetBranches.Count == 2)
+                                                {
+                                                    attemptedOffsetPlans.Add(junctionPlan);
+                                                    ResetFireBranchConnectionDiagnostic();
+                                                    if (!TryCreateTeeAtPipeEnds(
+                                                        doc,
+                                                        offsetBranches[0],
+                                                        offsetBranches[1],
+                                                        feeder,
+                                                        branchTie))
+                                                    {
+                                                        failed.Add(new
+                                                        {
+                                                            row = rowMain,
+                                                            topology = junctionPlan.Topology.ToString(),
+                                                            reason = "shared_feeder_to_opposite_branches_connection_failed",
+                                                            detail = ReadFireBranchConnectionDiagnostic()
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                            if (feeder != null && !isOppositeSideOffset)
+                                            {
+                                                ResetFireBranchConnectionDiagnostic();
                                                 bool feederConnectedToBranch = TryConnectPipeToRun(doc, branchSegments, feeder, branchTie);
                                                 if (!feederConnectedToBranch)
                                                 {
-                                                    failed.Add(new { row = rowMain, reason = "支管與主管垂直連接管未能建立有效配件連接" });
+                                                    failed.Add(new
+                                                    {
+                                                        row = rowMain,
+                                                        topology = junctionPlan.Topology.ToString(),
+                                                        reason = "支管與主管垂直連接管未能建立有效配件連接",
+                                                        detail = ReadFireBranchConnectionDiagnostic()
+                                                    });
                                                 }
                                             }
                                             if (feeder == null)
                                             {
-                                                double branchTieTolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Centimeters);
-                                                bool branchEndsAtMain = IsPointAtPipeEnd(branch, mainTie, branchTieTolerance);
-                                                bool connectorCreated = false;
-                                                if (!branchEndsAtMain)
+                                                if (isOppositeSideCross)
                                                 {
-                                                    connectorCreated = TryCreateCrossAtPoint(doc, mainSegments, branchSegments, mainTie);
+                                                    List<Pipe> crossBranches;
+                                                    if (!crossBranchesByPlan.TryGetValue(junctionPlan, out crossBranches))
+                                                    {
+                                                        crossBranches = new List<Pipe>();
+                                                        crossBranchesByPlan[junctionPlan] = crossBranches;
+                                                    }
+                                                    crossBranches.Add(branch);
+                                                    if (crossBranches.Count == 2)
+                                                    {
+                                                        attemptedCrossPlans.Add(junctionPlan);
+                                                    ResetFireBranchConnectionDiagnostic();
+                                                    bool crossCreated = TryCreateCrossAtPipeEnds(
+                                                        doc,
+                                                        mainSegments,
+                                                            crossBranches[0],
+                                                            crossBranches[1],
+                                                            mainTie);
+                                                        if (!crossCreated)
+                                                        {
+                                                            failed.Add(new
+                                                            {
+                                                                row = rowMain,
+                                                                topology = junctionPlan.Topology.ToString(),
+                                                                reason = "opposite_side_cross_creation_failed",
+                                                                detail = ReadFireBranchConnectionDiagnostic()
+                                                            });
+                                                        }
+                                                    }
                                                 }
-                                                if (!connectorCreated)
+                                                else
                                                 {
-                                                    connectorCreated = TryCreateTeeAtPoint(doc, mainSegments, branch, mainTie);
-                                                }
-                                                if (!connectorCreated)
-                                                {
-                                                    failed.Add(new { row = rowMain, reason = "主管與支管未能建立有效 Tee/Cross 配件連接" });
+                                                    double branchTieTolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Centimeters);
+                                                    bool branchEndsAtMain = IsPointAtPipeEnd(branch, mainTie, branchTieTolerance);
+                                                    bool connectorCreated = false;
+                                                    if (!branchEndsAtMain)
+                                                    {
+                                                        connectorCreated = TryCreateCrossAtPoint(doc, mainSegments, branchSegments, mainTie);
+                                                    }
+                                                    if (!connectorCreated)
+                                                    {
+                                                        ResetFireBranchConnectionDiagnostic();
+                                                        connectorCreated = TryCreateTeeAtPoint(doc, mainSegments, branch, mainTie);
+                                                    }
+                                                    if (!connectorCreated)
+                                                    {
+                                                        failed.Add(new
+                                                        {
+                                                            row = rowMain,
+                                                            topology = junctionPlan.Topology.ToString(),
+                                                            reason = "主管與支管未能建立有效 Tee/Cross 配件連接",
+                                                            detail = ReadFireBranchConnectionDiagnostic()
+                                                        });
+                                                    }
                                                 }
                                             }
                                         }
@@ -1016,18 +1398,70 @@ namespace RfaMetadataAddin
                                                 );
                                                 Connector sprinklerConnector = FindConnectorNear(item.Sprinkler, sprinklerPoint);
                                                 TryChangeConnectorSystemType(sprinklerConnector, systemType.Id);
-                                                Pipe drop = CreateFirePipe(doc, systemType.Id, pipeType.Id, levelId, tapPoint, sprinklerPoint, diameterFeet);
+                                                if (sprinklerConnector == null)
+                                                {
+                                                    failed.Add(new { sprinkler_id = item.Sprinkler.Id.Value, reason = "sprinkler_connector_missing" });
+                                                    continue;
+                                                }
+                                                if (tapPoint.DistanceTo(sprinklerPoint) < 0.01)
+                                                {
+                                                    ResetFireBranchConnectionDiagnostic();
+                                                    bool sameElevationConnected = TryConnectSprinklerToRun(
+                                                        doc,
+                                                        branchSegments,
+                                                        sprinklerConnector,
+                                                        tapPoint,
+                                                        batchId,
+                                                        additionalCreatedIds);
+                                                    if (!sameElevationConnected)
+                                                    {
+                                                        failed.Add(new
+                                                        {
+                                                            sprinkler_id = item.Sprinkler.Id.Value,
+                                                            reason = "same_elevation_sprinkler_connection_failed",
+                                                            detail = ReadFireBranchConnectionDiagnostic()
+                                                        });
+                                                    }
+                                                    continue;
+                                                }
+
+                                                ResetFireBranchConnectionDiagnostic();
+                                                Pipe drop = CreateFireDropForSystem(
+                                                    doc,
+                                                    systemType.Id,
+                                                    pipeType.Id,
+                                                    levelId,
+                                                    sprinklerConnector,
+                                                    tapPoint,
+                                                    diameterFeet);
+                                                if (drop == null)
+                                                {
+                                                    failed.Add(new
+                                                    {
+                                                        sprinkler_id = item.Sprinkler.Id.Value,
+                                                        reason = "sprinkler_drop_creation_failed",
+                                                        detail = ReadFireBranchConnectionDiagnostic()
+                                                    });
+                                                    continue;
+                                                }
                                                 if (drop != null)
                                                 {
                                                     TrySetScFireBranchMetadata(drop, "drop", batchId);
                                                     createdIds.Add(drop.Id);
+                                                    createdPipeRoles[drop.Id.Value] = "drop";
                                                     created.Add(new { element_id = drop.Id.Value, kind = "drop", sprinkler_id = item.Sprinkler.Id.Value });
                                                     if (branchSegments.Count > 0)
                                                     {
+                                                        ResetFireBranchConnectionDiagnostic();
                                                         bool dropConnectedToBranch = TryConnectPipeToRun(doc, branchSegments, drop, tapPoint);
                                                         if (!dropConnectedToBranch)
                                                         {
-                                                            failed.Add(new { sprinkler_id = item.Sprinkler.Id.Value, reason = "垂直短管未能與水平支管建立有效 Tee/彎頭連接" });
+                                                            failed.Add(new
+                                                            {
+                                                                sprinkler_id = item.Sprinkler.Id.Value,
+                                                                reason = "垂直短管未能與水平支管建立有效 Tee/彎頭連接",
+                                                                detail = ReadFireBranchConnectionDiagnostic()
+                                                            });
                                                         }
                                                     }
                                                     bool connectedToSprinkler = sprinklerConnector != null && sprinklerConnector.IsConnected;
@@ -1047,12 +1481,265 @@ namespace RfaMetadataAddin
                                             }
                                         }
                                     }
-                                    transaction.Commit();
+                                    foreach (FireBranchJunctionPlan crossPlan in junctionPlans
+                                        .Where(plan => plan.Topology == FireBranchJunctionTopology.OppositeSidesSameElevation
+                                            && !attemptedCrossPlans.Contains(plan)))
+                                    {
+                                        failed.Add(new
+                                        {
+                                            row = crossPlan.MainParameter,
+                                            topology = crossPlan.Topology.ToString(),
+                                            reason = "opposite_side_cross_missing_branch"
+                                        });
+                                    }
+                                    foreach (FireBranchJunctionPlan offsetPlan in junctionPlans
+                                        .Where(plan => plan.Topology == FireBranchJunctionTopology.OppositeSidesOffsetElevation
+                                            && !attemptedOffsetPlans.Contains(plan)))
+                                    {
+                                        failed.Add(new
+                                        {
+                                            row = offsetPlan.MainParameter,
+                                            topology = offsetPlan.Topology.ToString(),
+                                            reason = "opposite_side_offset_missing_branch"
+                                        });
+                                    }
+
+                                    foreach (ElementId additionalId in additionalCreatedIds
+                                        .GroupBy(id => id.Value)
+                                        .Select(group => group.First()))
+                                    {
+                                        if (!createdIds.Any(id => id.Value == additionalId.Value))
+                                        {
+                                            createdIds.Add(additionalId);
+                                            Element additionalElement = doc.GetElement(additionalId);
+                                            if (additionalElement is Pipe)
+                                            {
+                                                createdPipeRoles[additionalId.Value] = "branch";
+                                            }
+                                            created.Add(new
+                                            {
+                                                element_id = additionalId.Value,
+                                                kind = additionalElement is Pipe ? "branch_segment" : "fitting"
+                                            });
+                                        }
+                                    }
+
+                                    doc.Regenerate();
+                                    TransactionStatus creationStatus = creationTransaction.Commit();
+                                    if (creationStatus != TransactionStatus.Committed)
+                                    {
+                                        throw new InvalidOperationException("Fire branch geometry transaction did not commit: " + creationStatus);
+                                    }
+                                    }
+                                    List<Pipe> createdPipes = createdIds
+                                        .Select(id => doc.GetElement(id) as Pipe)
+                                        .Where(pipe => pipe != null && IsScFireBranchPipe(pipe))
+                                        .GroupBy(pipe => pipe.Id.Value)
+                                        .Select(group => group.First())
+                                        .ToList();
+                                    List<MEPSystem> connectedSystems = mainPipes.Select(item => item.Pipe.MEPSystem)
+                                        .Concat(createdPipes.Select(pipe => pipe.MEPSystem))
+                                        .Concat(plannedSprinklers.Select(instance =>
+                                        {
+                                            Connector connector = FindConnectorNear(
+                                                instance,
+                                                GetFamilyConnectionPoint(instance));
+                                            return connector == null ? null : connector.MEPSystem;
+                                        }))
+                                        .Where(system => system != null)
+                                        .GroupBy(system => system.Id.Value)
+                                        .Select(group => group.First())
+                                        .ToList();
+                                    var systemChangeFailures = new List<object>();
+                                    using (Transaction systemTransaction = new Transaction(doc, "SC \u7d71\u4e00\u6d88\u9632\u7cfb\u7d71\u985e\u578b"))
+                                    {
+                                    TransactionStatus systemStartStatus = systemTransaction.Start();
+                                    if (systemStartStatus != TransactionStatus.Started)
+                                    {
+                                        throw new InvalidOperationException("Fire branch system transaction did not start: " + systemStartStatus);
+                                    }
+                                    foreach (MEPSystem connectedSystem in connectedSystems)
+                                    {
+                                        ElementId beforeTypeId = connectedSystem.GetTypeId();
+                                        if (beforeTypeId != null && beforeTypeId.Value == systemType.Id.Value)
+                                        {
+                                            continue;
+                                        }
+                                        try
+                                        {
+                                            bool canAssign = connectedSystem.CanHaveTypeAssigned();
+                                            bool targetIsValid = connectedSystem.IsValidType(systemType.Id);
+                                            if (!canAssign || !targetIsValid)
+                                            {
+                                                systemChangeFailures.Add(new
+                                                {
+                                                    system_id = connectedSystem.Id.Value,
+                                                    before_system_type_id = beforeTypeId == null ? 0 : beforeTypeId.Value,
+                                                    can_have_type_assigned = canAssign,
+                                                    target_is_valid = targetIsValid,
+                                                    reason = "target_system_type_not_assignable"
+                                                });
+                                                continue;
+                                            }
+
+                                            connectedSystem.ChangeTypeId(systemType.Id);
+                                            ElementId afterTypeId = connectedSystem.GetTypeId();
+                                            if (afterTypeId == null || afterTypeId.Value != systemType.Id.Value)
+                                            {
+                                                systemChangeFailures.Add(new
+                                                {
+                                                    system_id = connectedSystem.Id.Value,
+                                                    before_system_type_id = beforeTypeId == null ? 0 : beforeTypeId.Value,
+                                                    after_system_type_id = afterTypeId == null ? 0 : afterTypeId.Value,
+                                                    reason = "system_change_did_not_persist"
+                                                });
+                                            }
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            systemChangeFailures.Add(new
+                                            {
+                                                system_id = connectedSystem.Id.Value,
+                                                before_system_type_id = beforeTypeId == null ? 0 : beforeTypeId.Value,
+                                                reason = "system_change_exception",
+                                                detail = ex.GetType().Name + ": " + ex.Message
+                                            });
+                                        }
+                                    }
+                                    doc.Regenerate();
+                                    TransactionStatus systemStatus = systemTransaction.Commit();
+                                    if (systemStatus != TransactionStatus.Committed)
+                                    {
+                                        throw new InvalidOperationException("Fire branch system transaction did not commit: " + systemStatus);
+                                    }
+                                    }
+                                    List<long> actualSystemTypeIds = connectedSystems
+                                        .Where(system => system != null)
+                                        .Select(system => system.GetTypeId())
+                                        .Where(typeId => typeId != null)
+                                        .Select(typeId => typeId.Value)
+                                        .Distinct()
+                                        .ToList();
+                                    List<long> missingSystemPipeIds = createdPipes
+                                        .Where(pipe => pipe.MEPSystem == null)
+                                        .Select(pipe => pipe.Id.Value)
+                                        .ToList();
+                                    List<long> wrongSystemPipeIds = createdPipes
+                                        .Where(pipe => pipe.MEPSystem != null
+                                            && pipe.MEPSystem.GetTypeId().Value != systemType.Id.Value)
+                                        .Select(pipe => pipe.Id.Value)
+                                        .ToList();
+                                    List<long> missingConnectorSprinklerIds = plannedSprinklers
+                                        .Where(instance => FindConnectorNear(
+                                            instance,
+                                            GetFamilyConnectionPoint(instance)) == null)
+                                        .Select(instance => instance.Id.Value)
+                                        .ToList();
+                                    List<long> missingSystemSprinklerIds = plannedSprinklers
+                                        .Where(instance =>
+                                        {
+                                            Connector connector = FindConnectorNear(
+                                                instance,
+                                                GetFamilyConnectionPoint(instance));
+                                            return connector != null && connector.MEPSystem == null;
+                                        })
+                                        .Select(instance => instance.Id.Value)
+                                        .ToList();
+                                    List<long> wrongSystemSprinklerIds = plannedSprinklers
+                                        .Where(instance =>
+                                        {
+                                            Connector connector = FindConnectorNear(
+                                                instance,
+                                                GetFamilyConnectionPoint(instance));
+                                            return connector != null
+                                                && connector.MEPSystem != null
+                                                && connector.MEPSystem.GetTypeId().Value != systemType.Id.Value;
+                                        })
+                                        .Select(instance => instance.Id.Value)
+                                        .ToList();
+                                    if (missingSystemPipeIds.Count > 0
+                                        || wrongSystemPipeIds.Count > 0
+                                        || missingConnectorSprinklerIds.Count > 0
+                                        || missingSystemSprinklerIds.Count > 0
+                                        || wrongSystemSprinklerIds.Count > 0
+                                        || systemChangeFailures.Count > 0)
+                                    {
+                                        failed.Add(new
+                                        {
+                                            reason = "system_type_verification_failed",
+                                            target_system_type_id = systemType.Id.Value,
+                                            actual_system_type_ids = actualSystemTypeIds,
+                                            missing_system_pipe_ids = missingSystemPipeIds,
+                                            wrong_system_pipe_ids = wrongSystemPipeIds,
+                                            missing_connector_sprinkler_ids = missingConnectorSprinklerIds,
+                                            missing_system_sprinkler_ids = missingSystemSprinklerIds,
+                                            wrong_system_sprinkler_ids = wrongSystemSprinklerIds,
+                                            system_change_failures = systemChangeFailures
+                                        });
+                                    }
+                                    var unconnectedSprinklerIds = plannedSprinklers
+                                        .Where(instance =>
+                                        {
+                                            Connector connector = FindConnectorNear(instance, GetFamilyConnectionPoint(instance));
+                                            return connector == null || !connector.IsConnected;
+                                        })
+                                        .Select(instance => instance.Id.Value)
+                                        .ToList();
+                                    var unconnectedCreatedPipeIds = createdIds
+                                        .Select(id => doc.GetElement(id) as Pipe)
+                                        .Where(pipe => pipe != null)
+                                        .Where(pipe =>
+                                        {
+                                            List<Connector> connectors = pipe.ConnectorManager.Connectors
+                                                .Cast<Connector>()
+                                                .ToList();
+                                            string role;
+                                            createdPipeRoles.TryGetValue(pipe.Id.Value, out role);
+                                            return role == "feeder" || role == "drop"
+                                                ? connectors.Any(connector => !connector.IsConnected)
+                                                : connectors.All(connector => !connector.IsConnected);
+                                        })
+                                        .Select(pipe => pipe.Id.Value)
+                                        .Distinct()
+                                        .ToList();
+                                    if (unconnectedSprinklerIds.Count > 0 || unconnectedCreatedPipeIds.Count > 0)
+                                    {
+                                        failed.Add(new
+                                        {
+                                            reason = "connector_verification_failed",
+                                            unconnected_sprinkler_ids = unconnectedSprinklerIds,
+                                            unconnected_pipe_ids = unconnectedCreatedPipeIds
+                                        });
+                                    }
+                                    if (failed.Count > 0)
+                                    {
+                                        throw new FireBranchConnectorVerificationException(
+                                            "Fire branch connector verification failed. No branch elements were committed. Failure count: "
+                                            + failed.Count
+                                            + ". Detailed junction diagnostics were persisted.",
+                                            failed.ToArray());
+                                    }
+                                    TransactionStatus groupStatus = transactionGroup.Assimilate();
+                                    if (groupStatus != TransactionStatus.Committed)
+                                    {
+                                        throw new InvalidOperationException("Fire branch transaction group did not assimilate: " + groupStatus);
+                                    }
+                                    }
+                                    catch
+                                    {
+                                        if (transactionGroup.GetStatus() == TransactionStatus.Started)
+                                        {
+                                            transactionGroup.RollBack();
+                                        }
+                                        throw;
+                                    }
                                 }
 
-                                if (deletePreviewAfterCreate && previewGroupId > 0)
+                                if (deletePreviewAfterCreate)
                                 {
-                                    Element previewGroup = doc.GetElement(new ElementId(previewGroupId));
+                                    Element previewGroup = previewGroupId > 0
+                                        ? doc.GetElement(new ElementId(previewGroupId))
+                                        : null;
                                     if (previewGroup != null)
                                     {
                                         using (Transaction cleanupTransaction = new Transaction(doc, "SC 刪除消防支管預覽"))
@@ -1063,6 +1750,8 @@ namespace RfaMetadataAddin
                                         }
                                         deletedPreviewGroupId = previewGroupId;
                                     }
+                                    DrainagePreviewServer.Clear(doc);
+                                    uiApp.ActiveUIDocument.RefreshActiveView();
                                 }
 
                                 File.WriteAllText(
@@ -1074,6 +1763,12 @@ namespace RfaMetadataAddin
                                         created = created,
                                         failed = failed,
                                         skipped = skipped,
+                                        verification_status = "verified",
+                                        verified_system_type_id = systemType.Id.Value,
+                                        verified_system_type_name = systemType.Name,
+                                        connected_sprinkler_count = plannedSprinklers.Count,
+                                        unconnected_sprinkler_count = 0,
+                                        junctions = junctions,
                                         sprinkler_count = sprinklers.Count,
                                         main_candidate_count = mainCandidateCount,
                                         valid_main_count = mainPipes.Count,

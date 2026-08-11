@@ -145,6 +145,9 @@ def _run_with_timeout(command: list[str], timeout_seconds: int) -> subprocess.Co
 def _read_tsv_output(source: Path, output_path: Path) -> dict:
     lines = output_path.read_text(encoding="utf-8", errors="replace").splitlines()
     unit_code = 0
+    insbase = [0.0, 0.0, 0.0]
+    extmin = [0.0, 0.0, 0.0]
+    extmax = [0.0, 0.0, 0.0]
     data_lines = []
     for line in lines:
         if line.startswith("#INSUNITS\t"):
@@ -152,6 +155,12 @@ def _read_tsv_output(source: Path, output_path: Path) -> dict:
                 unit_code = int(line.split("\t", 1)[1])
             except ValueError:
                 unit_code = 0
+        elif line.startswith("#INSBASE\t"):
+            insbase = _parse_coordinate_header(line)
+        elif line.startswith("#EXTMIN\t"):
+            extmin = _parse_coordinate_header(line)
+        elif line.startswith("#EXTMAX\t"):
+            extmax = _parse_coordinate_header(line)
         elif line.strip():
             data_lines.append(line)
     points = []
@@ -187,9 +196,22 @@ def _read_tsv_output(source: Path, output_path: Path) -> dict:
         "unit_code": unit_code,
         "unit_name": INSUNITS_LABEL.get(unit_code, f"INSUNITS={unit_code}"),
         "unit_to_feet": INSUNITS_TO_FEET.get(unit_code, 1.0),
+        "insbase": {"x": insbase[0], "y": insbase[1], "z": insbase[2]},
+        "extmin": {"x": extmin[0], "y": extmin[1], "z": extmin[2]},
+        "extmax": {"x": extmax[0], "y": extmax[1], "z": extmax[2]},
         "blocks": blocks,
         "points": points,
     }
+
+
+def _parse_coordinate_header(line: str) -> list[float]:
+    values = line.split("\t")[1:4]
+    if len(values) != 3:
+        return [0.0, 0.0, 0.0]
+    try:
+        return [float(value) for value in values]
+    except ValueError:
+        return [0.0, 0.0, 0.0]
 
 
 def _acad_path(path: Path) -> str:
@@ -220,9 +242,20 @@ def _render_lisp() -> str:
   (if pair (cdr pair) defaultValue)
 )
 
+(defun SC-POINT-TSV (point)
+  (strcat
+    (rtos (car point) 2 12) "\t"
+    (rtos (cadr point) 2 12) "\t"
+    (rtos (caddr point) 2 12)
+  )
+)
+
 (defun SC_EXPORT_BLOCKS (outputPath / fh ss index entity data point name rotation layer handle)
   (setq fh (open outputPath "w"))
   (write-line (strcat "#INSUNITS\t" (itoa (getvar "INSUNITS"))) fh)
+  (write-line (strcat "#INSBASE\t" (SC-POINT-TSV (getvar "INSBASE"))) fh)
+  (write-line (strcat "#EXTMIN\t" (SC-POINT-TSV (getvar "EXTMIN"))) fh)
+  (write-line (strcat "#EXTMAX\t" (SC-POINT-TSV (getvar "EXTMAX"))) fh)
   (write-line "name\tx\ty\tz\trotation_degrees\tlayer\thandle" fh)
   (setq ss (ssget "_X" '((0 . "INSERT"))))
   (if ss

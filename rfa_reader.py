@@ -2,11 +2,10 @@ import json
 import os
 import subprocess
 import tempfile
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
-from queue_protocol import ERROR_DIR, RESPONSE_DIR, create_request, ensure_queue_dirs
+from queue_protocol import create_request, ensure_queue_dirs
 
 
 BASE_DIR = Path(__file__).parent
@@ -115,28 +114,21 @@ def read_metadata_from_json(raw_path: str) -> RfaMetadata:
 
 
 def request_metadata_from_revit(raw_path: str, timeout_seconds: int = 120) -> RfaMetadata:
+    from sc_revit.core.revit_queue_client import wait_for_revit_response
+
     rfa_path = validate_rfa_path(raw_path)
     ensure_queue_dirs()
     request = create_request(str(rfa_path))
-    output_path = RESPONSE_DIR / f"{request.request_id}.json"
-    error_path = ERROR_DIR / f"{request.request_id}.json"
-
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        if output_path.exists():
-            metadata = read_metadata_from_json(str(output_path))
-            output_path.unlink(missing_ok=True)
-            return metadata
-        if error_path.exists():
-            try:
-                payload = json.loads(error_path.read_text(encoding="utf-8"))
-                message = payload.get("error", "Revit 讀取失敗")
-            except json.JSONDecodeError:
-                message = "Revit 讀取失敗"
-            error_path.unlink(missing_ok=True)
-            raise RfaReaderError(message)
-        time.sleep(0.5)
-
-    raise RfaReaderError(
-        "等待 Revit 回傳 RFA 中繼資料逾時；請確認 Revit 已開啟、外掛已安裝，且重新啟動 Revit 後再試"
+    payload = wait_for_revit_response(
+        request.request_id,
+        timeout_seconds,
+        failure_message="Revit 讀取失敗",
+        timeout_message=(
+            "等待 Revit 回傳 RFA 中繼資料逾時；請確認 Revit 已開啟、"
+            "外掛已安裝，且重新啟動 Revit 後再試"
+        ),
     )
+    missing = sorted(ADDIN_OUTPUT_CONTRACT - set(payload.keys()))
+    if missing:
+        raise RfaReaderError("RFA 中繼資料缺少必要欄位：" + ", ".join(missing))
+    return RfaMetadata.from_dict(payload)

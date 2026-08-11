@@ -28,6 +28,7 @@ namespace RfaMetadataAddin
             "list_cad_block_names",
             "scan_cad_block_points",
             "transform_dwg_block_points",
+            "clear_dwg_preview_markers",
             "create_dwg_preview_markers",
             "place_cad_block_points",
             "place_dwg_block_points"
@@ -303,10 +304,12 @@ namespace RfaMetadataAddin
                                     throw new InvalidOperationException("找不到指定 CAD 來源");
                                 }
                                 List<Dictionary<string, object>> rawPoints = ReadPointPayload(payload);
+                                bool pointsAreModelCoordinates = ReadBool(payload, "points_are_model_coordinates", false);
                                 List<Dictionary<string, object>> points = TransformDwgBlockPoints(
                                     importInstance,
                                     rawPoints,
-                                    limit
+                                    limit,
+                                    pointsAreModelCoordinates
                                 );
                                 File.WriteAllText(
                                     responseFile,
@@ -314,7 +317,28 @@ namespace RfaMetadataAddin
                                     {
                                         action = action,
                                         import_id = importId,
+                                        coordinate_source = pointsAreModelCoordinates ? "revit_linked_geometry" : "external_dwg",
                                         points = points
+                                    })
+                                );
+                                return;
+                            }
+
+            if (action == "clear_dwg_preview_markers")
+                            {
+                                Document doc = GetActiveProjectDocument(uiApp);
+                                bool clearedDirectPreview = DrainagePreviewServer.ClearCadPointMarkers(doc);
+                                Dictionary<string, object> cleanup = TryDeletePreviewGroupsByPrefix(
+                                    doc,
+                                    "SC_preview_points_");
+                                uiApp.ActiveUIDocument.RefreshActiveView();
+                                File.WriteAllText(
+                                    responseFile,
+                                    serializer.Serialize(new
+                                    {
+                                        action = action,
+                                        cleared_direct_preview = clearedDirectPreview,
+                                        legacy_cleanup = cleanup
                                     })
                                 );
                                 return;
@@ -338,11 +362,14 @@ namespace RfaMetadataAddin
                                     throw new InvalidOperationException("找不到指定樓層");
                                 }
                                 List<Dictionary<string, object>> rawPoints = ReadPointPayload(payload);
+                                bool pointsAreModelCoordinates = ReadBool(payload, "points_are_model_coordinates", false);
                                 List<Dictionary<string, object>> points = TransformDwgBlockPoints(
                                     importInstance,
                                     rawPoints,
-                                    rawPoints.Count
+                                    rawPoints.Count,
+                                    pointsAreModelCoordinates
                                 );
+                                ValidateCadPreviewPointsAgainstImport(importInstance, points);
                                 double offsetFeet = UnitUtils.ConvertToInternalUnits(offsetMm, UnitTypeId.Millimeters);
                                 double sizeFeet = UnitUtils.ConvertToInternalUnits(markerSizeMm, UnitTypeId.Millimeters);
                                 double z = level.Elevation + offsetFeet;
@@ -350,64 +377,23 @@ namespace RfaMetadataAddin
                                 long groupId = 0;
                                 string groupName = "";
                                 XYZ groupOrigin = XYZ.Zero;
-                                var createdElementIds = new List<ElementId>();
-
-                                using (Transaction transaction = new Transaction(doc, "SC 批量點位螢光預覽"))
-                                {
-                                    transaction.Start();
-                                    SketchPlane sketchPlane = SketchPlane.Create(
-                                        doc,
-                                        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, new XYZ(0, 0, z))
-                                    );
-                                    OverrideGraphicSettings overrides = new OverrideGraphicSettings();
-                                    overrides.SetProjectionLineColor(new Autodesk.Revit.DB.Color(0, 255, 80));
-                                    overrides.SetProjectionLineWeight(8);
-                                    foreach (Dictionary<string, object> point in points)
-                                    {
-                                        double x = Convert.ToDouble(point["x"]);
-                                        double y = Convert.ToDouble(point["y"]);
-                                        XYZ center = new XYZ(x, y, z);
-                                        Line lineA = Line.CreateBound(
-                                            center + new XYZ(-sizeFeet, 0, 0),
-                                            center + new XYZ(sizeFeet, 0, 0)
-                                        );
-                                        Line lineB = Line.CreateBound(
-                                            center + new XYZ(0, -sizeFeet, 0),
-                                            center + new XYZ(0, sizeFeet, 0)
-                                        );
-                                        ModelCurve curveA = doc.Create.NewModelCurve(lineA, sketchPlane);
-                                        ModelCurve curveB = doc.Create.NewModelCurve(lineB, sketchPlane);
-                                        createdElementIds.Add(curveA.Id);
-                                        createdElementIds.Add(curveB.Id);
-                                        try
-                                        {
-                                            doc.ActiveView.SetElementOverrides(curveA.Id, overrides);
-                                            doc.ActiveView.SetElementOverrides(curveB.Id, overrides);
-                                        }
-                                        catch
-                                        {
-                                            // Some views do not allow overrides; the model curves are still visible.
-                                        }
-                                    }
-                                    if (createdElementIds.Count == 0)
-                                    {
-                                        throw new InvalidOperationException("沒有建立任何螢光預覽點");
-                                    }
-                                    Autodesk.Revit.DB.Group group = doc.Create.NewGroup(createdElementIds);
-                                    groupId = group.Id.Value;
-                                    groupName = MakeUniqueGroupTypeName(doc, "SC_preview_points_" + batchId);
-                                    try
-                                    {
-                                        group.GroupType.Name = groupName;
-                                    }
-                                    catch
-                                    {
-                                        groupName = group.GroupType != null ? group.GroupType.Name : groupName;
-                                    }
-                                    LocationPoint groupLocation = group.Location as LocationPoint;
-                                    groupOrigin = groupLocation != null ? groupLocation.Point : XYZ.Zero;
-                                    transaction.Commit();
-                                }
+                                TryDeletePreviewGroupsByPrefix(doc, "SC_preview_points_");
+                                double previewDisplayZ = ResolveFireBranchPreviewDisplayZ(
+                                    doc,
+                                    doc.ActiveView,
+                                    z);
+                                List<XYZ> previewCenters = points
+                                    .Select(point => new XYZ(
+                                        Convert.ToDouble(point["x"]),
+                                        Convert.ToDouble(point["y"]),
+                                        previewDisplayZ))
+                                    .ToList();
+                                DrainagePreviewServer.SetCadPointMarkers(
+                                    doc,
+                                    batchId,
+                                    previewCenters,
+                                    sizeFeet);
+                                uiApp.ActiveUIDocument.RefreshActiveView();
 
                                 File.WriteAllText(
                                     responseFile,
@@ -419,6 +405,14 @@ namespace RfaMetadataAddin
                                         group_name = groupName,
                                         group_origin = SerializePoint(groupOrigin),
                                         marker_count = points.Count,
+                                        preview_rendering = "direct_context_3d",
+                                        active_view = new
+                                        {
+                                            element_id = doc.ActiveView.Id.Value,
+                                            name = doc.ActiveView.Name,
+                                            view_type = doc.ActiveView.ViewType.ToString()
+                                        },
+                                        coordinate_source = pointsAreModelCoordinates ? "revit_linked_geometry" : "external_dwg",
                                         points = points.Take(10).ToList()
                                     })
                                 );
@@ -568,10 +562,12 @@ namespace RfaMetadataAddin
                                 }
 
                                 List<Dictionary<string, object>> rawPoints = ReadPointPayload(payload);
+                                bool pointsAreModelCoordinates = ReadBool(payload, "points_are_model_coordinates", false);
                                 List<Dictionary<string, object>> points = TransformDwgBlockPoints(
                                     importInstance,
                                     rawPoints,
-                                    rawPoints.Count
+                                    rawPoints.Count,
+                                    pointsAreModelCoordinates
                                 );
                                 long previewGroupId = ReadLong(payload, "preview_group_id", 0);
                                 XYZ correction = XYZ.Zero;
@@ -579,7 +575,7 @@ namespace RfaMetadataAddin
                                 if (previewGroupId > 0)
                                 {
                                     previewGroup = doc.GetElement(new ElementId(previewGroupId)) as Autodesk.Revit.DB.Group;
-                                    if (previewGroup != null)
+                                    if (!pointsAreModelCoordinates && previewGroup != null)
                                     {
                                         LocationPoint previewLocation = previewGroup.Location as LocationPoint;
                                         if (previewLocation != null)
@@ -599,6 +595,9 @@ namespace RfaMetadataAddin
                                 var createdElementIds = new List<ElementId>();
                                 long groupId = 0;
                                 string groupName = "";
+                                bool deletePreview = !payload.ContainsKey("delete_preview_after_place")
+                                    || payload["delete_preview_after_place"] == null
+                                    || payload["delete_preview_after_place"].ToString().ToLowerInvariant() != "false";
 
                                 using (Transaction transaction = new Transaction(doc, "SC DWG \u6279\u91cf\u9ede\u4f4d\u653e\u7f6e"))
                                 {
@@ -683,15 +682,19 @@ namespace RfaMetadataAddin
                                     }
                                     if (previewGroup != null)
                                     {
-                                        bool deletePreview = !payload.ContainsKey("delete_preview_after_place")
-                                            || payload["delete_preview_after_place"] == null
-                                            || payload["delete_preview_after_place"].ToString().ToLowerInvariant() != "false";
                                         if (deletePreview)
                                         {
                                             doc.Delete(previewGroup.Id);
                                         }
                                     }
                                     transaction.Commit();
+                                }
+
+                                bool clearedDirectPreview = false;
+                                if (deletePreview)
+                                {
+                                    clearedDirectPreview = DrainagePreviewServer.ClearCadPointMarkers(doc);
+                                    uiApp.ActiveUIDocument.RefreshActiveView();
                                 }
 
                                 File.WriteAllText(
@@ -703,6 +706,8 @@ namespace RfaMetadataAddin
                                         group_id = groupId,
                                         group_name = groupName,
                                         correction = SerializePoint(correction),
+                                        cleared_direct_preview = clearedDirectPreview,
+                                        coordinate_source = pointsAreModelCoordinates ? "revit_linked_geometry" : "external_dwg",
                                         created = created,
                                         duplicates = duplicates,
                                         failed = failed

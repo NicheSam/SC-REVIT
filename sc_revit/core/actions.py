@@ -18,6 +18,7 @@ CAD_POINTS_ACTIONS = {
     "list_cad_block_names",
     "scan_cad_block_points",
     "transform_dwg_block_points",
+    "clear_dwg_preview_markers",
     "create_dwg_preview_markers",
     "place_cad_block_points",
     "place_dwg_block_points",

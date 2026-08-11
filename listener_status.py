@@ -9,8 +9,8 @@ def get_listener_status(max_age_seconds: int = 90) -> dict:
         return {
             "connected": False,
             "enabled": False,
-            "label": "Agent 未啟用",
-            "detail": "Revit 人工功能仍可正常使用",
+            "label": "待命",
+            "detail": "執行功能時會自動建立暫時 Revit 連線",
         }
     if not HEARTBEAT_FILE.exists():
         return {

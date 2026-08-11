@@ -12,7 +12,7 @@ from gui_models import RfaTask
 from addin_installer import ensure_revit_addin_installed
 from dwg_block_reader import DwgBlockReaderError, read_dwg_blocks
 from listener_status import get_listener_status
-from queue_protocol import set_agent_listener_enabled
+from queue_protocol import set_gui_request_mode
 from xlsx_exporter import export_library_index_xlsx, export_opening_candidates_xlsx, write_xlsx
 from sc_revit.family_library import (
     IngestError,
@@ -42,7 +42,9 @@ from sc_revit.cad_points import (
     export_cad_points_batch_report_xlsx,
     filter_mappings_for_blocks,
     load_mapping_file,
+    request_cad_block_preview,
     request_cad_import_path,
+    request_clear_dwg_preview_markers,
     request_create_dwg_preview_markers,
     request_place_dwg_blocks,
     request_point_placement_context,
@@ -131,9 +133,12 @@ class FamilyClassifierApp(tk.Tk):
         self.project_families_by_iid: dict[str, dict] = {}
         self.placement_context: dict | None = None
         self.placement_preview: dict | None = None
+        self._cad_preview_lock = threading.Lock()
 
         self._ensure_addin_installed()
+        set_gui_request_mode(True)
         self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self._on_app_close)
         if self.app_mode == "drainage":
             self.after(150, self._load_drainage_workspace)
         else:
@@ -260,12 +265,6 @@ class FamilyClassifierApp(tk.Tk):
                 top,
                 textvariable=self.listener_var,
             ).grid(row=0, column=2, padx=(8, 0))
-            self.agent_listener_button = ttk.Button(
-                top,
-                text="啟用 Agent",
-                command=self._toggle_agent_listener,
-            )
-            self.agent_listener_button.grid(row=0, column=3, padx=(8, 0))
         else:
             ttk.Label(
                 top,
@@ -284,17 +283,11 @@ class FamilyClassifierApp(tk.Tk):
                 top,
                 textvariable=self.listener_var,
             ).grid(row=0, column=2, padx=(8, 12))
-            self.agent_listener_button = ttk.Button(
-                top,
-                text="啟用 Agent",
-                command=self._toggle_agent_listener,
-            )
-            self.agent_listener_button.grid(row=0, column=3, padx=(8, 0))
             ttk.Button(
                 top,
                 text="重新選擇",
                 command=lambda: self._choose_library_root(force=True),
-            ).grid(row=0, column=4, padx=(8, 0))
+            ).grid(row=0, column=3, padx=(8, 0))
 
         if self.app_mode == "archive":
             actions = ttk.Frame(self, padding=(12, 0, 12, 12))
@@ -2409,6 +2402,11 @@ class FamilyClassifierApp(tk.Tk):
                     if str(item.get("element_id")) == system_type_id:
                         self.fire_system_type_var.set(name)
                         break
+                level_id = str(self.fire_main_pipe.get("level_id") or "")
+                for name, item in self.fire_level_items.items():
+                    if str(item.get("element_id")) == level_id:
+                        self.fire_level_var.set(name)
+                        break
             else:
                 self.fire_main_pipe_var.set("未選取主管")
 
@@ -2473,11 +2471,26 @@ class FamilyClassifierApp(tk.Tk):
         if not self.fire_preview_group:
             messagebox.showerror("無法建立", "請先按「產生螢光路徑預覽」，確認路徑正確後再建立。")
             return
+        cad_path_check = self.fire_preview_group.get("cad_path_check") or {}
+        cad_status_labels = {
+            "matched": "幾何吻合",
+            "mismatch": "路徑不吻合",
+            "ambiguous": "證據不足",
+            "ambiguous_source": "多個 CAD 來源吻合",
+            "cad_unavailable": "無可見 CAD",
+            "cad_no_paths": "CAD 無可用線路",
+            "invalid_transform": "CAD 座標轉換無效",
+        }
+        cad_status = cad_status_labels.get(
+            str(cad_path_check.get("status") or ""),
+            "尚未核對",
+        )
         if not messagebox.askyesno(
             "確認建立消防支管",
             "即將以目前主管建立消防支管：\n"
             f"主管：ID {self.fire_main_pipe.get('element_id')}\n"
-            f"撒水頭：{len(self.fire_sprinklers)} 顆\n\n"
+            f"撒水頭：{len(self.fire_sprinklers)} 顆\n"
+            f"CAD 影子核對：{cad_status}\n\n"
             "第一版不做避障與變徑，請確認預覽路徑正確後再繼續。",
         ):
             return
@@ -2550,18 +2563,44 @@ class FamilyClassifierApp(tk.Tk):
 
     def _finish_fire_branch_preview(self, payload: dict) -> None:
         skipped = list(payload.get("skipped", []) or [])
+        cad_path_check = payload.get("cad_path_check") or {}
         self.fire_preview_group = {
             "group_id": payload.get("group_id"),
             "group_name": payload.get("group_name"),
             "batch_id": payload.get("batch_id"),
+            "cad_path_check": cad_path_check,
         }
+        cad_status_labels = {
+            "matched": "吻合",
+            "mismatch": "不吻合",
+            "ambiguous": "待判斷",
+            "ambiguous_source": "來源不明",
+            "cad_unavailable": "無來源",
+            "cad_no_paths": "無線路",
+            "invalid_transform": "座標無效",
+        }
+        cad_status = cad_status_labels.get(
+            str(cad_path_check.get("status") or ""),
+            "未核對",
+        )
+        if cad_status == "吻合" and not cad_path_check.get("coordinate_verified"):
+            cad_status = "幾何吻合／對位未驗證"
+        coverage = float(cad_path_check.get("coverage_ratio") or 0)
+        preview_server_status = (
+            "DirectContext 已啟用"
+            if payload.get("preview_server_active")
+            else "DirectContext 未啟用"
+        )
         self.fire_branch_status_var.set(
             "已產生螢光路徑預覽｜"
             f"{payload.get('segment_count', 0)} 段｜"
+            f"螢光線 {payload.get('direct_preview_segment_count', 0)}｜"
+            f"{preview_server_status}｜"
             f"有效主管 {payload.get('valid_main_count', '-')}｜"
             f"排除主管 {payload.get('excluded_main_count', '-')}｜"
             f"支管排數 {payload.get('row_count', '-')}｜"
             f"預估管段 {payload.get('estimated_pipe_count', '-')}｜"
+            f"CAD {cad_status} {coverage:.0%}｜"
             f"略過 {len(skipped)}"
         )
         if skipped:
@@ -2616,8 +2655,10 @@ class FamilyClassifierApp(tk.Tk):
         skipped = list(payload.get("skipped", []) or [])
         if payload.get("deleted_preview_group_id"):
             self.fire_preview_group = None
+        verification_status = payload.get("verification_status")
+        verification_label = "連接驗證完成" if verification_status == "verified" else "連接未驗證"
         self.fire_branch_status_var.set(
-            f"建立完成｜管段 {len(created)}｜有效主管 {payload.get('valid_main_count', '-')}｜排除主管 {payload.get('excluded_main_count', '-')}｜支管排數 {payload.get('row_count', '-')}｜略過 {len(skipped)}｜失敗 {len(failed)}｜Batch {payload.get('batch_id', '')}"
+            f"建立完成｜{verification_label}｜已連接灑水頭 {payload.get('connected_sprinkler_count', '-')}｜管段 {len(created)}｜有效主管 {payload.get('valid_main_count', '-')}｜排除主管 {payload.get('excluded_main_count', '-')}｜支管排數 {payload.get('row_count', '-')}｜略過 {len(skipped)}｜失敗 {len(failed)}｜Batch {payload.get('batch_id', '')}"
         )
         if skipped or failed:
             lines = []
@@ -4502,23 +4543,8 @@ class FamilyClassifierApp(tk.Tk):
     def _refresh_listener_status(self, schedule: bool = True) -> None:
         status = get_listener_status()
         self.listener_var.set(f"Revit：{status['label']}")
-        self.agent_listener_button.configure(
-            text="停用 Agent" if status.get("enabled") else "啟用 Agent"
-        )
         if schedule:
             self.after(3000, self._refresh_listener_status)
-
-    def _toggle_agent_listener(self) -> None:
-        status = get_listener_status()
-        enabled = not bool(status.get("enabled"))
-        set_agent_listener_enabled(enabled)
-        self._refresh_listener_status(schedule=False)
-        if enabled:
-            messagebox.showinfo(
-                "Agent 監聽已啟用",
-                "Revit 開啟時會在數秒內連線。\n"
-                "如 Revit 尚未開啟，請開啟 Revit 2024。",
-            )
 
     def _load_point_placement_context(self) -> None:
         self.placement_status_var.set("讀取中…")
@@ -4696,6 +4722,7 @@ class FamilyClassifierApp(tk.Tk):
         )
 
     def _on_placement_cad_selected(self, _event=None) -> None:
+        self._clear_cad_preview_async()
         self._sync_dwg_path_from_selected_cad()
 
     def _sync_dwg_path_from_selected_cad(self) -> None:
@@ -4793,6 +4820,7 @@ class FamilyClassifierApp(tk.Tk):
         )
         if not selected:
             return
+        self._clear_cad_preview_async()
         self.placement_dwg_path_var.set(selected)
         self.placement_block_items = {}
         self.placement_mapping_data = {}
@@ -5051,22 +5079,69 @@ class FamilyClassifierApp(tk.Tk):
             args=(
                 import_id,
                 str(mapping.get("level_id")),
+                block_name,
                 points,
                 float(mapping.get("offset_mm") or 0),
             ),
             daemon=True,
         ).start()
 
-    def _preview_cad_blocks_worker(self, import_id: str, level_id: str, points: list[dict], offset_mm: float) -> None:
+    def _clear_cad_preview_async(self) -> None:
+        if self.app_mode != "placement":
+            return
+        self.placement_preview = None
+        self.placement_preview_marker = None
+        self.placement_preview_block_name = ""
+        self._clear_placement_preview_tree()
+        threading.Thread(target=self._clear_cad_preview_worker, daemon=True).start()
+
+    def _clear_cad_preview_worker(self) -> None:
         try:
-            with batch_context("cad_points", "create_preview_markers", "Create CAD preview markers", {"point_count": len(points)}):
+            with self._cad_preview_lock:
+                request_clear_dwg_preview_markers(timeout_seconds=15)
+        except Exception:
+            pass
+
+    def _on_app_close(self) -> None:
+        if self.app_mode == "placement":
+            threading.Thread(target=self._clear_cad_preview_worker, daemon=False).start()
+        self.destroy()
+
+    def _preview_cad_blocks_worker(
+        self,
+        import_id: str,
+        level_id: str,
+        block_name: str,
+        external_points: list[dict],
+        offset_mm: float,
+    ) -> None:
+        try:
+            with self._cad_preview_lock:
+                request_clear_dwg_preview_markers(timeout_seconds=30)
+            with batch_context(
+                "cad_points",
+                "create_preview_markers",
+                "Create CAD preview markers",
+                {"external_point_count": len(external_points), "block_name": block_name},
+            ):
+                scan = request_cad_block_preview(
+                    import_id=import_id,
+                    block_filter=block_name,
+                    limit=100000,
+                )
+                points = list(scan.get("points", []))
+                if not points:
+                    raise RuntimeError(f"Revit Linked DWG 中找不到圖塊：{block_name}")
                 payload = request_create_dwg_preview_markers(
                     import_id=import_id,
                     level_id=level_id,
                     points=points,
                     offset_mm=offset_mm,
                     marker_size_mm=180,
+                    points_are_model_coordinates=True,
                 )
+                payload["source_signature"] = self._cad_model_point_signature(points)
+                payload["external_point_count"] = len(external_points)
         except Exception as exc:
             self.after(0, lambda exc=exc: self._finish_cad_preview_error(exc))
             return
@@ -5099,6 +5174,19 @@ class FamilyClassifierApp(tk.Tk):
                 break
         return points
 
+    @staticmethod
+    def _cad_model_point_signature(points: list[dict]) -> tuple:
+        return tuple(sorted(
+            (
+                str(point.get("revit_geometry_name") or point.get("block_name") or ""),
+                round(float(point.get("x") or 0), 9),
+                round(float(point.get("y") or 0), 9),
+                round(float(point.get("z") or 0), 9),
+                round(float(point.get("rotation_degrees") or 0), 9),
+            )
+            for point in points
+        ))
+
     def _finish_cad_preview_error(self, exc: Exception) -> None:
         self.placement_status_var.set("預覽失敗")
         messagebox.showerror("CAD 圖塊預覽失敗", str(exc))
@@ -5109,7 +5197,7 @@ class FamilyClassifierApp(tk.Tk):
         self._clear_placement_preview_tree()
         points = list(payload.get("points", []))
         self.placement_status_var.set(
-            f"已產生螢光預覽點｜共 {payload.get('marker_count', len(points))} 點。請在 Revit 圖面移動整個預覽群組校正位置。"
+            f"已產生螢光預覽點｜共 {payload.get('marker_count', len(points))} 點｜座標已由 Revit Linked DWG 自動解析。"
         )
 
     def _place_preview_points(self) -> None:
@@ -5131,10 +5219,7 @@ class FamilyClassifierApp(tk.Tk):
         if getattr(self, "placement_preview_block_name", "") != block_name:
             messagebox.showerror("無法放置", "目前預覽資料不是選取圖塊，請重新預覽後再放置")
             return
-        points = self._build_dwg_points_for_selected_block(limit=None)
-        if not points:
-            messagebox.showerror("無法放置", "選定的 DWG 圖塊沒有可用點位")
-            return
+        point_count = int(self.placement_preview.get("marker_count") or 0)
         try:
             tolerance_mm = float(self.placement_tolerance_var.get() or 10)
         except ValueError:
@@ -5142,7 +5227,7 @@ class FamilyClassifierApp(tk.Tk):
             return
         if not messagebox.askyesno(
             "確認放置全部點位",
-            f"此操作會在目前 Revit 專案中放置「{block_name}」全部 {len(points)} 筆族群實例，並建立一個 Revit 群組方便選取。\n\n確定要繼續？",
+            f"此操作會在目前 Revit 專案中放置「{block_name}」全部 {point_count} 筆族群實例，並建立一個 Revit 群組方便選取。\n\n確定要繼續？",
         ):
             return
         self.placement_status_var.set("放置測試中…")
@@ -5152,7 +5237,7 @@ class FamilyClassifierApp(tk.Tk):
                 import_id,
                 str(mapping.get("symbol_id")),
                 str(mapping.get("level_id")),
-                points,
+                block_name,
                 float(mapping.get("offset_mm") or 0),
                 tolerance_mm,
                 getattr(self, "placement_preview_marker", {}),
@@ -5165,12 +5250,23 @@ class FamilyClassifierApp(tk.Tk):
         import_id: str,
         symbol_id: str,
         level_id: str,
-        points: list[dict],
+        block_name: str,
         offset_mm: float,
         tolerance_mm: float,
         preview_marker: dict | None = None,
     ) -> None:
         try:
+            scan = request_cad_block_preview(
+                import_id=import_id,
+                block_filter=block_name,
+                limit=100000,
+            )
+            points = list(scan.get("points", []))
+            if not points:
+                raise RuntimeError(f"Revit Linked DWG 中找不到圖塊：{block_name}")
+            expected_signature = (preview_marker or {}).get("source_signature")
+            if expected_signature != self._cad_model_point_signature(points):
+                raise RuntimeError("Linked DWG 在預覽後已變更，請重新產生預覽")
             with batch_context("cad_points", "place_blocks", "Place CAD block points", {"point_count": len(points), "symbol_id": symbol_id}):
                 payload = request_place_dwg_blocks(
                     import_id=import_id,
@@ -5182,6 +5278,7 @@ class FamilyClassifierApp(tk.Tk):
                     preview_group_id=(preview_marker or {}).get("group_id"),
                     preview_origin=(preview_marker or {}).get("group_origin"),
                     delete_preview_after_place=True,
+                    points_are_model_coordinates=True,
                 )
         except Exception as exc:
             self.after(0, lambda exc=exc: self._finish_place_preview_error(exc))
@@ -5189,6 +5286,7 @@ class FamilyClassifierApp(tk.Tk):
         self.after(0, lambda: self._finish_place_preview(payload))
 
     def _finish_place_preview_error(self, exc: Exception) -> None:
+        self._clear_cad_preview_async()
         self.placement_status_var.set("放置失敗")
         messagebox.showerror("批量點位放置失敗", str(exc))
 
@@ -5196,6 +5294,10 @@ class FamilyClassifierApp(tk.Tk):
         created = list(payload.get("created", []))
         duplicates = list(payload.get("duplicates", []))
         failed = list(payload.get("failed", []))
+        self.placement_preview = None
+        self.placement_preview_marker = None
+        self.placement_preview_block_name = ""
+        self._clear_placement_preview_tree()
         self.placement_status_var.set(
             f"放置完成｜Created {len(created)}｜Duplicate {len(duplicates)}｜Failed {len(failed)}｜Batch {payload.get('batch_id', '')}"
         )

@@ -18,6 +18,7 @@ obj/
 *.dll
 *.pdb
 *.log
+*.err
 *.tmp
 *.cache
 *.user

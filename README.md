@@ -3,22 +3,22 @@
 SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提供測試使用。  
 目前請使用 GitHub Releases 下載安裝包，不要使用 GitHub 的 `Code > Download ZIP`。
 
-目前 `main` 的排水功能仍以 `snapshot-676ce995fd74` 為基準；`v0.5.2-distribution-safe` 專注於同事電腦的安裝、穩定性與診斷。
+目前版本為 `v0.5.3`，整合點位放置、消防支管、預覽生命週期、CAD 路徑核對及部署穩定性修正。
 
 ## 快速下載
 
 | 項目 | 連結 |
 | --- | --- |
-| Windows 安裝包 | [下載 `SC_REVIT_v0.5.2-distribution-safe_installer.zip`](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.2-distribution-safe/SC_REVIT_v0.5.2-distribution-safe_installer.zip) |
-| SHA-256 校驗檔 | [下載 `SC_REVIT_v0.5.2-distribution-safe_installer.zip.sha256`](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.2-distribution-safe/SC_REVIT_v0.5.2-distribution-safe_installer.zip.sha256) |
-| 版本說明 | [GitHub Release：v0.5.2-distribution-safe](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.2-distribution-safe) |
+| Windows 一鍵安裝／更新包 | [下載 `SC_REVIT_v0.5.3_installer.zip`](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.3/SC_REVIT_v0.5.3_installer.zip) |
+| SHA-256 校驗檔 | [下載 `SC_REVIT_v0.5.3_installer.zip.sha256`](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.3/SC_REVIT_v0.5.3_installer.zip.sha256) |
+| 版本說明 | [GitHub Release：v0.5.3](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.3) |
 | 排水操作手冊 | [Markdown](docs/SC_REVIT_drainage_operation_manual.md) · [PDF](docs/SC_REVIT_drainage_operation_manual.pdf) |
 
 > 請完整解壓縮下載的 installer ZIP，再執行裡面的 `Install_SC_REVIT.bat`。GitHub 自動提供的 `Source code (zip)` 與 `Source code (tar.gz)` 不是安裝包。
 
-## v0.5.2-distribution-safe 開發狀態
+## v0.5.3 版本狀態
 
-目前公開基準包含 Revit 2024 排水接入幹管工作流程：
+目前公開基準包含 Revit 2024 排水接入幹管工作流程，以及經實機驗證的消防支管建立與系統類型統一流程：
 
 - 以開放 piping connector 作為支管來源。
 - 依序選取支管與目標主管。
@@ -26,7 +26,7 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 - 支援不同管徑與專案管件設定。
 - 建立後檢查管件角度、接入方向、管段長度與拓撲。
 
-本版不改動排水路徑求解邏輯。Agent listener 預設停用，Revit Ribbon 人工功能仍可正常使用；只在需要 Agent 功能時才手動啟用監聽。
+本版同時修正 CAD 點位與消防支管預覽殘留、異常座標、螢光路徑顯示及消防管網連接／系統類型問題。Agent listener 預設停用，Revit Ribbon 人工功能仍可正常使用；只在需要 Agent 功能時才手動啟用監聽。
 
 ## 排水操作手冊
 
@@ -62,9 +62,9 @@ SC REVIT 是一套 Revit 2024 MEP 輔助工具集，目前以安裝包形式提�
 
 最新的 Revit 2024 測試安裝包：
 
-[下載 SC_REVIT_v0.5.2-distribution-safe_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.2-distribution-safe/SC_REVIT_v0.5.2-distribution-safe_installer.zip)
+[下載 SC_REVIT_v0.5.3_installer.zip](https://github.com/NicheSam/SC-REVIT/releases/download/v0.5.3/SC_REVIT_v0.5.3_installer.zip)
 
-[SC REVIT v0.5.2-distribution-safe Release](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.2-distribution-safe)
+[SC REVIT v0.5.3 Release](https://github.com/NicheSam/SC-REVIT/releases/tag/v0.5.3)
 
 請勿下載 Release 頁面自動列出的 `Source code (zip)` 或 `Source code (tar.gz)` 作為安裝包；那是給開發者使用的原始碼，不含可直接安裝的完整執行環境。
 
@@ -109,7 +109,7 @@ Agent listener 預設停用。需要 Agent 功能時，可在 SC REVIT GUI 按�
 
 ## 更新方式
 
-目前沒有自動更新器。更新時請照以下流程：
+同一個 `Install_SC_REVIT.bat` 同時支援首次安裝與覆蓋更新，不需移除舊版：
 
 1. 關閉 Revit。
 2. 關閉所有 SC REVIT 視窗。
@@ -173,7 +173,7 @@ Revit 第一次載入此外掛時也會顯示未簽章警告。確認外掛名�
 2. 關閉 Revit 後重新測試。
 3. 執行 `Collect_SC_REVIT_Diagnostics.bat`，將桌面產生的診斷 ZIP 交給開發者。
 
-`v0.5.2-distribution-safe` 的 Agent listener 預設停用；停用 Agent 不會移除或停用 Revit Ribbon 人工功能。
+`v0.5.3` 的 Agent listener 預設停用；停用 Agent 不會移除或停用 Revit Ribbon 人工功能。
 
 ### 點工具後沒有資料
 
@@ -183,6 +183,6 @@ Revit 第一次載入此外掛時也會顯示未簽章警告。確認外掛名�
 ## 給開發者
 
 這個 public repo 同時保存可下載安裝版的版本說明，以及目前公開的開發原始碼。  
-`v0.5.2-distribution-safe` 尚未升格為正式版本，請先完成多電腦小規模驗收後再用於實際專案。
+`v0.5.3` 已完成目前專案中的消防支管實機建立驗證；不同專案的族群 Connector、管件與系統設定仍可能不同，正式批次使用前應先做小範圍測試。
 
 開發者打包新版 installer 時，請使用專案內的 release 打包腳本產生 installer ZIP，再上傳到 GitHub Releases。

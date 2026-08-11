@@ -1,5 +1,6 @@
 ﻿import json
 import os
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,10 @@ RESPONSE_DIR = QUEUE_DIR / "responses"
 ERROR_DIR = QUEUE_DIR / "errors"
 HEARTBEAT_FILE = QUEUE_DIR / "listener_heartbeat.json"
 AGENT_LISTENER_ENABLED_FILE = QUEUE_DIR / "agent_listener.enabled"
+_GUI_REQUEST_MODE = False
+_GUI_REQUEST_IDS: set[str] = set()
+_GUI_REQUEST_LOCK = threading.Lock()
+_GUI_OWNS_LISTENER_MARKER = False
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,33 @@ def set_agent_listener_enabled(enabled: bool) -> None:
     HEARTBEAT_FILE.unlink(missing_ok=True)
 
 
+def set_gui_request_mode(enabled: bool) -> None:
+    global _GUI_REQUEST_MODE
+    _GUI_REQUEST_MODE = enabled
+
+
+def _begin_gui_request(request_id: str) -> None:
+    global _GUI_OWNS_LISTENER_MARKER
+    if not _GUI_REQUEST_MODE:
+        return
+    with _GUI_REQUEST_LOCK:
+        if not _GUI_REQUEST_IDS:
+            _GUI_OWNS_LISTENER_MARKER = not is_agent_listener_enabled()
+            if _GUI_OWNS_LISTENER_MARKER:
+                set_agent_listener_enabled(True)
+        _GUI_REQUEST_IDS.add(request_id)
+
+
+def finish_gui_request(request_id: str) -> None:
+    global _GUI_OWNS_LISTENER_MARKER
+    with _GUI_REQUEST_LOCK:
+        _GUI_REQUEST_IDS.discard(request_id)
+        if _GUI_REQUEST_IDS or not _GUI_OWNS_LISTENER_MARKER:
+            return
+        set_agent_listener_enabled(False)
+        _GUI_OWNS_LISTENER_MARKER = False
+
+
 
 
 def _write_request_json(request: QueueRequest, payload: dict) -> None:
@@ -56,10 +88,15 @@ def _write_request_json(request: QueueRequest, payload: dict) -> None:
     if batch_id:
         payload["sc_batch_id"] = batch_id
     record_request_created(request.request_id, request.action, payload)
-    (REQUEST_DIR / f"{request.request_id}.json").write_text(
-        json.dumps(payload, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _begin_gui_request(request.request_id)
+    try:
+        (REQUEST_DIR / f"{request.request_id}.json").write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        finish_gui_request(request.request_id)
+        raise
 
 def create_request(rfa_path: str) -> QueueRequest:
     ensure_queue_dirs()
@@ -275,6 +312,7 @@ def create_place_dwg_block_points_request(
     preview_group_id: str | int | None = None,
     preview_origin: dict | None = None,
     delete_preview_after_place: bool = True,
+    points_are_model_coordinates: bool = False,
 ) -> QueueRequest:
     ensure_queue_dirs()
     request = QueueRequest(
@@ -294,6 +332,7 @@ def create_place_dwg_block_points_request(
         "preview_group_id": str(preview_group_id or ""),
         "preview_origin": preview_origin or {},
         "delete_preview_after_place": delete_preview_after_place,
+        "points_are_model_coordinates": points_are_model_coordinates,
     }
     _write_request_json(request, payload)
     return request
@@ -306,6 +345,7 @@ def create_dwg_preview_markers_request(
     points: list[dict],
     offset_mm: float,
     marker_size_mm: float = 150,
+    points_are_model_coordinates: bool = False,
 ) -> QueueRequest:
     ensure_queue_dirs()
     request = QueueRequest(
@@ -321,6 +361,22 @@ def create_dwg_preview_markers_request(
         "points": points,
         "offset_mm": offset_mm,
         "marker_size_mm": marker_size_mm,
+        "points_are_model_coordinates": points_are_model_coordinates,
+    }
+    _write_request_json(request, payload)
+    return request
+
+
+def create_clear_dwg_preview_markers_request() -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="clear_dwg_preview_markers",
+    )
+    payload = {
+        "request_id": request.request_id,
+        "action": request.action,
     }
     _write_request_json(request, payload)
     return request

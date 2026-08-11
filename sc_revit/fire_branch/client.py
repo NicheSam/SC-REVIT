@@ -5,6 +5,7 @@
     create_fire_branch_selection_request,
 )
 from sc_revit.core.revit_queue_client import wait_for_revit_response
+from rfa_reader import RfaReaderError
 
 _FAILURE = "Revit 消防支管建立請求失敗"
 _TIMEOUT = "等待 Revit 回傳消防支管資料逾時"
@@ -57,7 +58,12 @@ def request_create_fire_branch_pipes(
         preview_group_id=preview_group_id,
         delete_preview_after_create=delete_preview_after_create,
     )
-    return _wait(request.request_id, timeout_seconds)
+    payload = _wait(request.request_id, timeout_seconds)
+    if payload.get("verification_status") != "verified":
+        raise RfaReaderError(
+            "Revit 消防支管建立未回傳連接驗證結果；請確認已載入最新版 SC REVIT 外掛。"
+        )
+    return payload
 
 
 def request_create_fire_branch_preview(
