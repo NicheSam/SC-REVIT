@@ -1,5 +1,6 @@
 ﻿from queue_protocol import (
     create_fire_branch_context_request,
+    create_fire_branch_focus_request,
     create_fire_branch_pipes_request,
     create_fire_branch_preview_request,
     create_fire_branch_selection_request,
@@ -43,6 +44,14 @@ def request_create_fire_branch_pipes(
     height_reference: str,
     preview_group_id: str | int | None = None,
     delete_preview_after_create: bool = True,
+    execution_mode: str = "commit",
+    diameter_plan: list[dict] | None = None,
+    topology_plan: dict | None = None,
+    sandbox_scope: str | None = None,
+    preview_snapshot_id: str | None = None,
+    pilot_source_row_index: int | None = None,
+    require_diameter_plan: bool = False,
+    model_plan_hash: str | None = None,
     timeout_seconds: int = 180,
 ) -> dict:
     request = create_fire_branch_pipes_request(
@@ -57,11 +66,28 @@ def request_create_fire_branch_pipes(
         height_reference=height_reference,
         preview_group_id=preview_group_id,
         delete_preview_after_create=delete_preview_after_create,
+        execution_mode=execution_mode,
+        diameter_plan=diameter_plan,
+        topology_plan=topology_plan,
+        sandbox_scope=sandbox_scope,
+        preview_snapshot_id=preview_snapshot_id,
+        pilot_source_row_index=pilot_source_row_index,
+        require_diameter_plan=require_diameter_plan,
+        model_plan_hash=model_plan_hash,
     )
     payload = _wait(request.request_id, timeout_seconds)
-    if payload.get("verification_status") != "verified":
+    verification_status = payload.get("verification_status")
+    retained_partial = (
+        verification_status == "partial"
+        and payload.get("partial_success") is True
+        and payload.get("retention_decision") == "kept"
+        and payload.get("model_changes_kept") is True
+    )
+    if verification_status != "verified" and not retained_partial:
         raise RfaReaderError(
-            "Revit 消防支管建立未回傳連接驗證結果；請確認已載入最新版 SC REVIT 外掛。"
+            "Revit 消防支管建立回傳無法辨識的驗證狀態："
+            + str(verification_status or "未提供")
+            + "。完整診斷已保留於工作流程紀錄。"
         )
     return payload
 
@@ -83,5 +109,22 @@ def request_create_fire_branch_preview(
         level_id=level_id,
         branch_offset_cm=branch_offset_cm,
         height_reference=height_reference,
+    )
+    return _wait(request.request_id, timeout_seconds)
+
+
+def request_focus_fire_branch_segment(
+    *,
+    start: dict,
+    end: dict,
+    display_z: float | None = None,
+    padding_mm: float = 750,
+    timeout_seconds: int = 30,
+) -> dict:
+    request = create_fire_branch_focus_request(
+        start=start,
+        end=end,
+        display_z=display_z,
+        padding_mm=padding_mm,
     )
     return _wait(request.request_id, timeout_seconds)

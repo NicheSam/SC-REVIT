@@ -1,8 +1,0 @@
-{
-  "template_name": "弱電基本模板",
-  "applies_to": { "system": "ELV" },
-  "parameters": [
-    { "name": "SC_設備類型", "required": false, "default_value": null, "expected_kind": "type", "expected_storage_type": "String" },
-    { "name": "SC_通訊類型", "required": false, "default_value": null, "expected_kind": "type", "expected_storage_type": "String" }
-  ]
-}

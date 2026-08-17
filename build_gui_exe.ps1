@@ -36,11 +36,25 @@ $tempExe = Join-Path $distPath "RevitFamilyClassifier\RevitFamilyClassifier.exe"
 if (!(Test-Path -LiteralPath $tempExe)) {
   throw "Build failed: $tempExe was not created."
 }
+$backupDist = Join-Path (Split-Path -Parent $finalDist) "RevitFamilyClassifier.backup"
+if (Test-Path -LiteralPath $backupDist) {
+  Remove-Item -LiteralPath $backupDist -Recurse -Force
+}
 if (Test-Path -LiteralPath $finalDist) {
-  $backupDist = Join-Path (Split-Path -Parent $finalDist) ("RevitFamilyClassifier.backup-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
   Rename-Item -LiteralPath $finalDist -NewName (Split-Path -Leaf $backupDist)
 }
-Copy-Item -LiteralPath (Join-Path $distPath "RevitFamilyClassifier") -Destination $finalDist -Recurse -Force
+try {
+  Copy-Item -LiteralPath (Join-Path $distPath "RevitFamilyClassifier") -Destination $finalDist -Recurse -Force
+}
+catch {
+  if ((-not (Test-Path -LiteralPath $finalDist)) -and (Test-Path -LiteralPath $backupDist)) {
+    Rename-Item -LiteralPath $backupDist -NewName (Split-Path -Leaf $finalDist)
+  }
+  throw
+}
+if (Test-Path -LiteralPath $backupDist) {
+  Remove-Item -LiteralPath $backupDist -Recurse -Force
+}
 
 $exe = Join-Path $finalDist "RevitFamilyClassifier.exe"
 if (!(Test-Path -LiteralPath $exe)) {

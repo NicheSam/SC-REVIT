@@ -89,12 +89,16 @@ def _write_request_json(request: QueueRequest, payload: dict) -> None:
         payload["sc_batch_id"] = batch_id
     record_request_created(request.request_id, request.action, payload)
     _begin_gui_request(request.request_id)
+    request_path = REQUEST_DIR / f"{request.request_id}.json"
+    temporary_path = REQUEST_DIR / f".{request.request_id}.{uuid.uuid4().hex}.tmp"
     try:
-        (REQUEST_DIR / f"{request.request_id}.json").write_text(
+        temporary_path.write_text(
             json.dumps(payload, ensure_ascii=False),
             encoding="utf-8",
         )
+        os.replace(temporary_path, request_path)
     except Exception:
+        temporary_path.unlink(missing_ok=True)
         finish_gui_request(request.request_id)
         raise
 
@@ -425,12 +429,32 @@ def create_fire_branch_pipes_request(
     height_reference: str,
     preview_group_id: str | int | None = None,
     delete_preview_after_create: bool = True,
+    execution_mode: str = "commit",
+    diameter_plan: list[dict] | None = None,
+    topology_plan: dict | None = None,
+    sandbox_scope: str | None = None,
+    preview_snapshot_id: str | None = None,
+    pilot_source_row_index: int | None = None,
+    require_diameter_plan: bool = False,
+    model_plan_hash: str | None = None,
 ) -> QueueRequest:
+    if execution_mode not in {"commit", "sandbox"}:
+        raise ValueError("execution_mode must be 'commit' or 'sandbox'")
+    if execution_mode == "sandbox":
+        delete_preview_after_create = False
+    if sandbox_scope == "single_sprinkler" and len(sprinkler_ids) != 1:
+        raise ValueError("single_sprinkler sandbox requires exactly one sprinkler")
+    if require_diameter_plan and not diameter_plan:
+        raise ValueError("require_diameter_plan requires a non-empty diameter plan")
     ensure_queue_dirs()
     request = QueueRequest(
         request_id=str(uuid.uuid4()),
         rfa_path="",
-        action="create_fire_branch_pipes",
+        action=(
+            "test_fire_branch_pipes"
+            if execution_mode == "sandbox"
+            else "create_fire_branch_pipes"
+        ),
     )
     payload = {
         "request_id": request.request_id,
@@ -445,9 +469,23 @@ def create_fire_branch_pipes_request(
         "branch_offset_cm": branch_offset_cm,
         "height_reference": height_reference,
         "delete_preview_after_create": delete_preview_after_create,
+        "execution_mode": execution_mode,
+        "require_diameter_plan": bool(require_diameter_plan),
     }
+    if diameter_plan:
+        payload["diameter_plan"] = diameter_plan
+    if topology_plan:
+        payload["topology_plan"] = topology_plan
     if preview_group_id:
         payload["preview_group_id"] = str(preview_group_id)
+    if sandbox_scope:
+        payload["sandbox_scope"] = str(sandbox_scope)
+    if preview_snapshot_id:
+        payload["preview_snapshot_id"] = str(preview_snapshot_id)
+    if pilot_source_row_index is not None:
+        payload["pilot_source_row_index"] = int(pilot_source_row_index)
+    if model_plan_hash:
+        payload["model_plan_hash"] = str(model_plan_hash)
     _write_request_json(request, payload)
     return request
 
@@ -477,6 +515,32 @@ def create_fire_branch_preview_request(
         "branch_offset_cm": branch_offset_cm,
         "height_reference": height_reference,
     }
+    _write_request_json(request, payload)
+    return request
+
+
+def create_fire_branch_focus_request(
+    *,
+    start: dict,
+    end: dict,
+    display_z: float | None = None,
+    padding_mm: float = 750,
+) -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="focus_fire_branch_preview_segment",
+    )
+    payload = {
+        "request_id": request.request_id,
+        "action": request.action,
+        "start": {axis: float(start.get(axis) or 0) for axis in ("x", "y", "z")},
+        "end": {axis: float(end.get(axis) or 0) for axis in ("x", "y", "z")},
+        "padding_mm": float(padding_mm),
+    }
+    if display_z is not None:
+        payload["display_z"] = float(display_z)
     _write_request_json(request, payload)
     return request
 

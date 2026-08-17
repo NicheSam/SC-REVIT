@@ -1,0 +1,346 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from typing import Any
+
+
+_JUNCTION_TOLERANCE_FEET = 5.0 / 304.8
+
+
+def build_fire_branch_execution_plan(
+    *,
+    diameter_analysis: dict[str, Any],
+    main_pipe_ids: list[str | int],
+    sprinkler_ids: list[str | int],
+    preview_snapshot_id: str,
+    pipe_type_id: str | int,
+    system_type_id: str | int,
+    level_id: str | int,
+) -> dict[str, Any]:
+    """Build the immutable topology contract shared by preview and Revit."""
+
+    if not str(preview_snapshot_id or "").strip():
+        raise ValueError("缺少預覽批次，請重新分析")
+    segments = [
+        {
+            "segment_id": str(item.get("segment_id") or ""),
+            "row_index": int(item.get("row_index") or 0),
+            "sequence": int(item.get("sequence") or 0),
+            "start": item.get("start") or {},
+            "end": item.get("end") or {},
+            "diameter_mm": float(item["diameter_mm"]),
+        }
+        for item in (diameter_analysis.get("segments") or [])
+        if item.get("diameter_mm") is not None
+    ]
+    if not segments:
+        raise ValueError("目前預覽沒有可用的管徑分段")
+    if int(diameter_analysis.get("unresolved_segment_count") or 0) != 0:
+        raise ValueError("目前預覽仍有尚未確認的管徑分段")
+
+    topology_plan = build_fire_branch_topology_plan(diameter_analysis)
+    if any(item.get("review_required") for item in topology_plan["junctions"]):
+        raise ValueError("目前預覽仍有尚未確認的接頭拓樸")
+
+    plan = {
+        "schema_version": "fire_branch_execution_plan.v3",
+        "main_pipe_ids": sorted(int(item) for item in main_pipe_ids),
+        "sprinkler_ids": sorted(int(item) for item in sprinkler_ids),
+        "preview_snapshot_id": str(preview_snapshot_id),
+        "pipe_type_id": int(pipe_type_id),
+        "system_type_id": int(system_type_id),
+        "level_id": int(level_id),
+        "diameter_plan": segments,
+        "topology_plan": topology_plan,
+    }
+    canonical = json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    plan["plan_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return plan
+
+
+def build_fire_branch_topology_plan(
+    diameter_analysis: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve tees, crosses and reducer placement once for every consumer."""
+
+    segment_by_id = {
+        str(item.get("segment_id") or ""): item
+        for item in (diameter_analysis.get("segments") or [])
+    }
+    raw_junctions = list(diameter_analysis.get("junctions") or [])
+    consumed: set[int] = set()
+    junctions: list[dict[str, Any]] = []
+    reducers = [
+        {
+            **item,
+            "placement": str(item.get("placement") or "along_branch"),
+        }
+        for item in (diameter_analysis.get("reducers") or [])
+    ]
+
+    for index, raw in enumerate(raw_junctions):
+        if index in consumed:
+            continue
+        opposite_index = _find_opposite_junction(
+            index,
+            raw_junctions,
+            segment_by_id,
+            consumed,
+        )
+        main_diameter = _float_or_none(raw.get("main_diameter_mm"))
+        branch_diameter = _float_or_none(raw.get("branch_diameter_mm"))
+        if opposite_index is None:
+            junctions.append(
+                {
+                    "kind": str(raw.get("kind") or "unresolved_tee"),
+                    "row_indexes": [int(raw.get("row_index") or 0)],
+                    "branch_segment_ids": [str(raw.get("branch_segment_id") or "")],
+                    "main_segment_id": str(raw.get("main_segment_id") or ""),
+                    "point": raw.get("point") or {},
+                    "main_diameter_mm": main_diameter,
+                    "common_branch_diameter_mm": branch_diameter,
+                    "source_branch_diameters_mm": [branch_diameter],
+                    "review_required": bool(raw.get("review_required")),
+                }
+            )
+            continue
+
+        opposite = raw_junctions[opposite_index]
+        consumed.add(opposite_index)
+        opposite_main = _float_or_none(opposite.get("main_diameter_mm"))
+        opposite_branch = _float_or_none(opposite.get("branch_diameter_mm"))
+        rows_and_diameters = sorted(
+            [
+                (int(raw.get("row_index") or 0), branch_diameter, raw),
+                (int(opposite.get("row_index") or 0), opposite_branch, opposite),
+            ],
+            key=lambda item: item[0],
+        )
+        resolved = (
+            main_diameter is not None
+            and opposite_main is not None
+            and branch_diameter is not None
+            and opposite_branch is not None
+            and math.isclose(main_diameter, opposite_main)
+        )
+        common = max(branch_diameter, opposite_branch) if resolved else None
+        junctions.append(
+            {
+                "kind": (
+                    "cross"
+                    if resolved
+                    and math.isclose(main_diameter, branch_diameter)
+                    and math.isclose(main_diameter, opposite_branch)
+                    else "reducing_cross" if resolved else "unresolved_cross"
+                ),
+                "row_indexes": [item[0] for item in rows_and_diameters],
+                "branch_segment_ids": [
+                    str(item[2].get("branch_segment_id") or "")
+                    for item in rows_and_diameters
+                ],
+                "main_segment_id": str(raw.get("main_segment_id") or ""),
+                "point": _average_point(raw.get("point"), opposite.get("point")),
+                "main_diameter_mm": main_diameter if resolved else None,
+                "common_branch_diameter_mm": common,
+                "source_branch_diameters_mm": [item[1] for item in rows_and_diameters],
+                "review_required": bool(
+                    not resolved
+                    or raw.get("review_required")
+                    or opposite.get("review_required")
+                ),
+            }
+        )
+        if common is None:
+            continue
+        for row_index, side_diameter, side in rows_and_diameters:
+            if side_diameter is None or math.isclose(side_diameter, common):
+                continue
+            reducers.append(
+                {
+                    "placement": "after_cross",
+                    "row_index": row_index,
+                    "junction_main_segment_id": str(raw.get("main_segment_id") or ""),
+                    "branch_segment_id": str(side.get("branch_segment_id") or ""),
+                    "point": side.get("point") or {},
+                    "from_diameter_mm": common,
+                    "to_diameter_mm": side_diameter,
+                    "placement_strategy": "fit_to_routing_parts",
+                }
+            )
+    return {
+        "schema_version": "fire_branch_topology_plan.v3",
+        "junctions": junctions,
+        "reducers": reducers,
+    }
+
+
+def _find_opposite_junction(
+    index: int,
+    junctions: list[dict[str, Any]],
+    segment_by_id: dict[str, dict[str, Any]],
+    consumed: set[int],
+) -> int | None:
+    current = junctions[index]
+    current_segment = segment_by_id.get(str(current.get("branch_segment_id") or ""))
+    if current_segment is None:
+        return None
+    current_direction = _outward_direction(current_segment, current.get("point") or {})
+    for candidate_index in range(index + 1, len(junctions)):
+        if candidate_index in consumed:
+            continue
+        candidate = junctions[candidate_index]
+        if str(current.get("main_segment_id") or "") != str(candidate.get("main_segment_id") or ""):
+            continue
+        if _point_distance(current.get("point"), candidate.get("point")) > _JUNCTION_TOLERANCE_FEET:
+            continue
+        candidate_segment = segment_by_id.get(str(candidate.get("branch_segment_id") or ""))
+        if candidate_segment is None:
+            continue
+        candidate_direction = _outward_direction(candidate_segment, candidate.get("point") or {})
+        if current_direction[0] * candidate_direction[0] + current_direction[1] * candidate_direction[1] < 0:
+            return candidate_index
+    return None
+
+
+def _outward_direction(
+    segment: dict[str, Any],
+    point: dict[str, Any],
+) -> tuple[float, float]:
+    start = segment.get("start") or {}
+    end = segment.get("end") or {}
+    near, far = (start, end) if _point_distance(start, point) <= _point_distance(end, point) else (end, start)
+    return (
+        float(far.get("x") or 0) - float(near.get("x") or 0),
+        float(far.get("y") or 0) - float(near.get("y") or 0),
+    )
+
+
+def _point_distance(first: Any, second: Any) -> float:
+    first = first or {}
+    second = second or {}
+    return math.hypot(
+        float(first.get("x") or 0) - float(second.get("x") or 0),
+        float(first.get("y") or 0) - float(second.get("y") or 0),
+    )
+
+
+def _average_point(first: Any, second: Any) -> dict[str, float]:
+    first = first or {}
+    second = second or {}
+    return {
+        axis: (float(first.get(axis) or 0) + float(second.get(axis) or 0)) / 2.0
+        for axis in ("x", "y", "z")
+    }
+
+
+def _float_or_none(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+def select_single_sprinkler(
+    sprinklers: list[dict[str, Any]],
+    selected_ids: list[str | int],
+) -> dict[str, Any]:
+    if len(selected_ids) != 1:
+        raise ValueError("請在灑水頭表格選取一顆灑水頭進行測試")
+    selected_id = str(selected_ids[0])
+    selected = next(
+        (item for item in sprinklers if str(item.get("element_id")) == selected_id),
+        None,
+    )
+    if selected is None:
+        raise ValueError("選取的灑水頭已不在目前資料中，請重新讀取")
+    return selected
+
+
+def build_single_sprinkler_model_plan(
+    *,
+    main_pipe_id: str | int,
+    sprinkler: dict[str, Any],
+    preview_snapshot_id: str,
+    diameter_analysis: dict[str, Any],
+    pipe_type_id: str | int,
+    system_type_id: str | int,
+    level_id: str | int,
+) -> dict[str, Any]:
+    """Build the immutable contract used by preview, sandbox, and commit."""
+
+    if not str(preview_snapshot_id or "").strip():
+        raise ValueError("缺少預覽批次，請重新分析")
+    sprinkler_id = sprinkler.get("element_id")
+    point = sprinkler.get("point") or {}
+    if sprinkler_id in (None, ""):
+        raise ValueError("選取的灑水頭缺少 ElementId")
+
+    segments = list(diameter_analysis.get("segments") or [])
+    rows: dict[int, list[dict[str, Any]]] = {}
+    for segment in segments:
+        rows.setdefault(int(segment.get("row_index") or 0), []).append(segment)
+    if not rows:
+        raise ValueError("目前預覽沒有可用的管徑分段")
+
+    px = float(point.get("x") or 0)
+    py = float(point.get("y") or 0)
+    ranked_rows = sorted(
+        (
+            min(_point_to_segment_2d(px, py, item) for item in row_segments),
+            row_index,
+        )
+        for row_index, row_segments in rows.items()
+    )
+    source_row_index = ranked_rows[0][1]
+    row_segments = sorted(
+        rows[source_row_index],
+        key=lambda item: int(item.get("sequence") or 0),
+    )
+    if any(
+        item.get("diameter_mm") is None or bool(item.get("review_required"))
+        for item in row_segments
+    ):
+        raise ValueError("選取灑水頭所屬支管仍有尚未確認的管徑")
+
+    diameter_plan = [
+        {
+            "segment_id": str(item.get("segment_id") or ""),
+            "row_index": source_row_index,
+            "sequence": int(item.get("sequence") or 0),
+            "start": item.get("start") or {},
+            "end": item.get("end") or {},
+            "diameter_mm": float(item["diameter_mm"]),
+        }
+        for item in row_segments
+    ]
+    plan = {
+        "schema_version": "fire_branch_model_plan.v1",
+        "sandbox_scope": "single_sprinkler",
+        "main_pipe_id": int(main_pipe_id),
+        "sprinkler_id": int(sprinkler_id),
+        "source_row_index": source_row_index,
+        "preview_snapshot_id": str(preview_snapshot_id),
+        "pipe_type_id": int(pipe_type_id),
+        "system_type_id": int(system_type_id),
+        "level_id": int(level_id),
+        "require_diameter_plan": True,
+        "diameter_plan": diameter_plan,
+    }
+    canonical = json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    plan["plan_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return plan
+
+
+def _point_to_segment_2d(px: float, py: float, segment: dict[str, Any]) -> float:
+    start = segment.get("start") or {}
+    end = segment.get("end") or {}
+    x1 = float(start.get("x") or 0)
+    y1 = float(start.get("y") or 0)
+    x2 = float(end.get("x") or 0)
+    y2 = float(end.get("y") or 0)
+    dx = x2 - x1
+    dy = y2 - y1
+    length_squared = dx * dx + dy * dy
+    if length_squared <= 1e-12:
+        return math.hypot(px - x1, py - y1)
+    ratio = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / length_squared))
+    return math.hypot(px - (x1 + ratio * dx), py - (y1 + ratio * dy))

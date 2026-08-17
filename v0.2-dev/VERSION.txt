@@ -1,6 +1,0 @@
-﻿SC REVIT
-Version: v0.2-dev
-Status: Active development / 開發中
-StartedAt: 2026-06-02 17:45:52 +08:00
-ArchivedPreviousVersion: E:\Desktop\Codex\SC REVIT_versions\v0.1
-Note: 目前 Revit 外掛安裝與 GUI 啟動仍指向此主資料夾。

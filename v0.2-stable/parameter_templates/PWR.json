@@ -1,9 +1,0 @@
-{
-  "template_name": "動力基本模板",
-  "applies_to": { "system": "PWR" },
-  "parameters": [
-    { "name": "SC_設備類型", "required": false, "default_value": null, "expected_kind": "type", "expected_storage_type": "String" },
-    { "name": "SC_額定電壓", "required": false, "default_value": null, "expected_kind": "type", "expected_storage_type": "Double" },
-    { "name": "SC_相數", "required": false, "default_value": null, "expected_kind": "type", "expected_storage_type": "Integer" }
-  ]
-}

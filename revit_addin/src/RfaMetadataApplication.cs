@@ -37,6 +37,29 @@ namespace RfaMetadataAddin
         private DateTime _nextListenerPollUtc = DateTime.MinValue;
         private DateTime _nextHeartbeatUtc = DateTime.MinValue;
         private bool _agentListenerWasEnabled;
+        private FileSystemWatcher _requestWatcher;
+        private ExternalEvent _queueExternalEvent;
+        private QueueExternalEventHandler _queueExternalEventHandler;
+
+        private sealed class QueueExternalEventHandler : IExternalEventHandler
+        {
+            private readonly RfaMetadataApplication _owner;
+
+            public QueueExternalEventHandler(RfaMetadataApplication owner)
+            {
+                _owner = owner;
+            }
+
+            public void Execute(UIApplication app)
+            {
+                _owner.ProcessAvailableRequests(app, 20);
+            }
+
+            public string GetName()
+            {
+                return "SC REVIT queued request processor";
+            }
+        }
         private class FireBranchItem
         {
             public FamilyInstance Sprinkler { get; set; }
@@ -103,6 +126,14 @@ namespace RfaMetadataAddin
                 InitializeDrainageDocumentState(application);
                 stage = "register_preview_server";
                 DrainagePreviewServer.Register();
+                stage = "register_queue_external_event";
+                _queueExternalEventHandler = new QueueExternalEventHandler(this);
+                _queueExternalEvent = ExternalEvent.Create(_queueExternalEventHandler);
+                _requestWatcher = new FileSystemWatcher(RequestDir, "*.json");
+                _requestWatcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite;
+                _requestWatcher.Created += OnQueueRequestAvailable;
+                _requestWatcher.Renamed += OnQueueRequestAvailable;
+                _requestWatcher.EnableRaisingEvents = true;
                 stage = "subscribe_idling";
                 application.Idling += OnIdling;
                 return Result.Succeeded;
@@ -153,6 +184,20 @@ namespace RfaMetadataAddin
         public Result OnShutdown(UIControlledApplication application)
         {
             application.Idling -= OnIdling;
+            if (_requestWatcher != null)
+            {
+                _requestWatcher.EnableRaisingEvents = false;
+                _requestWatcher.Created -= OnQueueRequestAvailable;
+                _requestWatcher.Renamed -= OnQueueRequestAvailable;
+                _requestWatcher.Dispose();
+                _requestWatcher = null;
+            }
+            if (_queueExternalEvent != null)
+            {
+                _queueExternalEvent.Dispose();
+                _queueExternalEvent = null;
+            }
+            _queueExternalEventHandler = null;
             DeleteFileQuietly(HeartbeatFile);
             DrainagePreviewServer.Unregister();
             ShutdownDrainageDocumentState(application);
@@ -195,21 +240,7 @@ namespace RfaMetadataAddin
                     _nextHeartbeatUtc = now.AddSeconds(3);
                 }
 
-                string requestFile = Directory
-                    .EnumerateFiles(RequestDir, "*.json")
-                    .FirstOrDefault();
-                if (!string.IsNullOrWhiteSpace(requestFile))
-                {
-                    TryWriteInFlightRequest(requestFile);
-                    try
-                    {
-                        ProcessRequest(uiApp, requestFile);
-                    }
-                    finally
-                    {
-                        DeleteFileQuietly(InFlightRequestFile);
-                    }
-                }
+                ProcessAvailableRequests(uiApp, 1);
             }
             catch (Exception ex)
             {
@@ -883,6 +914,75 @@ namespace RfaMetadataAddin
             }
         }
 
+        private void OnQueueRequestAvailable(object sender, FileSystemEventArgs e)
+        {
+            if (!File.Exists(AgentListenerEnabledFile) || _queueExternalEvent == null)
+            {
+                return;
+            }
+            try
+            {
+                _queueExternalEvent.Raise();
+            }
+            catch (Exception ex)
+            {
+                TryWriteListenerFault("external_event_raise", ex);
+            }
+        }
+
+        private void ProcessAvailableRequests(UIApplication uiApp, int maximumCount)
+        {
+            if (uiApp == null || !File.Exists(AgentListenerEnabledFile))
+            {
+                return;
+            }
+            _agentListenerWasEnabled = true;
+            DateTime now = DateTime.UtcNow;
+            if (now >= _nextHeartbeatUtc)
+            {
+                WriteHeartbeat();
+                _nextHeartbeatUtc = now.AddSeconds(3);
+            }
+            for (int index = 0; index < maximumCount; index++)
+            {
+                string requestFile = Directory
+                    .EnumerateFiles(RequestDir, "*.json")
+                    .FirstOrDefault();
+                if (string.IsNullOrWhiteSpace(requestFile))
+                {
+                    return;
+                }
+                TryWriteInFlightRequest(requestFile);
+                try
+                {
+                    ProcessRequest(uiApp, requestFile);
+                }
+                finally
+                {
+                    DeleteFileQuietly(InFlightRequestFile);
+                }
+            }
+        }
+
+        private static void TryWriteListenerFault(string stage, Exception ex)
+        {
+            try
+            {
+                File.WriteAllText(
+                    Path.Combine(ErrorDir, "listener_fault.json"),
+                    new JavaScriptSerializer().Serialize(new
+                    {
+                        stage = stage,
+                        error = ex.ToString()
+                    }),
+                    Encoding.UTF8);
+            }
+            catch
+            {
+                // Diagnostics must never interrupt Revit.
+            }
+        }
+
         private static void ValidateRevitModelPoints(List<Dictionary<string, object>> points)
         {
             if (points.Count == 0)
@@ -1475,6 +1575,19 @@ namespace RfaMetadataAddin
             return start.DistanceTo(point) <= toleranceFeet || end.DistanceTo(point) <= toleranceFeet;
         }
 
+        private static Pipe FindPipeEndingAtPoint(
+            IEnumerable<Pipe> pipeSegments,
+            XYZ point,
+            double toleranceFeet)
+        {
+            return pipeSegments == null
+                ? null
+                : pipeSegments.FirstOrDefault(pipe =>
+                    pipe != null
+                    && pipe.IsValidObject
+                    && IsPointAtPipeEnd(pipe, point, toleranceFeet));
+        }
+
         private static double ResolvePipeCenterZ(Level level, double fallbackZ, double offsetCm, double diameterFeet, string heightReference)
         {
             double referenceZ = (level != null ? level.Elevation : fallbackZ)
@@ -1544,7 +1657,7 @@ namespace RfaMetadataAddin
             if (target == null)
             {
                 target = mainSegments.FirstOrDefault(
-                    pipe => IsPointOnPipeXY(pipe, tiePoint, tolerance));
+                    pipe => IsPointOnPipeXYIncludingEnds(pipe, tiePoint, tolerance));
             }
             if (target == null)
             {
@@ -1691,7 +1804,12 @@ namespace RfaMetadataAddin
             return false;
         }
 
-        private static FamilyInstance TryNewCrossFitting(Document doc, Connector a, Connector b, Connector c, Connector d)
+        private static FamilyInstance TryNewCrossFitting(
+            Document doc,
+            Connector a,
+            Connector b,
+            Connector c,
+            Connector d)
         {
             if (a == null || b == null || c == null || d == null)
             {
@@ -1702,11 +1820,9 @@ namespace RfaMetadataAddin
             Connector[][] orders = new Connector[][]
             {
                 new Connector[] { a, b, c, d },
+                new Connector[] { b, a, c, d },
                 new Connector[] { a, b, d, c },
-                new Connector[] { c, d, a, b },
-                new Connector[] { c, d, b, a },
-                new Connector[] { a, c, b, d },
-                new Connector[] { a, d, b, c },
+                new Connector[] { b, a, d, c },
             };
             foreach (Connector[] order in orders)
             {
@@ -1728,6 +1844,55 @@ namespace RfaMetadataAddin
                 "NewCrossFitting | "
                 + string.Join(" | ", errors.Distinct().ToArray()));
             return null;
+        }
+
+        private static FamilyInstance TryNewPlannedCrossFitting(
+            Document doc,
+            Connector mainA,
+            Connector mainB,
+            Connector branchA,
+            Connector branchB)
+        {
+            if (mainA == null || mainB == null || branchA == null || branchB == null)
+            {
+                SetFireBranchConnectionDiagnostic(
+                    "New planned cross fitting | one or more connectors are missing");
+                return null;
+            }
+            try
+            {
+                FamilyInstance fitting = doc.Create.NewCrossFitting(
+                    mainA,
+                    mainB,
+                    branchA,
+                    branchB);
+                doc.Regenerate();
+                return fitting;
+            }
+            catch (Exception ex)
+            {
+                SetFireBranchConnectionDiagnostic("New planned cross fitting", ex);
+                return null;
+            }
+        }
+
+        private static bool ConnectorDirectlyReferencesElement(
+            Connector connector,
+            ElementId targetElementId)
+        {
+            if (connector == null
+                || targetElementId == null
+                || targetElementId == ElementId.InvalidElementId)
+            {
+                return false;
+            }
+            return connector.AllRefs
+                .Cast<Connector>()
+                .Any(reference =>
+                    reference != null
+                    && reference.ConnectorType != ConnectorType.Logical
+                    && reference.Owner != null
+                    && reference.Owner.Id == targetElementId);
         }
 
         private static bool TryCreateCrossAtPoint(Document doc, List<Pipe> mainSegments, List<Pipe> branchSegments, XYZ tiePoint)
@@ -1789,16 +1954,33 @@ namespace RfaMetadataAddin
         private static bool TryCreateCrossAtPipeEnds(
             Document doc,
             List<Pipe> mainSegments,
+            List<Pipe> branchSegmentsA,
+            List<Pipe> branchSegmentsB,
             Pipe branchA,
             Pipe branchB,
-            XYZ tiePoint)
+            XYZ tiePoint,
+            double expectedMainDiameterFeet,
+            double expectedBranchDiameterFeet,
+            List<ElementId> additionalCreatedIds,
+            out ElementId createdCrossFittingId)
         {
-            if (branchA == null || branchB == null || branchA.Id == branchB.Id)
+            createdCrossFittingId = ElementId.InvalidElementId;
+            if (branchSegmentsA == null || branchSegmentsB == null
+                || branchA == null || !branchA.IsValidObject
+                || branchB == null || !branchB.IsValidObject
+                || branchA.Id == branchB.Id)
             {
                 return false;
             }
+            ElementId branchAId = branchA.Id;
+            ElementId branchBId = branchB.Id;
             double tolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Centimeters);
-            Pipe mainTarget = mainSegments.FirstOrDefault(pipe => IsPointOnPipeXY(pipe, tiePoint, tolerance));
+            Pipe mainTarget = mainSegments == null
+                ? null
+                : mainSegments.FirstOrDefault(pipe =>
+                    pipe != null
+                    && pipe.IsValidObject
+                    && IsPointOnPipeXY(pipe, tiePoint, tolerance));
             if (mainTarget == null
                 || !IsPointAtPipeEnd(branchA, tiePoint, tolerance)
                 || !IsPointAtPipeEnd(branchB, tiePoint, tolerance))
@@ -1809,35 +1991,197 @@ namespace RfaMetadataAddin
 
             using (SubTransaction subTransaction = new SubTransaction(doc))
             {
+                string stage = "start";
                 try
                 {
+                    stage = "start subtransaction";
                     subTransaction.Start();
                     doc.Regenerate();
-                    ElementId newMainId = PlumbingUtils.BreakCurve(doc, mainTarget.Id, tiePoint);
-                    Pipe newMain = doc.GetElement(newMainId) as Pipe;
+                    ElementId mainTargetId = mainTarget.Id;
+                    stage = "break main pipe";
+                    ElementId newMainId = PlumbingUtils.BreakCurve(doc, mainTargetId, tiePoint);
+                    if (newMainId == null || newMainId == ElementId.InvalidElementId)
+                    {
+                        SetFireBranchConnectionDiagnostic(
+                            "TryCreateCrossAtPipeEnds | BreakCurve returned InvalidElementId");
+                        subTransaction.RollBack();
+                        return false;
+                    }
+                    stage = "refresh four pipes after main break";
                     doc.Regenerate();
+                    Pipe refreshedMainTarget = doc.GetElement(mainTargetId) as Pipe;
+                    Pipe newMain = doc.GetElement(newMainId) as Pipe;
+                    Pipe refreshedBranchA = doc.GetElement(branchAId) as Pipe;
+                    Pipe refreshedBranchB = doc.GetElement(branchBId) as Pipe;
 
-                    Connector mainA = FindConnectorNear(mainTarget, tiePoint);
-                    Connector mainB = newMain != null ? FindConnectorNear(newMain, tiePoint) : null;
-                    Connector sideA = FindConnectorNear(branchA, tiePoint);
-                    Connector sideB = FindConnectorNear(branchB, tiePoint);
-                    FamilyInstance fitting = TryNewCrossFitting(doc, mainA, mainB, sideA, sideB);
+                    if (refreshedMainTarget == null
+                        || !refreshedMainTarget.IsValidObject
+                        || newMain == null
+                        || !newMain.IsValidObject
+                        || refreshedBranchA == null
+                        || !refreshedBranchA.IsValidObject
+                        || refreshedBranchB == null
+                        || !refreshedBranchB.IsValidObject)
+                    {
+                        SetFireBranchConnectionDiagnostic(
+                            "TryCreateCrossAtPipeEnds | four-pipe refresh failed after BreakCurve");
+                        subTransaction.RollBack();
+                        return false;
+                    }
+
+                    stage = "read four connectors before cross";
+                    Connector mainA = FindConnectorNear(refreshedMainTarget, tiePoint);
+                    Connector mainB = FindConnectorNear(newMain, tiePoint);
+                    Connector sideA = FindConnectorNear(refreshedBranchA, tiePoint);
+                    Connector sideB = FindConnectorNear(refreshedBranchB, tiePoint);
+                    if (mainA == null || mainB == null || sideA == null || sideB == null)
+                    {
+                        SetFireBranchConnectionDiagnostic(
+                            "TryCreateCrossAtPipeEnds | one or more refreshed connectors are missing");
+                        subTransaction.RollBack();
+                        return false;
+                    }
+                    double mainADiameter = mainA.Radius * 2.0;
+                    double mainBDiameter = mainB.Radius * 2.0;
+                    double sideADiameter = sideA.Radius * 2.0;
+                    double sideBDiameter = sideB.Radius * 2.0;
+                    if (expectedMainDiameterFeet <= 0
+                        || expectedBranchDiameterFeet <= 0
+                        || Math.Abs(mainADiameter - expectedMainDiameterFeet) > 1e-7
+                        || Math.Abs(mainBDiameter - expectedMainDiameterFeet) > 1e-7
+                        || Math.Abs(sideADiameter - expectedBranchDiameterFeet) > 1e-7
+                        || Math.Abs(sideBDiameter - expectedBranchDiameterFeet) > 1e-7)
+                    {
+                        SetFireBranchConnectionDiagnostic(
+                            "Cross inputs do not match the topology plan"
+                            + " | mainA_mm=" + UnitUtils.ConvertFromInternalUnits(mainADiameter, UnitTypeId.Millimeters).ToString("0.###")
+                            + " | mainB_mm=" + UnitUtils.ConvertFromInternalUnits(mainBDiameter, UnitTypeId.Millimeters).ToString("0.###")
+                            + " | sideA_mm=" + UnitUtils.ConvertFromInternalUnits(sideADiameter, UnitTypeId.Millimeters).ToString("0.###")
+                            + " | sideB_mm=" + UnitUtils.ConvertFromInternalUnits(sideBDiameter, UnitTypeId.Millimeters).ToString("0.###")
+                            + " | expected_main_mm=" + UnitUtils.ConvertFromInternalUnits(expectedMainDiameterFeet, UnitTypeId.Millimeters).ToString("0.###")
+                            + " | expected_branch_mm=" + UnitUtils.ConvertFromInternalUnits(expectedBranchDiameterFeet, UnitTypeId.Millimeters).ToString("0.###"));
+                        subTransaction.RollBack();
+                        return false;
+                    }
+                    stage = "create planned cross";
+                    FamilyInstance fitting = TryNewPlannedCrossFitting(
+                        doc,
+                        mainA,
+                        mainB,
+                        sideA,
+                        sideB);
                     if (fitting == null)
                     {
                         subTransaction.RollBack();
                         return false;
                     }
 
-                    subTransaction.Commit();
-                    if (newMain != null)
+                    ElementId fittingId = fitting.Id;
+                    stage = "refresh four pipes after cross";
+                    doc.Regenerate();
+                    Pipe verifiedMainTarget = doc.GetElement(mainTargetId) as Pipe;
+                    Pipe verifiedNewMain = doc.GetElement(newMainId) as Pipe;
+                    Pipe verifiedBranchA = doc.GetElement(branchAId) as Pipe;
+                    Pipe verifiedBranchB = doc.GetElement(branchBId) as Pipe;
+                    FamilyInstance verifiedFitting = doc.GetElement(fittingId) as FamilyInstance;
+                    if (verifiedMainTarget == null
+                        || !verifiedMainTarget.IsValidObject
+                        || verifiedNewMain == null
+                        || !verifiedNewMain.IsValidObject
+                        || verifiedBranchA == null
+                        || !verifiedBranchA.IsValidObject
+                        || verifiedBranchB == null
+                        || !verifiedBranchB.IsValidObject
+                        || verifiedFitting == null
+                        || !verifiedFitting.IsValidObject)
                     {
-                        mainSegments.Add(newMain);
+                        SetFireBranchConnectionDiagnostic(
+                            "TryCreateCrossAtPipeEnds | four-pipe refresh failed after cross creation");
+                        subTransaction.RollBack();
+                        return false;
+                    }
+                    stage = "verify refreshed cross connectors";
+                    Connector[] crossInputs = new Connector[]
+                    {
+                        FindConnectorNear(verifiedMainTarget, tiePoint),
+                        FindConnectorNear(verifiedNewMain, tiePoint),
+                        FindConnectorNear(verifiedBranchA, tiePoint),
+                        FindConnectorNear(verifiedBranchB, tiePoint),
+                    };
+                    bool crossPathVerified = true;
+                    var crossIntermediateFittingIds = new List<ElementId>();
+                    foreach (Connector connector in crossInputs)
+                    {
+                        if (connector == null || !connector.IsConnected)
+                        {
+                            crossPathVerified = false;
+                            break;
+                        }
+                        if (ConnectorDirectlyReferencesElement(connector, fittingId))
+                        {
+                            continue;
+                        }
+                        List<ElementId> intermediateFittingIds;
+                        if (!TryFindPipeFittingPathToTarget(
+                            connector,
+                            fittingId,
+                            out intermediateFittingIds))
+                        {
+                            crossPathVerified = false;
+                            break;
+                        }
+                        foreach (ElementId intermediateId in intermediateFittingIds)
+                        {
+                            if (intermediateId != null
+                                && intermediateId != ElementId.InvalidElementId
+                                && crossIntermediateFittingIds.All(id => id != intermediateId))
+                            {
+                                crossIntermediateFittingIds.Add(intermediateId);
+                            }
+                        }
+                    }
+                    if (!crossPathVerified)
+                    {
+                        SetFireBranchConnectionDiagnostic(
+                            "TryCreateCrossAtPipeEnds | planned cross fitting path verification failed");
+                        subTransaction.RollBack();
+                        return false;
+                    }
+
+                    stage = "commit cross subtransaction";
+                    subTransaction.Commit();
+                    doc.Regenerate();
+                    createdCrossFittingId = fittingId;
+                    if (additionalCreatedIds != null)
+                    {
+                        additionalCreatedIds.Add(fittingId);
+                        foreach (ElementId intermediateId in crossIntermediateFittingIds)
+                        {
+                            additionalCreatedIds.Add(intermediateId);
+                        }
+                    }
+                    mainSegments.RemoveAll(pipe =>
+                        pipe == null
+                        || !pipe.IsValidObject
+                        || pipe.Id == mainTargetId
+                        || pipe.Id == newMainId);
+                    Pipe committedMainTarget = doc.GetElement(mainTargetId) as Pipe;
+                    Pipe committedNewMain = doc.GetElement(newMainId) as Pipe;
+                    if (committedMainTarget != null && committedMainTarget.IsValidObject)
+                    {
+                        mainSegments.Add(committedMainTarget);
+                    }
+                    if (committedNewMain != null && committedNewMain.IsValidObject)
+                    {
+                        mainSegments.Add(committedNewMain);
                     }
                     return true;
                 }
                 catch (Exception ex)
                 {
-                    SetFireBranchConnectionDiagnostic("TryCreateCrossAtPipeEnds", ex);
+                    SetFireBranchConnectionDiagnostic(
+                        "TryCreateCrossAtPipeEnds | stage=" + stage,
+                        ex);
                     if (subTransaction.GetStatus() == TransactionStatus.Started)
                     {
                         subTransaction.RollBack();
@@ -1845,6 +2189,90 @@ namespace RfaMetadataAddin
                     return false;
                 }
             }
+        }
+
+        private static bool TryFindPipeFittingPathToTarget(
+            Connector startConnector,
+            ElementId targetFittingId,
+            out List<ElementId> intermediateFittingIds)
+        {
+            intermediateFittingIds = new List<ElementId>();
+            if (startConnector == null
+                || targetFittingId == null
+                || targetFittingId == ElementId.InvalidElementId)
+            {
+                return false;
+            }
+
+            var pending = new Queue<Tuple<FamilyInstance, List<ElementId>, int>>();
+            var visited = new HashSet<long>();
+            foreach (Connector reference in startConnector.AllRefs.Cast<Connector>())
+            {
+                Element owner = reference == null ? null : reference.Owner;
+                if (owner == null
+                    || owner is MEPSystem
+                    || reference.ConnectorType == ConnectorType.Logical)
+                {
+                    continue;
+                }
+                if (owner.Id == targetFittingId)
+                {
+                    return true;
+                }
+                FamilyInstance fitting = owner as FamilyInstance;
+                if (fitting == null
+                    || fitting.Category == null
+                    || fitting.Category.Id.Value != (long)BuiltInCategory.OST_PipeFitting
+                    || !visited.Add(fitting.Id.Value))
+                {
+                    continue;
+                }
+                pending.Enqueue(Tuple.Create(
+                    fitting,
+                    new List<ElementId> { fitting.Id },
+                    1));
+            }
+
+            while (pending.Count > 0)
+            {
+                Tuple<FamilyInstance, List<ElementId>, int> current = pending.Dequeue();
+                ConnectorSet connectors = current.Item1.MEPModel == null
+                    ? null
+                    : current.Item1.MEPModel.ConnectorManager.Connectors;
+                if (connectors == null || current.Item3 > 4)
+                {
+                    continue;
+                }
+                foreach (Connector connector in connectors.Cast<Connector>())
+                {
+                    foreach (Connector reference in connector.AllRefs.Cast<Connector>())
+                    {
+                        Element owner = reference == null ? null : reference.Owner;
+                        if (owner == null
+                            || owner is MEPSystem
+                            || reference.ConnectorType == ConnectorType.Logical)
+                        {
+                            continue;
+                        }
+                        if (owner.Id == targetFittingId)
+                        {
+                            intermediateFittingIds = current.Item2;
+                            return true;
+                        }
+                        FamilyInstance nextFitting = owner as FamilyInstance;
+                        if (nextFitting == null
+                            || nextFitting.Category == null
+                            || nextFitting.Category.Id.Value != (long)BuiltInCategory.OST_PipeFitting
+                            || !visited.Add(nextFitting.Id.Value))
+                        {
+                            continue;
+                        }
+                        var nextPath = new List<ElementId>(current.Item2) { nextFitting.Id };
+                        pending.Enqueue(Tuple.Create(nextFitting, nextPath, current.Item3 + 1));
+                    }
+                }
+            }
+            return false;
         }
 
         private static bool TryConnectPipeToRun(Document doc, List<Pipe> runSegments, Pipe connectingPipe, XYZ tiePoint)
@@ -4406,8 +4834,17 @@ namespace RfaMetadataAddin
                 }
                 Document doc = uiApp.ActiveUIDocument.Document;
                 if (action == "create_fire_branch_pipes"
+                    || action == "test_fire_branch_pipes"
                     || action == "create_fire_branch_preview")
                 {
+                    string executionMode = payload.ContainsKey("execution_mode") && payload["execution_mode"] != null
+                        ? payload["execution_mode"].ToString().Trim().ToLowerInvariant()
+                        : "commit";
+                    if (action == "test_fire_branch_pipes")
+                    {
+                        uiApp.ActiveUIDocument.RefreshActiveView();
+                        return;
+                    }
                     DrainagePreviewServer.Clear(doc);
                     TryDeletePreviewGroupById(doc, ReadLong(payload, "preview_group_id", 0));
                 }

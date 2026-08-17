@@ -15,6 +15,9 @@ namespace RfaMetadataAddin
             public XYZ End { get; set; }
             public XYZ Direction { get; set; }
             public string Layer { get; set; }
+            public string ColorKey { get; set; }
+            public string GeometryKind { get; set; }
+            public bool ClosedGeometry { get; set; }
         }
 
         private class CadPathSource
@@ -260,6 +263,27 @@ namespace RfaMetadataAddin
                 .Take(10)
                 .Select(item => new { name = item.Key, matched_samples = item.Value })
                 .ToList();
+            Autodesk.Revit.DB.Transform importTransform = best.Source.ImportInstance.GetTotalTransform();
+            List<object> diameterProbeSegments = BuildFireBranchDiameterProbeSegments(
+                rows,
+                best.Source,
+                branchZ,
+                distanceTolerance,
+                cellSize,
+                angleToleranceDegrees);
+            List<object> mainContextSegments = BuildFireBranchMainContextSegments(rows);
+            List<object> cadRouteGeometrySegments = best.Source.Segments
+                .Select((segment, index) => new
+                {
+                    segment_id = "cad-route-" + index,
+                    start = SerializeCadPathPoint(segment.Start),
+                    end = SerializeCadPathPoint(segment.End),
+                    layer = segment.Layer,
+                    color_key = segment.ColorKey,
+                    geometry_kind = segment.GeometryKind,
+                    closed_geometry = segment.ClosedGeometry
+                } as object)
+                .ToList();
 
             return new
             {
@@ -277,6 +301,13 @@ namespace RfaMetadataAddin
                 selected_import_id = best.Source.ImportInstance.Id.Value,
                 selected_source_name = best.Source.Name,
                 selected_source_path = best.Source.Path,
+                import_transform = new
+                {
+                    origin = SerializeCadPathPoint(importTransform.Origin),
+                    basis_x = SerializeCadPathPoint(importTransform.BasisX),
+                    basis_y = SerializeCadPathPoint(importTransform.BasisY),
+                    basis_z = SerializeCadPathPoint(importTransform.BasisZ)
+                },
                 coordinate_verified = best.Source.CoordinateVerified,
                 anchor_count = best.Source.AnchorCount,
                 anchor_geometry_sufficient = best.Source.AnchorGeometrySufficient,
@@ -296,9 +327,171 @@ namespace RfaMetadataAddin
                 distance_tolerance_mm = 150,
                 angle_tolerance_degrees = angleToleranceDegrees,
                 matched_layers = matchedLayers,
+                diameter_probe_segments = diameterProbeSegments,
+                cad_route_geometry_segments = cadRouteGeometrySegments,
+                main_context_segments = mainContextSegments,
                 sources = sourceResults,
                 warning_codes = warningCodes
             };
+        }
+
+        private static object SerializeCadPathPoint(XYZ point)
+        {
+            return new { x = point.X, y = point.Y, z = point.Z };
+        }
+
+        private static List<object> BuildFireBranchDiameterProbeSegments(
+            List<List<FireBranchItem>> rows,
+            CadPathSource source,
+            double branchZ,
+            double distanceTolerance,
+            double cellSize,
+            double angleToleranceDegrees)
+        {
+            var result = new List<object>();
+            if (source == null || source.Segments.Count == 0)
+            {
+                return result;
+            }
+
+            var index = new CadPathSpatialIndex(source.Segments, cellSize, distanceTolerance);
+            double duplicateTolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Millimeters);
+            for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+            {
+                List<FireBranchItem> row = rows[rowIndex];
+                if (row.Count == 0)
+                {
+                    continue;
+                }
+                var targets = new List<FireBranchItem>();
+                foreach (FireBranchItem target in row
+                    .OrderBy(item => item.BranchParameter))
+                {
+                    if (target.BranchParameter > duplicateTolerance
+                        && (targets.Count == 0
+                            || Math.Abs(target.BranchParameter - targets[targets.Count - 1].BranchParameter) > duplicateTolerance))
+                    {
+                        targets.Add(target);
+                    }
+                }
+
+                FireBranchItem first = row[0];
+                double rowMain = row.Average(item => item.MainParameter);
+                double previousParameter = 0;
+                for (int sequence = 0; sequence < targets.Count; sequence++)
+                {
+                    FireBranchItem target = targets[sequence];
+                    double currentParameter = target.BranchParameter;
+                    XYZ start = new XYZ(
+                        first.MainStart.X + first.MainDirection.X * rowMain + first.BranchDirection.X * previousParameter,
+                        first.MainStart.Y + first.MainDirection.Y * rowMain + first.BranchDirection.Y * previousParameter,
+                        branchZ);
+                    XYZ end = new XYZ(
+                        first.MainStart.X + first.MainDirection.X * rowMain + first.BranchDirection.X * currentParameter,
+                        first.MainStart.Y + first.MainDirection.Y * rowMain + first.BranchDirection.Y * currentParameter,
+                        branchZ);
+                    XYZ midpoint = start + (end - start) * 0.5;
+                    CadPathSegment match;
+                    double distance;
+                    bool matched = TryFindCadPathMatch(
+                        index,
+                        midpoint,
+                        first.BranchDirection,
+                        distanceTolerance,
+                        angleToleranceDegrees,
+                        out match,
+                        out distance);
+                    double plannedLengthMm = DistanceXY(start, end) * 304.8;
+                    double cadLengthMm = matched && match != null
+                        ? DistanceXY(match.Start, match.End) * 304.8
+                        : 0;
+                    double startOffsetMm = matched && match != null
+                        ? DistancePointToSegmentXY(start, match.Start, match.End) * 304.8
+                        : 0;
+                    double midpointOffsetMm = matched && match != null
+                        ? DistancePointToSegmentXY(midpoint, match.Start, match.End) * 304.8
+                        : 0;
+                    double endOffsetMm = matched && match != null
+                        ? DistancePointToSegmentXY(end, match.Start, match.End) * 304.8
+                        : 0;
+                    double angleDeltaDegrees = matched && match != null
+                        ? Math.Acos(Math.Max(
+                            -1,
+                            Math.Min(1, Math.Abs(DotXY(first.BranchDirection, match.Direction)))))
+                            * 180.0 / Math.PI
+                        : 0;
+                    double lengthDeltaMm = matched && match != null
+                        ? cadLengthMm - plannedLengthMm
+                        : 0;
+                    bool geometryExact = matched
+                        && match != null
+                        && startOffsetMm <= 5.0
+                        && midpointOffsetMm <= 5.0
+                        && endOffsetMm <= 5.0
+                        && angleDeltaDegrees <= 1.0
+                        && Math.Abs(lengthDeltaMm) <= 5.0;
+                    result.Add(new
+                    {
+                        segment_id = "row-" + rowIndex + "-" + sequence,
+                        row_index = rowIndex,
+                        sequence = sequence,
+                        sprinkler_id = target.Sprinkler.Id.Value,
+                        is_sprinkler_terminal = true,
+                        start = SerializeCadPathPoint(start),
+                        end = SerializeCadPathPoint(end),
+                        cad_matched = matched,
+                        layer = matched && match != null ? match.Layer : "",
+                        color_key = matched && match != null ? match.ColorKey : "",
+                        cad_offset_mm = matched ? distance * 304.8 : 0,
+                        planned_length_mm = plannedLengthMm,
+                        cad_length_mm = cadLengthMm,
+                        length_delta_mm = lengthDeltaMm,
+                        cad_start_offset_mm = startOffsetMm,
+                        cad_midpoint_offset_mm = midpointOffsetMm,
+                        cad_end_offset_mm = endOffsetMm,
+                        cad_angle_delta_degrees = angleDeltaDegrees,
+                        cad_geometry_exact = geometryExact,
+                        cad_start = matched && match != null
+                            ? SerializeCadPathPoint(match.Start)
+                            : null,
+                        cad_end = matched && match != null
+                            ? SerializeCadPathPoint(match.End)
+                            : null
+                    });
+                    previousParameter = currentParameter;
+                }
+            }
+            return result;
+        }
+
+        private static List<object> BuildFireBranchMainContextSegments(
+            List<List<FireBranchItem>> rows)
+        {
+            var result = new List<object>();
+            var seenPipeIds = new HashSet<long>();
+            foreach (FireBranchItem item in rows.SelectMany(row => row))
+            {
+                if (item.MainPipe == null || !seenPipeIds.Add(item.MainPipeId))
+                {
+                    continue;
+                }
+                LocationCurve location = item.MainPipe.Location as LocationCurve;
+                if (location == null || location.Curve == null)
+                {
+                    continue;
+                }
+                XYZ start = location.Curve.GetEndPoint(0);
+                XYZ end = location.Curve.GetEndPoint(1);
+                result.Add(new
+                {
+                    segment_id = "main-" + item.MainPipeId,
+                    topology_role = "main",
+                    source_element_id = item.MainPipeId,
+                    start = SerializeCadPathPoint(start),
+                    end = SerializeCadPathPoint(end)
+                });
+            }
+            return result;
         }
 
         private static List<Line> BuildFireBranchPlannedLines(
@@ -533,10 +726,14 @@ namespace RfaMetadataAddin
             CadPathExtractionScope extractionScope)
         {
             string layer = GetCadPathLayerName(doc, item);
+            string colorKey = GetCadPathColorKey(doc, item);
             PolyLine polyLine = item as PolyLine;
             if (polyLine != null)
             {
                 IList<XYZ> points = polyLine.GetCoordinates();
+                bool closedGeometry = points.Count > 2
+                    && DistanceXY(points[0], points[points.Count - 1])
+                        <= UnitUtils.ConvertToInternalUnits(1, UnitTypeId.Millimeters);
                 for (int index = 1; index < points.Count; index++)
                 {
                     AddCadPathSegment(
@@ -544,6 +741,9 @@ namespace RfaMetadataAddin
                         transform.OfPoint(points[index - 1]),
                         transform.OfPoint(points[index]),
                         layer,
+                        colorKey,
+                        "polyline",
+                        closedGeometry,
                         extractionScope);
                 }
                 return;
@@ -555,8 +755,13 @@ namespace RfaMetadataAddin
                 return;
             }
             IList<XYZ> tessellated;
+            string geometryKind = curve is Line
+                ? "line"
+                : curve.GetType().Name.ToLowerInvariant();
+            bool closedCurve = false;
             try
             {
+                closedCurve = curve.IsCyclic;
                 tessellated = curve.Tessellate();
             }
             catch
@@ -570,6 +775,9 @@ namespace RfaMetadataAddin
                     transform.OfPoint(tessellated[index - 1]),
                     transform.OfPoint(tessellated[index]),
                     layer,
+                    colorKey,
+                    geometryKind,
+                    closedCurve,
                     extractionScope);
             }
         }
@@ -579,6 +787,9 @@ namespace RfaMetadataAddin
             XYZ start,
             XYZ end,
             string layer,
+            string colorKey,
+            string geometryKind,
+            bool closedGeometry,
             CadPathExtractionScope extractionScope)
         {
             XYZ direction = NormalizeXY(end - start);
@@ -604,7 +815,10 @@ namespace RfaMetadataAddin
                 Start = start,
                 End = end,
                 Direction = direction,
-                Layer = layer
+                Layer = layer,
+                ColorKey = colorKey,
+                GeometryKind = geometryKind,
+                ClosedGeometry = closedGeometry
             });
         }
 
@@ -676,6 +890,27 @@ namespace RfaMetadataAddin
                 GraphicsStyle style = doc.GetElement(item.GraphicsStyleId) as GraphicsStyle;
                 Category category = style != null ? style.GraphicsStyleCategory : null;
                 return category != null ? category.Name ?? "" : "";
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static string GetCadPathColorKey(Document doc, GeometryObject item)
+        {
+            try
+            {
+                if (item == null || item.GraphicsStyleId == ElementId.InvalidElementId)
+                {
+                    return "";
+                }
+                GraphicsStyle style = doc.GetElement(item.GraphicsStyleId) as GraphicsStyle;
+                Category category = style != null ? style.GraphicsStyleCategory : null;
+                Autodesk.Revit.DB.Color color = category != null ? category.LineColor : null;
+                return color != null && color.IsValid
+                    ? "rgb:" + color.Red + "," + color.Green + "," + color.Blue
+                    : "";
             }
             catch
             {

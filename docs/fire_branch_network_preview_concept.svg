@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">消防支管路網 SVG 核對示意圖</title>
+  <desc id="desc">以 CAD 顏色顯示主管、支管、異徑接頭、管徑標註及待確認管段的互動式路網預覽概念。</desc>
+  <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0V24" fill="none" stroke="#263344" stroke-width="1"/>
+    </pattern>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="10" flood-color="#000" flood-opacity=".35"/>
+    </filter>
+    <style>
+      text { font-family: "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
+      .label { fill:#dbe7f5; font-size:16px; paint-order:stroke; stroke:#121a24; stroke-width:5px; stroke-linejoin:round; }
+      .minor { fill:#8fa3b8; font-size:14px; }
+      .segment-id { fill:#8fa3b8; font-size:12px; letter-spacing:.4px; }
+      .pipe { fill:none; stroke-linecap:round; stroke-linejoin:round; }
+      .node { fill:#172231; stroke:#c7d6e5; stroke-width:2; }
+      .head { fill:#172231; stroke:#f4f7fb; stroke-width:2; }
+      .panel-title { fill:#f4f7fb; font-size:18px; font-weight:700; }
+      .value { fill:#e8f0f8; font-size:15px; }
+      .key { fill:#91a4b8; font-size:14px; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#0f1722"/>
+  <rect x="24" y="24" width="1552" height="952" rx="14" fill="#151f2c" stroke="#334459" filter="url(#softShadow)"/>
+
+  <!-- Header -->
+  <rect x="24" y="24" width="1552" height="78" rx="14" fill="#1c2938"/>
+  <rect x="24" y="88" width="1552" height="14" fill="#1c2938"/>
+  <circle cx="61" cy="63" r="13" fill="#36d6e7"/>
+  <path d="M52 72L70 54M52 54l18 18" stroke="#172231" stroke-width="4" stroke-linecap="round"/>
+  <text x="88" y="59" fill="#f5f8fc" font-size="23" font-weight="700">消防支管路網核對</text>
+  <text x="88" y="82" fill="#8fa3b8" font-size="13">分析批次 20260812-示意｜14 排｜77 管段｜3 個待確認</text>
+  <rect x="1160" y="45" width="112" height="36" rx="7" fill="#263648" stroke="#40556d"/>
+  <text x="1216" y="68" fill="#cfdeed" text-anchor="middle" font-size="14">回到全圖</text>
+  <rect x="1284" y="45" width="124" height="36" rx="7" fill="#263648" stroke="#40556d"/>
+  <text x="1346" y="68" fill="#cfdeed" text-anchor="middle" font-size="14">只看待確認</text>
+  <rect x="1420" y="45" width="128" height="36" rx="7" fill="#177b8b" stroke="#36d6e7"/>
+  <text x="1484" y="68" fill="#fff" text-anchor="middle" font-size="14" font-weight="700">匯出 SVG</text>
+
+  <!-- Drawing canvas -->
+  <rect x="42" y="120" width="1110" height="834" rx="10" fill="#111a25" stroke="#2e4054"/>
+  <rect x="42" y="120" width="1110" height="834" rx="10" fill="url(#grid)" opacity=".68"/>
+  <text x="68" y="151" class="minor">平面拓樸｜顏色沿用 CAD 線段｜雙擊管段可回到 Revit 定位</text>
+
+  <!-- Main riser / feeder -->
+  <g id="main-dn100" data-diameter-mm="100" data-evidence="text">
+    <path class="pipe" d="M560 190V890" stroke="#18d6e8" stroke-width="18" opacity=".2" filter="url(#glow)"/>
+    <path class="pipe" d="M560 190V890" stroke="#18d6e8" stroke-width="9"/>
+    <text x="582" y="223" class="label">4&quot; / DN100</text>
+    <text x="582" y="245" class="segment-id">主管 M-01｜文字判定</text>
+  </g>
+
+  <!-- Row 1, left branch -->
+  <g id="r01-s01" data-diameter-mm="50" data-color-index="3">
+    <path class="pipe" d="M560 300H398" stroke="#40db74" stroke-width="7"/>
+    <text x="420" y="282" class="label">2&quot; / DN50</text>
+    <text x="430" y="323" class="segment-id">第 1 排 / 第 1 段</text>
+  </g>
+  <g aria-label="異徑接頭 DN50 轉 DN40">
+    <path d="M398 290L374 294V306L398 310Z" fill="#d6e4ef" stroke="#ffffff" stroke-width="1.5"/>
+    <text x="386" y="342" class="minor" text-anchor="middle">50×40</text>
+  </g>
+  <g id="r01-s02" data-diameter-mm="40" data-color-index="30">
+    <path class="pipe" d="M374 300H235" stroke="#ff8d2b" stroke-width="6"/>
+    <text x="254" y="282" class="label">1 1/2&quot; / DN40</text>
+    <text x="269" y="323" class="segment-id">第 1 排 / 第 2 段</text>
+  </g>
+  <g aria-label="異徑接頭 DN40 轉 DN32">
+    <path d="M235 291L213 295V305L235 309Z" fill="#d6e4ef" stroke="#ffffff" stroke-width="1.5"/>
+    <text x="224" y="342" class="minor" text-anchor="middle">40×32</text>
+  </g>
+  <g id="r01-s03" data-diameter-mm="32" data-color-index="2">
+    <path class="pipe" d="M213 300H102" stroke="#ffd84a" stroke-width="5"/>
+    <text x="104" y="282" class="label">1 1/4&quot; / DN32</text>
+    <text x="124" y="323" class="segment-id">第 1 排 / 第 3 段</text>
+  </g>
+  <circle cx="560" cy="300" r="8" class="node"/>
+  <g transform="translate(100 300)"><circle r="10" class="head"/><path d="M-9 8L0 18L9 8M-14 21H14" fill="none" stroke="#f4f7fb" stroke-width="2"/></g>
+
+  <!-- Row 2, right branch with selected segment -->
+  <g id="r05-s01" data-diameter-mm="40" data-color-index="30">
+    <path class="pipe" d="M560 445H715" stroke="#ff8d2b" stroke-width="6"/>
+    <text x="586" y="426" class="label">1 1/2&quot; / DN40</text>
+    <text x="600" y="468" class="segment-id">第 5 排 / 第 1 段</text>
+  </g>
+  <g aria-label="異徑接頭 DN40 轉 DN32">
+    <path d="M715 436L739 440V450L715 454Z" fill="#d6e4ef" stroke="#ffffff" stroke-width="1.5"/>
+    <text x="727" y="486" class="minor" text-anchor="middle">40×32</text>
+  </g>
+  <g id="r05-s02" data-diameter-mm="32" data-color-index="3" aria-label="目前選取管段">
+    <path class="pipe" d="M739 445H896" stroke="#40db74" stroke-width="17" opacity=".23" filter="url(#glow)"/>
+    <path class="pipe" d="M739 445H896" stroke="#40db74" stroke-width="6"/>
+    <rect x="730" y="421" width="176" height="48" rx="8" fill="none" stroke="#8ef5ad" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="763" y="426" class="label">1 1/4&quot; / DN32</text>
+    <text x="762" y="488" fill="#8ef5ad" font-size="13">已選取｜第 5 排 / 第 2 段</text>
+  </g>
+  <g aria-label="異徑接頭 DN32 轉 DN25">
+    <path d="M896 437L918 440V450L896 453Z" fill="#d6e4ef" stroke="#ffffff" stroke-width="1.5"/>
+    <text x="907" y="486" class="minor" text-anchor="middle">32×25</text>
+  </g>
+  <g id="r05-s03" data-diameter-mm="25" data-color-index="1">
+    <path class="pipe" d="M918 445H1071" stroke="#ff5959" stroke-width="4"/>
+    <text x="948" y="426" class="label">1&quot; / DN25</text>
+    <text x="956" y="468" class="segment-id">第 5 排 / 第 3 段</text>
+  </g>
+  <circle cx="560" cy="445" r="8" class="node"/>
+  <g transform="translate(1073 445)"><circle r="10" class="head"/><path d="M-9 8L0 18L9 8M-14 21H14" fill="none" stroke="#f4f7fb" stroke-width="2"/></g>
+
+  <!-- Row 3, symmetric branch and multiple sprinkler drops -->
+  <g id="r09-s01" data-diameter-mm="40" data-color-index="30">
+    <path class="pipe" d="M560 610H735" stroke="#ff8d2b" stroke-width="6"/>
+    <text x="590" y="591" class="label">1 1/2&quot; / DN40</text>
+  </g>
+  <g id="r09-s02" data-diameter-mm="32" data-color-index="3">
+    <path class="pipe" d="M735 610H895" stroke="#40db74" stroke-width="5"/>
+    <text x="763" y="591" class="label">1 1/4&quot; / DN32</text>
+  </g>
+  <g id="r09-s03" data-diameter-mm="25" data-color-index="1">
+    <path class="pipe" d="M895 610H1068" stroke="#ff5959" stroke-width="4"/>
+    <text x="948" y="591" class="label">1&quot; / DN25</text>
+  </g>
+  <path d="M735 601L758 605V615L735 619Z" fill="#d6e4ef" stroke="#fff" stroke-width="1.5"/>
+  <path d="M895 602L917 605V615L895 618Z" fill="#d6e4ef" stroke="#fff" stroke-width="1.5"/>
+  <circle cx="560" cy="610" r="8" class="node"/>
+  <g transform="translate(1071 610)"><circle r="10" class="head"/><path d="M-9 8L0 18L9 8M-14 21H14" fill="none" stroke="#f4f7fb" stroke-width="2"/></g>
+  <path class="pipe" d="M660 610V675" stroke="#ff5959" stroke-width="4"/>
+  <g transform="translate(660 678)"><circle r="10" class="head"/><path d="M-9 8L0 18L9 8M-14 21H14" fill="none" stroke="#f4f7fb" stroke-width="2"/></g>
+  <path class="pipe" d="M820 610V675" stroke="#ff5959" stroke-width="4"/>
+  <g transform="translate(820 678)"><circle r="10" class="head"/><path d="M-9 8L0 18L9 8M-14 21H14" fill="none" stroke="#f4f7fb" stroke-width="2"/></g>
+
+  <!-- Review-required row -->
+  <g id="r12-review" data-status="review_required">
+    <path class="pipe" d="M560 785H770" stroke="#df5cff" stroke-width="12" opacity=".2" filter="url(#glow)"/>
+    <path class="pipe" d="M560 785H770" stroke="#df5cff" stroke-width="5" stroke-dasharray="12 8"/>
+    <text x="600" y="765" class="label">待確認：1 1/4&quot; 或 1&quot;</text>
+    <text x="600" y="809" fill="#f19cff" font-size="13">第 12 排 / 第 2 段｜文字與線色衝突</text>
+    <path d="M780 765L797 795H763Z" fill="#f5b942" stroke="#ffe7a8"/>
+    <text x="780" y="790" fill="#151f2c" text-anchor="middle" font-size="18" font-weight="800">!</text>
+  </g>
+  <circle cx="560" cy="785" r="8" class="node"/>
+
+  <!-- Right inspection panel -->
+  <rect x="1170" y="120" width="388" height="834" rx="10" fill="#192432" stroke="#35495f"/>
+  <text x="1196" y="157" class="panel-title">選取管段</text>
+  <rect x="1194" y="176" width="340" height="132" rx="8" fill="#111a25" stroke="#2f4358"/>
+  <line x1="1220" y1="225" x2="1372" y2="225" stroke="#40db74" stroke-width="8" stroke-linecap="round"/>
+  <path d="M1372 217L1400 221V229L1372 233Z" fill="#d6e4ef" stroke="#fff"/>
+  <line x1="1400" y1="225" x2="1507" y2="225" stroke="#ff5959" stroke-width="5" stroke-linecap="round"/>
+  <text x="1220" y="264" fill="#8ef5ad" font-size="14">第 5 排 / 第 2 段</text>
+  <text x="1220" y="288" fill="#c8d8e8" font-size="13">雙擊後同步 Zoom 至 Revit 預覽線</text>
+
+  <text x="1196" y="345" class="key">判定管徑</text><text x="1518" y="345" class="value" text-anchor="end">1 1/4&quot; / DN32</text>
+  <line x1="1196" y1="360" x2="1532" y2="360" stroke="#304257"/>
+  <text x="1196" y="389" class="key">CAD 顏色</text><circle cx="1452" cy="384" r="7" fill="#40db74"/><text x="1518" y="389" class="value" text-anchor="end">綠色（3）</text>
+  <line x1="1196" y1="404" x2="1532" y2="404" stroke="#304257"/>
+  <text x="1196" y="433" class="key">判定依據</text><text x="1518" y="433" class="value" text-anchor="end">文字＋線色</text>
+  <line x1="1196" y1="448" x2="1532" y2="448" stroke="#304257"/>
+  <text x="1196" y="477" class="key">CAD 長度</text><text x="1518" y="477" class="value" text-anchor="end">3,620 mm</text>
+  <line x1="1196" y1="492" x2="1532" y2="492" stroke="#304257"/>
+  <text x="1196" y="521" class="key">路徑偏差</text><text x="1518" y="521" fill="#8ef5ad" font-size="15" text-anchor="end">2.4 mm｜吻合</text>
+
+  <text x="1196" y="574" class="panel-title">圖例</text>
+  <line x1="1202" y1="611" x2="1250" y2="611" stroke="#18d6e8" stroke-width="8" stroke-linecap="round"/><text x="1270" y="617" class="value">4&quot; / DN100</text>
+  <line x1="1202" y1="650" x2="1250" y2="650" stroke="#ff8d2b" stroke-width="6" stroke-linecap="round"/><text x="1270" y="656" class="value">1 1/2&quot; / DN40</text>
+  <line x1="1202" y1="689" x2="1250" y2="689" stroke="#40db74" stroke-width="5" stroke-linecap="round"/><text x="1270" y="695" class="value">1 1/4&quot; / DN32</text>
+  <line x1="1202" y1="728" x2="1250" y2="728" stroke="#ff5959" stroke-width="4" stroke-linecap="round"/><text x="1270" y="734" class="value">1&quot; / DN25</text>
+  <path d="M1203 759L1235 764V776L1203 781Z" fill="#d6e4ef" stroke="#fff"/><text x="1270" y="777" class="value">異徑接頭</text>
+  <line x1="1202" y1="816" x2="1250" y2="816" stroke="#df5cff" stroke-width="5" stroke-dasharray="9 6"/><text x="1270" y="822" class="value">待確認管段</text>
+
+  <rect x="1194" y="855" width="340" height="72" rx="8" fill="#211d2b" stroke="#70437d"/>
+  <text x="1214" y="882" fill="#f0b2ff" font-size="14" font-weight="700">3 個管段需要確認</text>
+  <text x="1214" y="906" fill="#a99ab0" font-size="13">正式建立前不會自動套用模糊結果</text>
+</svg>

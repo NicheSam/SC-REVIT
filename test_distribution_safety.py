@@ -28,7 +28,7 @@ class AgentListenerControlTests(unittest.TestCase):
             ):
                 status = listener_status.get_listener_status()
             self.assertFalse(status["enabled"])
-            self.assertEqual(status["label"], "Agent 未啟用")
+            self.assertEqual(status["label"], "待命")
 
     def test_enable_and_disable_agent_listener(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -54,8 +54,40 @@ class AgentListenerControlTests(unittest.TestCase):
             self.assertFalse(marker.exists())
             self.assertFalse(heartbeat.exists())
 
+    def test_gui_request_temporarily_owns_listener_marker(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            queue_dir = Path(temp_dir)
+            marker = queue_dir / "agent_listener.enabled"
+            heartbeat = queue_dir / "listener_heartbeat.json"
+            with (
+                patch.object(queue_protocol, "QUEUE_DIR", queue_dir),
+                patch.object(queue_protocol, "REQUEST_DIR", queue_dir / "requests"),
+                patch.object(queue_protocol, "RESPONSE_DIR", queue_dir / "responses"),
+                patch.object(queue_protocol, "ERROR_DIR", queue_dir / "errors"),
+                patch.object(queue_protocol, "AGENT_LISTENER_ENABLED_FILE", marker),
+                patch.object(queue_protocol, "HEARTBEAT_FILE", heartbeat),
+            ):
+                queue_protocol._GUI_REQUEST_IDS.clear()
+                queue_protocol._GUI_OWNS_LISTENER_MARKER = False
+                queue_protocol.set_gui_request_mode(True)
+                try:
+                    queue_protocol._begin_gui_request("gui-request")
+                    self.assertTrue(marker.is_file())
+                    queue_protocol.finish_gui_request("gui-request")
+                    self.assertFalse(marker.exists())
+                finally:
+                    queue_protocol.set_gui_request_mode(False)
+                    queue_protocol._GUI_REQUEST_IDS.clear()
+                    queue_protocol._GUI_OWNS_LISTENER_MARKER = False
+
 
 class DistributionSafetySourceTests(unittest.TestCase):
+    def test_gui_build_does_not_accumulate_timestamped_backups(self) -> None:
+        source = (ROOT / "build_gui_exe.ps1").read_text(encoding="utf-8")
+        self.assertIn('"RevitFamilyClassifier.backup"', source)
+        self.assertNotIn('"RevitFamilyClassifier.backup-"', source)
+        self.assertIn("Remove-Item -LiteralPath $backupDist -Recurse -Force", source)
+
     def test_revit_listener_is_opt_in_and_throttled(self) -> None:
         source = (
             ROOT / "revit_addin" / "src" / "RfaMetadataApplication.cs"

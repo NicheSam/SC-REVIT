@@ -1,4 +1,5 @@
 import contextvars
+import hashlib
 import json
 import os
 import sqlite3
@@ -7,7 +8,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 APP_DATA_DIR = Path(
     os.environ.get(
@@ -50,6 +51,83 @@ def _to_json(value: Any) -> str:
 def _safe_summary(value: Any, max_len: int = 4000) -> str:
     text = _to_json(value)
     return text if len(text) <= max_len else text[:max_len] + "..."
+
+
+def _payload_record(value: Any) -> tuple[str, str]:
+    text = _to_json(value)
+    return text, hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _fire_branch_plan_metadata(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    topology = value.get("topology_plan")
+    if not isinstance(topology, dict):
+        return None
+    diameter_plan = value.get("diameter_plan") or []
+    junctions = topology.get("junctions") or []
+    row_indexes = {
+        int(item.get("row_index") or 0)
+        for item in diameter_plan
+        if isinstance(item, dict)
+    }
+    cross_count = sum(
+        isinstance(item, dict)
+        and str(item.get("kind") or "") in {"cross", "reducing_cross"}
+        for item in junctions
+    )
+    topology_text, topology_sha256 = _payload_record(topology)
+    return {
+        "schema_version": str(topology.get("schema_version") or "unknown"),
+        "plan_hash": str(value.get("model_plan_hash") or topology_sha256),
+        "topology_sha256": topology_sha256,
+        "topology_payload": topology_text,
+        "row_count": len(row_indexes),
+        "segment_count": len(diameter_plan),
+        "junction_count": len(junctions),
+        "cross_count": int(cross_count),
+        "review_required": any(
+            isinstance(item, dict) and bool(item.get("review_required"))
+            for item in junctions
+        ),
+    }
+
+
+def _request_summary(value: Any) -> str:
+    metadata = _fire_branch_plan_metadata(value)
+    if metadata is None:
+        return _safe_summary(value)
+    topology_status = "拓樸待確認" if metadata["review_required"] else "拓樸已確認"
+    return (
+        f"消防支管｜{metadata['row_count']}排｜{metadata['segment_count']}管段｜"
+        f"{metadata['cross_count']}四通｜{topology_status}｜建模要求\n"
+        f"計畫：{metadata['schema_version']}\n"
+        f"SHA-256：{metadata['plan_hash']}"
+    )
+
+
+def _failure_count(value: Any) -> int:
+    if not isinstance(value, dict):
+        return 0
+    failures = value.get("failed")
+    if not isinstance(failures, list):
+        failures = value.get("failure_details")
+    return len(failures) if isinstance(failures, list) else 0
+
+
+def _response_summary(value: Any, request_row: sqlite3.Row | None) -> str:
+    if request_row is None or not str(request_row["action"] or "").endswith("fire_branch_pipes"):
+        return _safe_summary(value)
+    created = value.get("created") if isinstance(value, dict) else None
+    created_count = len(created) if isinstance(created, list) else 0
+    failure_count = _failure_count(value)
+    result = "建模成功" if failure_count == 0 else "建模失敗"
+    summary = f"消防支管｜{result}｜建立{created_count}項｜失敗{failure_count}項"
+    if request_row["plan_schema_version"]:
+        summary += f"\n計畫：{request_row['plan_schema_version']}"
+    if request_row["plan_hash"]:
+        summary += f"\nSHA-256：{request_row['plan_hash']}"
+    return summary
 
 
 PRODUCT_EXTRA_COLUMNS = (
@@ -171,10 +249,18 @@ class BatchStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
@@ -205,8 +291,76 @@ class BatchStore:
                     updated_at TEXT NOT NULL,
                     request_summary TEXT,
                     response_summary TEXT,
+                    request_payload TEXT,
+                    request_payload_sha256 TEXT,
+                    response_payload TEXT,
+                    response_payload_sha256 TEXT,
+                    plan_schema_version TEXT,
+                    plan_hash TEXT,
+                    segment_count INTEGER,
+                    junction_count INTEGER,
+                    cross_count INTEGER,
+                    failure_count INTEGER DEFAULT 0,
                     error_message TEXT,
                     FOREIGN KEY(batch_id) REFERENCES batches(batch_id)
+                )
+                """
+            )
+            request_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(batch_requests)").fetchall()
+            }
+            request_column_types = {
+                "request_payload": "TEXT",
+                "request_payload_sha256": "TEXT",
+                "response_payload": "TEXT",
+                "response_payload_sha256": "TEXT",
+                "plan_schema_version": "TEXT",
+                "plan_hash": "TEXT",
+                "segment_count": "INTEGER",
+                "junction_count": "INTEGER",
+                "cross_count": "INTEGER",
+                "failure_count": "INTEGER DEFAULT 0",
+            }
+            for column_name, column_type in request_column_types.items():
+                if column_name not in request_columns:
+                    conn.execute(
+                        f"ALTER TABLE batch_requests ADD COLUMN {column_name} {column_type}"
+                    )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS batch_topology_plans (
+                    request_id TEXT PRIMARY KEY,
+                    batch_id TEXT NOT NULL,
+                    schema_version TEXT NOT NULL,
+                    plan_hash TEXT NOT NULL,
+                    topology_sha256 TEXT NOT NULL,
+                    topology_payload TEXT NOT NULL,
+                    row_count INTEGER NOT NULL,
+                    segment_count INTEGER NOT NULL,
+                    junction_count INTEGER NOT NULL,
+                    cross_count INTEGER NOT NULL,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(request_id) REFERENCES batch_requests(request_id),
+                    FOREIGN KEY(batch_id) REFERENCES batches(batch_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS batch_artifacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    batch_id TEXT NOT NULL,
+                    request_id TEXT,
+                    artifact_type TEXT NOT NULL,
+                    artifact_path TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(batch_id) REFERENCES batches(batch_id),
+                    FOREIGN KEY(request_id) REFERENCES batch_requests(request_id)
                 )
                 """
             )
@@ -269,21 +423,89 @@ class BatchStore:
 
     def record_request(self, batch_id: str, request_id: str, action: str, request_payload: Any) -> None:
         now = _now()
+        payload_text, payload_sha256 = _payload_record(request_payload)
+        plan = _fire_branch_plan_metadata(request_payload)
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO batch_requests(request_id, batch_id, action, status, created_at, updated_at, request_summary) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (request_id, batch_id, action, "pending", now, now, _safe_summary(request_payload)),
+                "INSERT OR REPLACE INTO batch_requests(request_id, batch_id, action, status, created_at, updated_at, request_summary, request_payload, request_payload_sha256, plan_schema_version, plan_hash, segment_count, junction_count, cross_count, failure_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    request_id,
+                    batch_id,
+                    action,
+                    "pending",
+                    now,
+                    now,
+                    _request_summary(request_payload),
+                    payload_text,
+                    payload_sha256,
+                    plan["schema_version"] if plan else None,
+                    plan["plan_hash"] if plan else None,
+                    plan["segment_count"] if plan else None,
+                    plan["junction_count"] if plan else None,
+                    plan["cross_count"] if plan else None,
+                    0,
+                ),
             )
+            if plan is not None:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO batch_topology_plans(
+                        request_id, batch_id, schema_version, plan_hash,
+                        topology_sha256, topology_payload, row_count, segment_count,
+                        junction_count, cross_count, failure_count, status,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        request_id,
+                        batch_id,
+                        plan["schema_version"],
+                        plan["plan_hash"],
+                        plan["topology_sha256"],
+                        plan["topology_payload"],
+                        plan["row_count"],
+                        plan["segment_count"],
+                        plan["junction_count"],
+                        plan["cross_count"],
+                        0,
+                        "review_required" if plan["review_required"] else "confirmed",
+                        now,
+                        now,
+                    ),
+                )
 
     def finish_request(self, request_id: str, status: str, response_payload: Any = None, error_message: str | None = None) -> None:
+        response_text = None
+        response_sha256 = None
+        if response_payload is not None:
+            response_text, response_sha256 = _payload_record(response_payload)
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT batch_id, action FROM batch_requests WHERE request_id=?",
+                "SELECT batch_id, action, plan_schema_version, plan_hash FROM batch_requests WHERE request_id=?",
                 (request_id,),
             ).fetchone()
+            failure_count = _failure_count(response_payload)
             conn.execute(
-                "UPDATE batch_requests SET status=?, updated_at=?, response_summary=?, error_message=? WHERE request_id=?",
-                (status, _now(), _safe_summary(response_payload) if response_payload is not None else None, error_message, request_id),
+                "UPDATE batch_requests SET status=?, updated_at=?, response_summary=?, response_payload=?, response_payload_sha256=?, failure_count=?, error_message=? WHERE request_id=?",
+                (
+                    status,
+                    _now(),
+                    _response_summary(response_payload, row) if response_payload is not None else None,
+                    response_text,
+                    response_sha256,
+                    failure_count,
+                    error_message,
+                    request_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE batch_topology_plans SET failure_count=?, status=?, updated_at=? WHERE request_id=?",
+                (
+                    failure_count,
+                    "failed" if status == "failed" or failure_count else "built",
+                    _now(),
+                    request_id,
+                ),
             )
             if row and response_payload is not None and status == "success" and row["action"] in TRACKED_PRODUCT_ACTIONS:
                 for record in _collect_created_product_records(response_payload):
@@ -319,6 +541,39 @@ class BatchStore:
                             record.get("location_z", ""),
                         ),
                     )
+
+    def record_artifact(
+        self,
+        batch_id: str,
+        artifact_type: str,
+        artifact_path: Path,
+        *,
+        request_id: str | None = None,
+    ) -> None:
+        path = Path(artifact_path).resolve()
+        size_bytes = path.stat().st_size
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO batch_artifacts(
+                    batch_id, request_id, artifact_type, artifact_path,
+                    size_bytes, sha256, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    batch_id,
+                    request_id,
+                    artifact_type,
+                    str(path),
+                    size_bytes,
+                    digest.hexdigest(),
+                    _now(),
+                ),
+            )
 
     def list_batches(self, limit: int = 200) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -502,5 +757,14 @@ def record_request_succeeded(request_id: str, payload: dict[str, Any]) -> None:
     BatchStore().finish_request(request_id, "success", response_payload=payload)
 
 
-def record_request_failed(request_id: str, message: str) -> None:
-    BatchStore().finish_request(request_id, "failed", error_message=message)
+def record_request_failed(
+    request_id: str,
+    message: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    BatchStore().finish_request(
+        request_id,
+        "failed",
+        response_payload=payload,
+        error_message=message,
+    )

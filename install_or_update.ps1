@@ -47,6 +47,23 @@ Write-Host ""
 Write-Host $(if ($GuiOnly) { "[1/2] Build GUI executable..." } else { "[2/4] Build GUI executable..." })
 $runningGui = Get-Process -Name "RevitFamilyClassifier" -ErrorAction SilentlyContinue
 $restartGuiAfterUpdate = [bool]$runningGui
+$runningGuiCommandLine = Get-CimInstance Win32_Process `
+  -Filter "Name = 'RevitFamilyClassifier.exe'" `
+  -ErrorAction SilentlyContinue `
+  | Select-Object -First 1 -ExpandProperty CommandLine
+$runningGuiCommandLineText = if ($null -eq $runningGuiCommandLine) {
+  ""
+} else {
+  [string]$runningGuiCommandLine
+}
+$restartGuiMode = ""
+$restartGuiModeMatch = [regex]::Match(
+  $runningGuiCommandLineText,
+  "--mode=[A-Za-z0-9-]+"
+)
+if ($restartGuiModeMatch.Success) {
+  $restartGuiMode = $restartGuiModeMatch.Value
+}
 if ($runningGui) {
   Write-Host "Closing running GUI to avoid locked files..."
   $runningGui | Stop-Process -Force
@@ -69,6 +86,12 @@ $deployGuiHash = (Get-FileHash -LiteralPath $deployGuiExe -Algorithm SHA256).Has
 if ($sourceGuiHash -ne $deployGuiHash) {
   throw "Deploy GUI hash does not match source GUI.`nSource: $sourceGuiExe`nDeploy: $deployGuiExe"
 }
+$developmentRootMarker = Join-Path $installRoot "development_root.txt"
+[System.IO.File]::WriteAllText(
+  $developmentRootMarker,
+  $root,
+  [System.Text.UTF8Encoding]::new($false)
+)
 [Environment]::SetEnvironmentVariable("SC_REVIT_HOME", $installRoot, "User")
 $env:SC_REVIT_HOME = $installRoot
 
@@ -103,6 +126,10 @@ if (-not $GuiOnly) {
   Write-Host "Open Revit 2024 and use the SC Revit ribbon tab."
 }
 if ($restartGuiAfterUpdate) {
-  Start-Process -FilePath $deployGuiExe -WorkingDirectory $deployGuiDir
+  if ([string]::IsNullOrWhiteSpace($restartGuiMode)) {
+    Start-Process -FilePath $deployGuiExe -WorkingDirectory $deployGuiDir
+  } else {
+    Start-Process -FilePath $deployGuiExe -ArgumentList $restartGuiMode -WorkingDirectory $deployGuiDir
+  }
   Write-Host "Restarted the updated SC REVIT GUI."
 }

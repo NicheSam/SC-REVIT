@@ -1,8 +1,0 @@
-{
-  "template_name": "消防基本模板",
-  "applies_to": { "system": "FP" },
-  "parameters": [
-    { "name": "SC_消防設備類型", "required": false, "default_value": null, "expected_kind": "type", "expected_storage_type": "String" },
-    { "name": "SC_是否連動", "required": false, "default_value": null, "expected_kind": "type", "expected_storage_type": "Integer" }
-  ]
-}

@@ -1,8 +1,0 @@
-{
-  "template_name": "照明基本模板",
-  "applies_to": { "system": "LTG" },
-  "parameters": [
-    { "name": "SC_燈具類型", "required": false, "default_value": null, "expected_kind": "type", "expected_storage_type": "String" },
-    { "name": "SC_安裝方式", "required": false, "default_value": null, "expected_kind": "type", "expected_storage_type": "String" }
-  ]
-}
