@@ -1,5 +1,5 @@
 SC REVIT
-Version: v0.5.3
+Version: v0.6.0
 Status: Release
 TargetRevit: 2024
-ReleaseAsset: SC_REVIT_v0.5.3_installer.zip
+ReleaseAsset: SC_REVIT_v0.6.0_installer.zip
