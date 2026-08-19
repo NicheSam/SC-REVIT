@@ -81,9 +81,9 @@ class FireBranchModelPlanTests(unittest.TestCase):
             level_id=500,
         )
 
-        self.assertEqual("fire_branch_execution_plan.v3", plan["schema_version"])
+        self.assertEqual("fire_branch_execution_plan.v4", plan["schema_version"])
         self.assertEqual(
-            "fire_branch_topology_plan.v3",
+            "fire_branch_topology_plan.v4",
             plan["topology_plan"]["schema_version"],
         )
         self.assertEqual(2, len(plan["diameter_plan"]))
@@ -99,6 +99,74 @@ class FireBranchModelPlanTests(unittest.TestCase):
         self.assertEqual("fit_to_routing_parts", reducer["placement_strategy"])
         self.assertNotIn("offset_mm", reducer)
         self.assertEqual(64, len(plan["plan_hash"]))
+
+    def test_opposite_branches_at_main_endpoint_are_a_tee_not_a_cross(self) -> None:
+        analysis = {
+            "status": "ready",
+            "unresolved_segment_count": 0,
+            "main_context_segments": [
+                {
+                    "segment_id": "main-100",
+                    "source_element_id": 100,
+                    "start": {"x": 0, "y": 0, "z": 0},
+                    "end": {"x": 10, "y": 0, "z": 0},
+                }
+            ],
+            "segments": [
+                {
+                    "segment_id": "row-0-0",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0, "z": 0},
+                    "end": {"x": 0, "y": 10, "z": 0},
+                    "diameter_mm": 25,
+                },
+                {
+                    "segment_id": "row-1-0",
+                    "row_index": 1,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0, "z": 0},
+                    "end": {"x": 0, "y": -10, "z": 0},
+                    "diameter_mm": 25,
+                },
+            ],
+            "reducers": [],
+            "junctions": [
+                {
+                    "row_index": 0,
+                    "branch_segment_id": "row-0-0",
+                    "main_segment_id": "main-100",
+                    "point": {"x": 0, "y": 0, "z": 0},
+                    "main_diameter_mm": 100,
+                    "branch_diameter_mm": 25,
+                    "review_required": False,
+                },
+                {
+                    "row_index": 1,
+                    "branch_segment_id": "row-1-0",
+                    "main_segment_id": "main-100",
+                    "point": {"x": 0, "y": 0, "z": 0},
+                    "main_diameter_mm": 100,
+                    "branch_diameter_mm": 25,
+                    "review_required": False,
+                },
+            ],
+        }
+
+        plan = build_fire_branch_execution_plan(
+            diameter_analysis=analysis,
+            main_pipe_ids=[100],
+            sprinkler_ids=[200, 201],
+            preview_snapshot_id="preview-endpoint-tee",
+            pipe_type_id=300,
+            system_type_id=400,
+            level_id=500,
+        )
+
+        junction = plan["topology_plan"]["junctions"][0]
+        self.assertEqual("reducing_endpoint_tee", junction["kind"])
+        self.assertEqual(1, junction["main_run_count"])
+        self.assertEqual([0, 1], junction["row_indexes"])
 
     def test_pilot_requires_exactly_one_explicit_tree_selection(self) -> None:
         sprinklers = [{"element_id": 200}, {"element_id": 201}]

@@ -1588,6 +1588,51 @@ namespace RfaMetadataAddin
                     && IsPointAtPipeEnd(pipe, point, toleranceFeet));
         }
 
+        private static Pipe FindCollinearPipeEndingAtPoint(
+            IEnumerable<Pipe> pipeSegments,
+            Pipe current,
+            XYZ point,
+            double toleranceFeet)
+        {
+            if (pipeSegments == null || current == null)
+            {
+                return null;
+            }
+            LocationCurve currentLocation = current.Location as LocationCurve;
+            if (currentLocation == null || currentLocation.Curve == null)
+            {
+                return null;
+            }
+            XYZ currentStart = currentLocation.Curve.GetEndPoint(0);
+            XYZ currentEnd = currentLocation.Curve.GetEndPoint(1);
+            XYZ currentOther = currentStart.DistanceTo(point) <= currentEnd.DistanceTo(point)
+                ? currentEnd
+                : currentStart;
+            XYZ currentAway = NormalizeXY(currentOther - point);
+            return pipeSegments.FirstOrDefault(candidate =>
+            {
+                if (candidate == null
+                    || !candidate.IsValidObject
+                    || candidate.Id == current.Id
+                    || !IsPointAtPipeEnd(candidate, point, toleranceFeet))
+                {
+                    return false;
+                }
+                LocationCurve candidateLocation = candidate.Location as LocationCurve;
+                if (candidateLocation == null || candidateLocation.Curve == null)
+                {
+                    return false;
+                }
+                XYZ candidateStart = candidateLocation.Curve.GetEndPoint(0);
+                XYZ candidateEnd = candidateLocation.Curve.GetEndPoint(1);
+                XYZ candidateOther = candidateStart.DistanceTo(point) <= candidateEnd.DistanceTo(point)
+                    ? candidateEnd
+                    : candidateStart;
+                XYZ candidateAway = NormalizeXY(candidateOther - point);
+                return DotXY(currentAway, candidateAway) < -0.999;
+            });
+        }
+
         private static double ResolvePipeCenterZ(Level level, double fallbackZ, double offsetCm, double diameterFeet, string heightReference)
         {
             double referenceZ = (level != null ? level.Elevation : fallbackZ)
@@ -1616,10 +1661,6 @@ namespace RfaMetadataAddin
             {
                 new Connector[] { mainA, mainB, branch },
                 new Connector[] { mainB, mainA, branch },
-                new Connector[] { mainA, branch, mainB },
-                new Connector[] { mainB, branch, mainA },
-                new Connector[] { branch, mainA, mainB },
-                new Connector[] { branch, mainB, mainA },
             };
             foreach (Connector[] order in orders)
             {
@@ -1641,6 +1682,31 @@ namespace RfaMetadataAddin
                 "NewTeeFitting | "
                 + string.Join(" | ", errors.Distinct().ToArray()));
             return null;
+        }
+
+        private static bool ElementDirectlyReferencesElement(
+            Element source,
+            ElementId targetElementId)
+        {
+            if (source == null
+                || !source.IsValidObject
+                || targetElementId == null
+                || targetElementId == ElementId.InvalidElementId)
+            {
+                return false;
+            }
+            ConnectorManager connectorManager = source is MEPCurve
+                ? ((MEPCurve)source).ConnectorManager
+                : source is FamilyInstance
+                    && ((FamilyInstance)source).MEPModel != null
+                    ? ((FamilyInstance)source).MEPModel.ConnectorManager
+                    : null;
+            return connectorManager != null
+                && connectorManager.Connectors
+                    .Cast<Connector>()
+                    .Any(connector => ConnectorDirectlyReferencesElement(
+                        connector,
+                        targetElementId));
         }
 
         private static bool TryCreateTeeAtPoint(Document doc, List<Pipe> mainSegments, Pipe branchPipe, XYZ tiePoint)
@@ -2286,6 +2352,22 @@ namespace RfaMetadataAddin
             }
             if (IsPointAtPipeEnd(target, tiePoint, tolerance))
             {
+                Pipe opposite = FindCollinearPipeEndingAtPoint(
+                    runSegments,
+                    target,
+                    tiePoint,
+                    tolerance);
+                if (opposite != null)
+                {
+                    ElementId createdTeeId;
+                    return TryCreateTeeAtPipeEnds(
+                        doc,
+                        target,
+                        opposite,
+                        connectingPipe,
+                        tiePoint,
+                        out createdTeeId);
+                }
                 return TryCreateElbowAtPipeEnd(doc, runSegments, connectingPipe, tiePoint);
             }
             return TryCreateTeeAtPoint(doc, runSegments, connectingPipe, tiePoint);
@@ -2296,8 +2378,10 @@ namespace RfaMetadataAddin
             Pipe firstRun,
             Pipe secondRun,
             Pipe connectingPipe,
-            XYZ tiePoint)
+            XYZ tiePoint,
+            out ElementId createdFittingId)
         {
+            createdFittingId = ElementId.InvalidElementId;
             if (firstRun == null || secondRun == null || connectingPipe == null)
             {
                 SetFireBranchConnectionDiagnostic("TryCreateTeeAtPipeEnds | one or more pipes are missing");
@@ -2325,6 +2409,7 @@ namespace RfaMetadataAddin
                         subTransaction.RollBack();
                         return false;
                     }
+                    createdFittingId = fitting.Id;
                     subTransaction.Commit();
                     return true;
                 }
@@ -2335,6 +2420,7 @@ namespace RfaMetadataAddin
                     {
                         subTransaction.RollBack();
                     }
+                    createdFittingId = ElementId.InvalidElementId;
                     return false;
                 }
             }

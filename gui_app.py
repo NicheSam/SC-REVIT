@@ -2206,6 +2206,7 @@ class FamilyClassifierApp(tk.Tk):
         self.fire_diameter_items = {}
         self.fire_main_pipe = None
         self.fire_main_pipes = []
+        self.fire_main_pipe_ids = []
         self.fire_sprinklers = []
         self.fire_preview_group = None
         self.fire_network_preview_window = None
@@ -2224,7 +2225,7 @@ class FamilyClassifierApp(tk.Tk):
             "explicit_nearby": "鄰近文字",
             "line_color_reference": "線段顏色",
             "layer_reference": "圖層參考",
-            "drawing_default": "圖面預設",
+            "drawing_default": "CAD備註預設",
             "conflicting_color": "線色衝突",
             "unresolved": "待確認",
         }
@@ -2253,7 +2254,15 @@ class FamilyClassifierApp(tk.Tk):
             )
             self.fire_diameter_segments_by_iid[item_id] = segment
         if not segments:
-            self.fire_diameter_segment_tree.insert("", "end", values=("尚未分析", "-", "-"))
+            status_text = str(analysis.get("message") or "尚未分析")
+            if len(status_text) > 90:
+                status_text = status_text[:87] + "..."
+            self.fire_diameter_segment_tree.insert(
+                "",
+                "end",
+                values=(status_text, "-", str(analysis.get("status") or "-")),
+                tags=("review",),
+            )
 
         reducers = sorted(
             list(analysis.get("reducers") or []),
@@ -2734,51 +2743,18 @@ class FamilyClassifierApp(tk.Tk):
         self.after(0, lambda: self._finish_fire_branch_selection(payload))
 
     def _filter_fire_main_run(self, pipes: list[dict]) -> list[dict]:
-        if not pipes:
-            return []
-        base = pipes[0]
-        start = base.get("start") or {}
-        end = base.get("end") or {}
-        sx = float(start.get("x") or 0)
-        sy = float(start.get("y") or 0)
-        sz = float(start.get("z") or 0)
-        ex = float(end.get("x") or 0)
-        ey = float(end.get("y") or 0)
-        dx = ex - sx
-        dy = ey - sy
-        length = (dx * dx + dy * dy) ** 0.5
-        if length <= 0.000001:
-            return [base]
-        ux = dx / length
-        uy = dy / length
-        base_diameter = float(base.get("diameter_mm") or 0)
-        z_tolerance = 10 / 30.48
+        # Revit now expands the selected seed through its physical Connector
+        # network.  Keep that ordered network intact; filtering by the first
+        # segment's direction was the GUI-side version of the old longest-path
+        # bug and discarded L/U/fishbone runs before CAD could evaluate them.
         result = []
-        for pipe in pipes:
-            pipe_start = pipe.get("start") or {}
-            pipe_end = pipe.get("end") or {}
-            psx = float(pipe_start.get("x") or 0)
-            psy = float(pipe_start.get("y") or 0)
-            psz = float(pipe_start.get("z") or 0)
-            pex = float(pipe_end.get("x") or 0)
-            pey = float(pipe_end.get("y") or 0)
-            pez = float(pipe_end.get("z") or 0)
-            pdx = pex - psx
-            pdy = pey - psy
-            pipe_length = (pdx * pdx + pdy * pdy) ** 0.5
-            if pipe_length <= 0.000001:
-                continue
-            pux = pdx / pipe_length
-            puy = pdy / pipe_length
-            parallel = abs(ux * pux + uy * puy)
-            pipe_diameter = float(pipe.get("diameter_mm") or 0)
-            if (
-                parallel >= 0.98
-                and abs(((psz + pez) * 0.5) - sz) <= z_tolerance
-                and (base_diameter <= 0 or pipe_diameter <= 0 or abs(pipe_diameter - base_diameter) <= 1)
-            ):
+        seen = set()
+        for pipe in pipes or []:
+            element_id = str(pipe.get("element_id") or "")
+            if element_id and element_id not in seen:
+                seen.add(element_id)
                 result.append(pipe)
-        return result or [base]
+        return result
 
     def _finish_fire_branch_selection(self, payload: dict) -> None:
         pipes = list(payload.get("pipes", []))
@@ -2787,6 +2763,7 @@ class FamilyClassifierApp(tk.Tk):
         if mode in {"main", "all"}:
             self.fire_main_pipe = pipes[0] if pipes else None
             self.fire_main_pipes = self._filter_fire_main_run(pipes)
+            self.fire_main_pipe_ids = [item.get("element_id") for item in self.fire_main_pipes]
         if mode in {"sprinklers", "all"}:
             self.fire_sprinklers = sprinklers
         if mode in {"main", "all"}:
@@ -2832,6 +2809,12 @@ class FamilyClassifierApp(tk.Tk):
                     ),
                 )
         self.fire_preview_group = None
+        # A new selection invalidates every result from the previous route.
+        # Clear the result panel as well as the Revit DirectContext preview so
+        # an old "ready" plan cannot be mistaken for the newly selected run.
+        self.fire_analysis_summary_var.set("已讀取新選取，尚未重新分析。")
+        self._populate_fire_diameter_analysis({})
+        self.fire_network_button.configure(state="disabled")
         self._reset_fire_sandbox_approval("請重新分析並執行建立前檢查")
         self.fire_branch_status_var.set(f"已讀取｜主管 {len(self.fire_main_pipes)}｜撒水頭 {len(self.fire_sprinklers)}")
 
@@ -2971,10 +2954,13 @@ class FamilyClassifierApp(tk.Tk):
             with batch_context("fire_branch", "preview", "Preview fire branch", {"sprinkler_count": len(sprinklers)}):
                 payload = request_create_fire_branch_preview(
                     main_pipe_id=main_pipe.get("element_id"),
-                    main_pipe_ids=[
-                        item.get("element_id")
-                        for item in (getattr(self, "fire_main_pipes", []) or [main_pipe])
-                    ],
+                    main_pipe_ids=list(
+                        getattr(self, "fire_main_pipe_ids", [])
+                        or [
+                            item.get("element_id")
+                            for item in (getattr(self, "fire_main_pipes", []) or [main_pipe])
+                        ]
+                    ),
                     sprinkler_ids=[item.get("element_id") for item in sprinklers],
                     level_id=level.get("element_id"),
                     branch_offset_cm=branch_offset_cm,
@@ -3016,10 +3002,28 @@ class FamilyClassifierApp(tk.Tk):
         skipped = list(payload.get("skipped", []) or [])
         cad_path_check = payload.get("cad_path_check") or {}
         hot_analysis = payload.get("hot_analysis") or {}
+        expanded_main_ids = [
+            item for item in (payload.get("main_pipe_ids") or []) if item
+        ]
+        if expanded_main_ids:
+            # Use the same expanded Connector-network IDs for the later model
+            # request.  Otherwise preview and creation could silently use
+            # different main segments.
+            self.fire_main_pipe_ids = expanded_main_ids
         diameter_analysis = hot_analysis.get("diameter_analysis") or {}
         if diameter_analysis.get("segments"):
             diameter_analysis["topology_plan"] = build_fire_branch_topology_plan(
                 diameter_analysis
+            )
+        # Keep the CAD path contract beside the diameter plan.  The network
+        # preview is opened from this object, so it must not lose the verifier
+        # result when the raw Revit response is reduced to GUI state.
+        if diameter_analysis:
+            diameter_analysis["cad_path_check"] = cad_path_check
+            diameter_analysis["cad_path_verified"] = bool(
+                str(cad_path_check.get("status") or "").strip().casefold()
+                == "matched"
+                and cad_path_check.get("coordinate_verified")
             )
         self.fire_preview_group = {
             "group_id": payload.get("group_id"),
@@ -3144,13 +3148,17 @@ class FamilyClassifierApp(tk.Tk):
                     item.get("review_required")
                     for item in (diameter_analysis.get("junctions") or [])
                 )
-            ):
-                execution_plan = build_fire_branch_execution_plan(
-                    diameter_analysis=diameter_analysis,
-                    main_pipe_ids=[
+                ):
+                main_pipe_ids = list(
+                    getattr(self, "fire_main_pipe_ids", [])
+                    or [
                         item.get("element_id")
                         for item in (getattr(self, "fire_main_pipes", []) or [main_pipe])
-                    ],
+                    ]
+                )
+                execution_plan = build_fire_branch_execution_plan(
+                    diameter_analysis=diameter_analysis,
+                    main_pipe_ids=main_pipe_ids,
                     sprinkler_ids=[item.get("element_id") for item in sprinklers],
                     preview_snapshot_id=(preview_group or {}).get("preview_snapshot_id"),
                     pipe_type_id=pipe_type.get("element_id"),
@@ -3164,13 +3172,17 @@ class FamilyClassifierApp(tk.Tk):
                 raise ValueError("目前預覽沒有完整且已確認的拓樸計畫，請重新分析後再建立")
             operation = "sandbox" if execution_mode == "sandbox" else "create_pipes"
             description = "Test fire branch and restore" if execution_mode == "sandbox" else "Create fire branch pipes"
+            main_pipe_ids = list(
+                getattr(self, "fire_main_pipe_ids", [])
+                or [
+                    item.get("element_id")
+                    for item in (getattr(self, "fire_main_pipes", []) or [main_pipe])
+                ]
+            )
             with batch_context("fire_branch", operation, description, {"sprinkler_count": len(sprinklers), "diameter_mm": diameter_mm}):
                 payload = request_create_fire_branch_pipes(
                     main_pipe_id=main_pipe.get("element_id"),
-                    main_pipe_ids=[
-                        item.get("element_id")
-                        for item in (getattr(self, "fire_main_pipes", []) or [main_pipe])
-                    ],
+                    main_pipe_ids=main_pipe_ids,
                     sprinkler_ids=[item.get("element_id") for item in sprinklers],
                     pipe_type_id=pipe_type.get("element_id"),
                     system_type_id=system_type.get("element_id"),

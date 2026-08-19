@@ -3,9 +3,11 @@ import xml.etree.ElementTree as ET
 
 from sc_revit.fire_branch.network_diagram import (
     build_fire_branch_network_layout,
+    diameter_to_display_color,
     render_fire_branch_network_svg,
 )
 from sc_revit.fire_branch.network_preview import (
+    main_context_render_segments,
     next_zoom_scale,
     semantic_zoom_visibility,
 )
@@ -14,6 +16,7 @@ from sc_revit.fire_branch.network_preview import (
 class FireBranchNetworkDiagramTests(unittest.TestCase):
     def setUp(self) -> None:
         self.analysis = {
+            "cad_path_verified": True,
             "segments": [
                 {
                     "segment_id": "row-0-0",
@@ -76,8 +79,10 @@ class FireBranchNetworkDiagramTests(unittest.TestCase):
 
         self.assertEqual(3, len(layout["segments"]))
         self.assertEqual("#ff7f00", layout["segments"][0]["color"])
+        self.assertEqual("#e53935", layout["segments"][0]["display_color"])
         self.assertIn('1 1/2"', layout["segments"][0]["diameter_label"])
         self.assertEqual("#bf00bf", layout["segments"][2]["color"])
+        self.assertEqual("#8a8a8a", layout["segments"][2]["display_color"])
         self.assertTrue(layout["segments"][2]["review_required"])
         self.assertGreater(
             layout["segments"][0]["stroke_width"],
@@ -115,6 +120,470 @@ class FireBranchNetworkDiagramTests(unittest.TestCase):
         self.assertEqual(1, len(layout["junctions"]))
         self.assertEqual("DN100 × DN100 × DN40", layout["junctions"][0]["label"])
         self.assertEqual("reducing_tee", layout["junctions"][0]["kind"])
+
+    def test_unverified_cad_path_is_neutral_and_uses_planned_geometry(self) -> None:
+        analysis = {
+            "cad_path_check": {
+                "status": "mismatch",
+                "coordinate_verified": True,
+                "coverage_ratio": 0.0,
+            },
+            "segments": [
+                {
+                    "segment_id": "unverified-route",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 10, "y": 0},
+                    "cad_geometry_start": {"x": 100, "y": 0},
+                    "cad_geometry_end": {"x": 200, "y": 0},
+                    "diameter_mm": 32,
+                    "color": "rgb:255,0,0",
+                    "planned_length_mm": 3048,
+                }
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis)
+        segment = layout["segments"][0]
+
+        self.assertFalse(layout["cad_verified"])
+        self.assertEqual("#8a8a8a", segment["color"])
+        self.assertEqual("#8a8a8a", segment["display_color"])
+        self.assertEqual("rgb:255,0,0", segment["cad_source_color"])
+        self.assertTrue(segment["review_required"])
+        self.assertEqual("\u0043\u0041\u0044\u8def\u5f91\u672a\u9a57\u8b49", segment["evidence_label"])
+        svg = render_fire_branch_network_svg(analysis)
+        self.assertIn('data-cad-verified="false"', svg)
+        self.assertIn("CAD 路徑未驗證", svg)
+        self.assertIn("不可用於建模", svg)
+        self.assertIn('data-cad-source-color="rgb:255,0,0"', svg)
+
+    def test_missing_cad_verification_contract_is_not_treated_as_matched(self) -> None:
+        analysis = {
+            "segments": [
+                {
+                    "segment_id": "legacy-or-stale-dll",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 10, "y": 0},
+                    "diameter_mm": 25,
+                    "color": "rgb:255,0,0",
+                }
+            ]
+        }
+
+        layout = build_fire_branch_network_layout(analysis)
+        svg = render_fire_branch_network_svg(analysis)
+
+        self.assertFalse(layout["cad_verified"])
+        self.assertEqual("#8a8a8a", layout["segments"][0]["display_color"])
+        self.assertIn('data-cad-verified="false"', svg)
+        self.assertIn("CAD 路徑未驗證", svg)
+
+    def test_matched_cad_path_can_use_cad_geometry_and_colour(self) -> None:
+        analysis = {
+            "cad_path_check": {
+                "status": "matched",
+                "coordinate_verified": True,
+                "coverage_ratio": 1.0,
+            },
+            "segments": [
+                {
+                    "segment_id": "matched-route",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 1, "y": 0},
+                    "cad_geometry_start": {"x": 10, "y": 0},
+                    "cad_geometry_end": {"x": 20, "y": 0},
+                    "diameter_mm": 32,
+                    "color": "rgb:255,127,0",
+                }
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis)
+        segment = layout["segments"][0]
+
+        self.assertTrue(layout["cad_verified"])
+        self.assertEqual("#ff7f00", segment["color"])
+        self.assertEqual("rgb:255,127,0", segment["cad_source_color"])
+        self.assertFalse(segment["review_required"])
+        svg = render_fire_branch_network_svg(analysis)
+        self.assertIn('data-cad-verified="true"', svg)
+        self.assertNotIn("CAD 路徑未驗證", svg)
+
+    def test_layout_preserves_l_shaped_main_context_for_svg(self) -> None:
+        analysis = {
+            "segments": [
+                {
+                    "segment_id": "row-0-0",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 8, "y": 0},
+                    "diameter_mm": 40,
+                    "planned_length_mm": 2438.4,
+                }
+            ],
+            "main_context_segments": [
+                {
+                    "segment_id": "main-1",
+                    "start": {"x": 0, "y": -10},
+                    "end": {"x": 0, "y": 10},
+                },
+                {
+                    "segment_id": "main-2",
+                    "start": {"x": 0, "y": -10},
+                    "end": {"x": 12, "y": -10},
+                },
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis, main_diameter_mm=100)
+
+        self.assertEqual("L", layout["main_shape"])
+        self.assertEqual(2, len(layout["main_segments"]))
+        self.assertEqual({"main-1", "main-2"}, {
+            item["segment_id"] for item in layout["main_segments"]
+        })
+        for item in layout["main_segments"]:
+            self.assertGreater(
+                ((item["x2"] - item["x1"]) ** 2 + (item["y2"] - item["y1"]) ** 2) ** 0.5,
+                0.0,
+            )
+        self.assertAlmostEqual(
+            layout["main_segments"][0]["x1"],
+            layout["segments"][0]["x1"],
+        )
+        svg = render_fire_branch_network_svg(analysis, main_diameter_mm=100)
+        self.assertIn('data-main-shape="L"', svg)
+        self.assertIn('class="main-context-segment"', svg)
+
+    def test_verified_l_network_uses_one_topology_canvas_coordinate_space(self) -> None:
+        analysis = {
+            "cad_path_verified": True,
+            "view_orientation": {
+                "source": "revit_view",
+                "right": {"x": 1, "y": 0, "z": 0},
+                "up": {"x": 0, "y": 1, "z": 0},
+            },
+            "main_context_segments": [
+                {
+                    "segment_id": "main-horizontal",
+                    "start": {"x": 0, "y": 10},
+                    "end": {"x": 10, "y": 10},
+                },
+                {
+                    "segment_id": "main-vertical",
+                    "start": {"x": 0, "y": 10},
+                    "end": {"x": 0, "y": 0},
+                },
+            ],
+            "segments": [
+                {
+                    "segment_id": "north-a",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 2, "y": 10},
+                    "end": {"x": 2, "y": 14},
+                    "cad_geometry_start": {"x": 2, "y": 10},
+                    "cad_geometry_end": {"x": 2, "y": 14},
+                    "diameter_mm": 25,
+                    "color": "rgb:0,127,127",
+                },
+                {
+                    "segment_id": "north-b",
+                    "row_index": 1,
+                    "sequence": 0,
+                    "start": {"x": 7, "y": 10},
+                    "end": {"x": 7, "y": 14},
+                    "cad_geometry_start": {"x": 7, "y": 10},
+                    "cad_geometry_end": {"x": 7, "y": 14},
+                    "diameter_mm": 25,
+                    "color": "rgb:0,127,127",
+                },
+                {
+                    "segment_id": "east-a",
+                    "row_index": 2,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 7},
+                    "end": {"x": 4, "y": 7},
+                    "cad_geometry_start": {"x": 0, "y": 7},
+                    "cad_geometry_end": {"x": 4, "y": 7},
+                    "diameter_mm": 32,
+                    "color": "rgb:255,127,0",
+                },
+                {
+                    "segment_id": "east-b",
+                    "row_index": 3,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 3},
+                    "end": {"x": 4, "y": 3},
+                    "cad_geometry_start": {"x": 0, "y": 3},
+                    "cad_geometry_end": {"x": 4, "y": 3},
+                    "diameter_mm": 32,
+                    "color": "rgb:255,127,0",
+                },
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis, main_diameter_mm=100)
+
+        self.assertEqual("topology_canvas", layout["coordinate_space"])
+        by_id = {item["segment_id"]: item for item in layout["segments"]}
+        self.assertAlmostEqual(by_id["north-a"]["x1"], by_id["north-a"]["x2"])
+        self.assertAlmostEqual(by_id["north-b"]["x1"], by_id["north-b"]["x2"])
+        self.assertNotAlmostEqual(by_id["north-a"]["x1"], by_id["north-b"]["x1"])
+        self.assertAlmostEqual(by_id["east-a"]["y1"], by_id["east-a"]["y2"])
+        self.assertAlmostEqual(by_id["east-b"]["y1"], by_id["east-b"]["y2"])
+        self.assertNotAlmostEqual(by_id["east-a"]["y1"], by_id["east-b"]["y1"])
+        self.assertEqual([], layout["row_lanes"])
+        svg = render_fire_branch_network_svg(analysis, main_diameter_mm=100)
+        self.assertIn('data-coordinate-space="topology_canvas"', svg)
+
+    def test_layout_projects_connector_points_before_joining_fragmented_main(self) -> None:
+        """Revit endpoints and fitting points arrive in model coordinates.
+
+        The selected main pipes are projected into the active view before the
+        graph is normalized.  Connector points must use that same projection;
+        otherwise an L-shaped main is classified as a disconnected/linear
+        route and one leg is sent far outside the SVG canvas.
+        """
+        analysis = {
+            "segments": [
+                {
+                    "segment_id": "branch",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 80.0, "y": -73.366},
+                    "end": {"x": 60.0, "y": -73.366},
+                    "diameter_mm": 25,
+                }
+            ],
+            "view_orientation": {
+                "source": "revit_view",
+                "view_id": 13301161,
+                "right": {"x": 1, "y": 0, "z": 0},
+                "up": {"x": 0, "y": 1, "z": 0},
+            },
+            "main_context_segments": [
+                {
+                    "segment_id": "main-horizontal",
+                    "source_element_id": 13740100,
+                    "start": {"x": 92.046, "y": -71.735, "z": 0.328},
+                    "end": {"x": 73.617, "y": -71.735, "z": 0.328},
+                    "connections": [
+                        {
+                            "key": "13740125",
+                            "endpoint": "end",
+                            "point": {"x": 73.366, "y": -71.986, "z": 0.328},
+                        }
+                    ],
+                },
+                {
+                    "segment_id": "main-vertical",
+                    "source_element_id": 13740127,
+                    "start": {"x": 73.115, "y": -72.237, "z": 0.328},
+                    "end": {"x": 73.115, "y": -130.327, "z": 0.328},
+                    "connections": [
+                        {
+                            "key": "13740125",
+                            "endpoint": "start",
+                            "point": {"x": 73.366, "y": -71.986, "z": 0.328},
+                        }
+                    ],
+                },
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis, main_diameter_mm=100)
+
+        self.assertEqual("L", layout["main_shape"])
+        self.assertEqual(1, layout["main_graph"]["component_count"])
+        self.assertEqual(2, layout["main_graph"]["edge_count"])
+        main_by_id = {
+            item["segment_id"]: item for item in layout["main_segments"]
+        }
+        horizontal = main_by_id["main-horizontal"]
+        vertical = main_by_id["main-vertical"]
+        self.assertAlmostEqual(horizontal["y1"], horizontal["y2"])
+        self.assertAlmostEqual(vertical["x1"], vertical["x2"])
+        horizontal_joint = (
+            horizontal["x1"],
+            horizontal["y1"],
+        ) if abs(horizontal["x1"] - vertical["x1"]) < abs(horizontal["x2"] - vertical["x1"]) else (
+            horizontal["x2"],
+            horizontal["y2"],
+        )
+        vertical_joint = (
+            vertical["x1"],
+            vertical["y1"],
+        ) if abs(vertical["y1"] - horizontal_joint[1]) < abs(vertical["y2"] - horizontal_joint[1]) else (
+            vertical["x2"],
+            vertical["y2"],
+        )
+        self.assertAlmostEqual(horizontal_joint[0], vertical_joint[0])
+        self.assertAlmostEqual(horizontal_joint[1], vertical_joint[1])
+        self.assertLess(
+            max(
+                abs(value)
+                for segment in layout["main_segments"]
+                for value in (segment["x1"], segment["y1"], segment["x2"], segment["y2"])
+            ),
+            2000.0,
+        )
+        render_segments = main_context_render_segments(layout)
+        self.assertEqual(2, len(render_segments))
+        self.assertEqual(
+            [(item["x1"], item["y1"], item["x2"], item["y2"]) for item in render_segments],
+            [
+                (
+                    item["x1"],
+                    item["y1"],
+                    item["x2"],
+                    item["y2"],
+                )
+                for item in layout["main_segments"]
+            ],
+        )
+
+    def test_layout_preserves_u_shaped_main_geometry_and_graph_nodes(self) -> None:
+        analysis = {
+            "segments": [
+                {
+                    "segment_id": "branch-u",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 5, "y": 0},
+                    "diameter_mm": 25,
+                }
+            ],
+            "main_context_segments": [
+                {"segment_id": "main-a", "start": {"x": 0, "y": 0}, "end": {"x": 0, "y": 10}},
+                {"segment_id": "main-b", "start": {"x": 0, "y": 10}, "end": {"x": 12, "y": 10}},
+                {"segment_id": "main-c", "start": {"x": 12, "y": 10}, "end": {"x": 12, "y": 0}},
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis, main_diameter_mm=100)
+
+        self.assertEqual("U", layout["main_shape"])
+        self.assertEqual(3, len(layout["main_segments"]))
+        self.assertEqual(4, layout["main_graph"]["node_count"])
+        self.assertEqual(3, layout["main_graph"]["edge_count"])
+        self.assertEqual(1, layout["main_graph"]["component_count"])
+        anchor = layout["main_graph"]["anchors"][0]
+        self.assertLessEqual(anchor["distance"], 1e-6)
+
+    def test_layout_keeps_compound_double_l_geometry_without_synthetic_main_line(self) -> None:
+        analysis = {
+            "segments": [
+                {
+                    "segment_id": "branch-double-l",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 4, "y": 4},
+                    "end": {"x": 8, "y": 4},
+                    "diameter_mm": 32,
+                }
+            ],
+            "main_context_segments": [
+                {"segment_id": "main-1", "start": {"x": 0, "y": 0}, "end": {"x": 0, "y": 8}},
+                {"segment_id": "main-2", "start": {"x": 0, "y": 8}, "end": {"x": 8, "y": 8}},
+                {"segment_id": "main-3", "start": {"x": 8, "y": 8}, "end": {"x": 8, "y": 4}},
+                {"segment_id": "main-4", "start": {"x": 8, "y": 4}, "end": {"x": 14, "y": 4}},
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis, main_diameter_mm=100)
+
+        self.assertEqual("compound_bend", layout["main_shape"])
+        self.assertEqual(4, len(layout["main_segments"]))
+        self.assertEqual(5, layout["main_graph"]["node_count"])
+        self.assertEqual(4, layout["main_graph"]["edge_count"])
+        self.assertNotEqual(
+            (layout["main"]["x1"], layout["main"]["y1"]),
+            (layout["main"]["x2"], layout["main"]["y2"]),
+        )
+
+    def test_layout_snaps_fragmented_main_endpoints_within_tolerance(self) -> None:
+        analysis = {
+            "segments": [
+                {
+                    "segment_id": "branch-fragment",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 5, "y": 0},
+                    "end": {"x": 7, "y": 0},
+                    "diameter_mm": 25,
+                }
+            ],
+            "main_context_segments": [
+                {"segment_id": "main-frag-a", "start": {"x": 0, "y": 0}, "end": {"x": 5, "y": 0}},
+                {"segment_id": "main-frag-b", "start": {"x": 5.001, "y": 0}, "end": {"x": 10, "y": 0}},
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis, main_diameter_mm=100)
+
+        self.assertEqual("linear", layout["main_shape"])
+        self.assertEqual(2, layout["main_graph"]["edge_count"])
+        self.assertEqual(3, layout["main_graph"]["node_count"])
+        self.assertEqual(1, layout["main_graph"]["component_count"])
+        self.assertLessEqual(layout["main_graph"]["anchors"][0]["distance"], 1e-6)
+
+    def test_layout_joins_revit_fitting_gap_by_shared_connection_key(self) -> None:
+        analysis = {
+            "segments": [
+                {
+                    "segment_id": "branch-fitting-gap",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 1, "y": 0},
+                    "diameter_mm": 25,
+                }
+            ],
+            "main_context_segments": [
+                {
+                    "segment_id": "main-horizontal",
+                    "source_element_id": 101,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 10, "y": 0},
+                    "connections": [
+                        {"key": "fitting-1", "endpoint": "end", "point": {"x": 10.0, "y": 0.0}}
+                    ],
+                },
+                {
+                    "segment_id": "main-vertical",
+                    "source_element_id": 102,
+                    "start": {"x": 10.8, "y": 0.8},
+                    "end": {"x": 10.8, "y": 8},
+                    "connections": [
+                        {"key": "fitting-1", "endpoint": "start", "point": {"x": 10.0, "y": 0.0}}
+                    ],
+                },
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis, main_diameter_mm=100)
+
+        self.assertEqual("L", layout["main_shape"])
+        self.assertEqual(1, layout["main_graph"]["component_count"])
+        self.assertEqual(2, layout["main_graph"]["edge_count"])
+        node_ids = {
+            (edge["node_start"], edge["node_end"])
+            for edge in layout["main_graph"]["segments"]
+        }
+        self.assertTrue(node_ids)
+        self.assertEqual(
+            layout["main_graph"]["segments"][0]["end"],
+            layout["main_graph"]["segments"][1]["start"],
+        )
 
     def test_opposite_branches_at_same_cad_point_share_one_cross_node(self) -> None:
         analysis = {
@@ -259,7 +728,14 @@ class FireBranchNetworkDiagramTests(unittest.TestCase):
         self.assertIn("待確認", svg)
         self.assertIn("#ffffff", svg)
         self.assertIn('data-diameter-mm="40.0"', svg)
+        self.assertIn('data-source-color="#ff7f00"', svg)
+        self.assertIn("管線色彩依管徑", svg)
         self.assertIn("2.44 m", svg)
+
+    def test_diameter_display_colors_are_stable_and_unknown_is_neutral(self) -> None:
+        self.assertEqual("#00a8b5", diameter_to_display_color(25, "#e53935"))
+        self.assertEqual("#ff7f00", diameter_to_display_color(32, "#e53935"))
+        self.assertEqual("#8a8a8a", diameter_to_display_color(None, "#e53935"))
 
     def test_svg_draws_only_revit_sprinkler_terminals_not_diameter_boundaries(self) -> None:
         analysis = {

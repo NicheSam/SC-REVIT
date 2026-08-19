@@ -51,7 +51,7 @@ def build_preview_summary(preview_payload: dict[str, Any]) -> dict[str, Any]:
 
     cad_labels = {
         "matched": f"吻合 {coverage:.0%}",
-        "mismatch": f"有差異 {coverage:.0%}",
+        "mismatch": f"覆蓋率 {coverage:.0%}（路徑尚未吻合）",
         "ambiguous": "目前無法確定",
         "ambiguous_source": "找到多個可能來源",
         "cad_unavailable": "目前視圖沒有可用 CAD",
@@ -64,15 +64,24 @@ def build_preview_summary(preview_payload: dict[str, Any]) -> dict[str, Any]:
         f"灑水頭：{int(preview_payload.get('sprinkler_count') or 0)} 顆",
         f"CAD 路徑：{cad_labels.get(cad_status, '尚未完成核對')}",
     ]
+    main_context_count = int(cad_check.get("main_context_segment_count") or 0)
+    planned_count = int(cad_check.get("planned_segment_count") or 0)
+    if main_context_count or planned_count:
+        lines.append(
+            "CAD 抽取範圍："
+            f"主管 {main_context_count} 段＋支管 {planned_count} 段"
+        )
+    if cad_check.get("extraction_scope"):
+        lines.append("CAD 抽取方式：" + str(cad_check.get("extraction_scope")))
     if skipped_count:
         lines.append(f"略過灑水頭：{skipped_count} 顆")
     if diameter_analysis:
         default_diameter = diameter_analysis.get("default_diameter_mm")
         default_note_count = int(diameter_analysis.get("default_note_count") or 0)
         default_note_summary = (
-            f"中文預設規則：已偵測 {default_note_count} 筆｜未標註管徑 {float(default_diameter):g} mm"
+            f"CAD 備註預設：已偵測 {default_note_count} 筆｜未標註管徑 {float(default_diameter):g} mm"
             if default_note_count and default_diameter is not None
-            else "中文預設規則：未偵測到"
+            else "CAD 備註預設：未偵測到"
         )
         lines.extend(
             [
@@ -149,6 +158,22 @@ def build_preview_summary(preview_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _cad_path_verified(cad_check: dict[str, Any] | None) -> bool:
+    """Return whether CAD geometry is safe to use as route evidence.
+
+    Coordinate anchors alone only prove that the two files share a coordinate
+    system.  They do not prove that the selected Revit route was matched to
+    the CAD route.  The explicit verifier status is therefore required before
+    CAD geometry, colour, length, or intersections can influence the plan.
+    """
+
+    check = cad_check if isinstance(cad_check, dict) else {}
+    return (
+        str(check.get("status") or "").strip().casefold() == "matched"
+        and bool(check.get("coordinate_verified"))
+    )
+
+
 def _build_diameter_analysis(
     cad_check: dict[str, Any],
     revit_anchors: list[dict[str, Any]],
@@ -161,13 +186,26 @@ def _build_diameter_analysis(
         cad_check.get("cad_route_geometry_segments") or []
     )
     main_context_segments = list(cad_check.get("main_context_segments") or [])
-    if (
-        str(cad_check.get("status") or "") != "matched"
-        or not cad_check.get("coordinate_verified")
-        or not source_path
-        or not probe_segments
-    ):
+    cad_status = str(cad_check.get("status") or "")
+    cad_verified = _cad_path_verified(cad_check)
+    # A non-matched CAD result is a review state, not an instruction to erase
+    # the analysis.  Keep the planned segments visible so the user can see why
+    # the route needs correction.  Hard-unavailable/invalid coordinate states
+    # still return no diameter plan because pairing would be unsafe.
+    if cad_status in {"cad_unavailable", "invalid_transform"} or not source_path or not probe_segments:
         return {}
+    if not cad_check.get("coordinate_verified"):
+        return {
+            "status": "needs_attention",
+            "cad_path_verified": False,
+            "message": "CAD 對位尚未驗證，暫不判定管徑；請先確認 CAD 路徑來源。",
+            "label_count": 0,
+            "resolved_segment_count": 0,
+            "unresolved_segment_count": len(probe_segments),
+            "segments": [],
+            "reducers": [],
+            "warning_codes": ["cad_coordinate_unverified"],
+        }
 
     from .diameter_analysis import (
         _is_default_note,
@@ -182,9 +220,23 @@ def _build_diameter_analysis(
         segments = []
         for raw in probe_segments:
             item = dict(raw)
-            item["color"] = item.get("color_key")
+            # A colour from a CAD probe is evidence only after the route itself
+            # has matched.  Keep the raw key for audit, but do not let it drive
+            # diameter resolution while the path is still a mismatch.
+            item["color"] = item.get("color_key") if cad_verified else None
+            if not cad_verified:
+                for key in (
+                    "cad_geometry_start",
+                    "cad_geometry_end",
+                    "cad_geometry_exact",
+                    "cad_geometry_exact_length_mm",
+                    "cad_geometry_source_count",
+                    "cad_geometry_split",
+                    "planned_length_mm",
+                ):
+                    item.pop(key, None)
             segments.append(item)
-        if cad_route_geometry_segments:
+        if cad_verified and cad_route_geometry_segments:
             segments = split_routes_by_cad_geometry(
                 segments,
                 cad_route_geometry_segments,
@@ -217,6 +269,7 @@ def _build_diameter_analysis(
             result.update(
                 {
                     "status": "needs_attention",
+                    "cad_path_verified": False,
                     "matched_label_count": 0,
                     "coordinate_verified": False,
                     "coordinate_source": "revit_linked_geometry_anchors",
@@ -243,6 +296,32 @@ def _build_diameter_analysis(
                     + ["main_context_unavailable"]
                 )
             )
+        if cad_status != "matched":
+            result["status"] = "needs_attention"
+            result["warning_codes"] = list(
+                dict.fromkeys(
+                    list(result.get("warning_codes") or [])
+                    + ["cad_route_not_matched"]
+                )
+            )
+            result["message"] = (
+                "CAD 路徑尚未吻合；目前保留 Revit 路徑與文字配對結果供核對，"
+                "不會把這份結果視為可直接建模計畫。"
+            )
+        result["cad_path_verified"] = cad_verified
+        if not cad_verified:
+            result["cad_geometry_audit_available"] = False
+            result["cad_geometry_exact_count"] = 0
+            result["cad_geometry_review_count"] = len(result.get("segments") or [])
+            result["warning_codes"] = list(
+                dict.fromkeys(
+                    list(result.get("warning_codes") or [])
+                    + ["cad_path_unverified"]
+                )
+            )
+            for item in result.get("segments") or []:
+                item["cad_geometry_verified"] = False
+                item["evidence"] = "unresolved"
         _attach_drawing_metadata(result, drawing, source_path, unit_to_feet)
         result["coordinate_verified"] = True
         result["coordinate_source"] = "revit_linked_geometry_anchors"
@@ -254,6 +333,7 @@ def _build_diameter_analysis(
     except Exception as exc:
         result = {
             "status": "needs_attention",
+            "cad_path_verified": False,
             "label_count": 0,
             "resolved_segment_count": 0,
             "unresolved_segment_count": len(probe_segments),

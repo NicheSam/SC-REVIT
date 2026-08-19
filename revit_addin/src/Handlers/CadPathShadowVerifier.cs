@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Plumbing;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -135,6 +136,7 @@ namespace RfaMetadataAddin
         private static object BuildFireBranchCadPathShadowReport(
             Document doc,
             List<List<FireBranchItem>> rows,
+            List<FireMainPipeData> mainPipes,
             double branchZ,
             double extension)
         {
@@ -143,12 +145,21 @@ namespace RfaMetadataAddin
             double sampleSpacing = UnitUtils.ConvertToInternalUnits(500, UnitTypeId.Millimeters);
             double cellSize = UnitUtils.ConvertToInternalUnits(1000, UnitTypeId.Millimeters);
             double junctionTolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Millimeters);
+            // First pass contract: corridor_buffer_mm = 1000.
             double corridorBuffer = UnitUtils.ConvertToInternalUnits(1000, UnitTypeId.Millimeters);
             double angleToleranceDegrees = 15;
 
             List<Line> plannedSegments = BuildFireBranchPlannedLines(rows, branchZ, extension);
+            // A selected main is the seed for the whole CAD route.  Branch
+            // corridors alone can miss a fragmented CAD main (especially when
+            // the new seed is an L/U/fishbone segment), so include every
+            // expanded main segment in the same extraction and matching pass.
+            List<Line> mainContextLines = BuildFireBranchMainContextLines(mainPipes);
+            List<Line> routeEvidenceSegments = plannedSegments
+                .Concat(mainContextLines)
+                .ToList();
             var extractionScope = new CadPathExtractionScope { Buffer = corridorBuffer };
-            extractionScope.Corridors.AddRange(plannedSegments);
+            extractionScope.Corridors.AddRange(routeEvidenceSegments);
             List<CadPathSource> sources = ReadVisibleCadPathSources(doc, extractionScope);
             if (sources.Count == 0)
             {
@@ -171,7 +182,7 @@ namespace RfaMetadataAddin
             {
                 summaries.Add(MatchCadPathSource(
                     source,
-                    plannedSegments,
+                    routeEvidenceSegments,
                     junctionPlans,
                     distanceTolerance,
                     topologyProbeDistance,
@@ -271,7 +282,7 @@ namespace RfaMetadataAddin
                 distanceTolerance,
                 cellSize,
                 angleToleranceDegrees);
-            List<object> mainContextSegments = BuildFireBranchMainContextSegments(rows);
+            List<object> mainContextSegments = BuildFireBranchMainContextSegments(mainPipes);
             List<object> cadRouteGeometrySegments = best.Source.Segments
                 .Select((segment, index) => new
                 {
@@ -295,7 +306,7 @@ namespace RfaMetadataAddin
                     : "geometry_only",
                 coordinate_contract = "cad_geometry_to_import_total_transform_to_revit_model",
                 extraction_scope = "selected_sprinkler_route_corridors",
-                corridor_buffer_mm = 1000,
+                corridor_buffer_mm = extractionScope.Buffer * 304.8,
                 affects_creation = false,
                 source_count = sources.Count,
                 selected_import_id = best.Source.ImportInstance.Id.Value,
@@ -313,6 +324,8 @@ namespace RfaMetadataAddin
                 anchor_geometry_sufficient = best.Source.AnchorGeometrySufficient,
                 max_anchor_residual_mm = best.Source.MaximumAnchorResidualMm,
                 planned_segment_count = plannedSegments.Count,
+                main_context_segment_count = mainContextLines.Count,
+                route_evidence_segment_count = routeEvidenceSegments.Count,
                 raw_cad_segment_count = best.Source.RawSegmentCount,
                 out_of_scope_segment_count = best.Source.OutOfScopeSegmentCount,
                 cad_segment_count = best.Source.Segments.Count,
@@ -464,32 +477,115 @@ namespace RfaMetadataAddin
             return result;
         }
 
+        private static List<Line> BuildFireBranchMainContextLines(
+            List<FireMainPipeData> mainPipes)
+        {
+            var result = new List<Line>();
+            foreach (FireMainPipeData item in mainPipes ?? new List<FireMainPipeData>())
+            {
+                if (item == null || item.Start == null || item.End == null)
+                {
+                    continue;
+                }
+                try
+                {
+                    if (item.Start.DistanceTo(item.End) > 0.001)
+                    {
+                        result.Add(Line.CreateBound(item.Start, item.End));
+                    }
+                }
+                catch
+                {
+                }
+            }
+            return result;
+        }
+
         private static List<object> BuildFireBranchMainContextSegments(
-            List<List<FireBranchItem>> rows)
+            List<FireMainPipeData> mainPipes)
         {
             var result = new List<object>();
-            var seenPipeIds = new HashSet<long>();
-            foreach (FireBranchItem item in rows.SelectMany(row => row))
+            foreach (FireMainPipeData item in mainPipes ?? new List<FireMainPipeData>())
             {
-                if (item.MainPipe == null || !seenPipeIds.Add(item.MainPipeId))
+                if (item == null || item.Start == null || item.End == null)
                 {
                     continue;
                 }
-                LocationCurve location = item.MainPipe.Location as LocationCurve;
-                if (location == null || location.Curve == null)
-                {
-                    continue;
-                }
-                XYZ start = location.Curve.GetEndPoint(0);
-                XYZ end = location.Curve.GetEndPoint(1);
                 result.Add(new
                 {
-                    segment_id = "main-" + item.MainPipeId,
+                    segment_id = "main-" + item.PipeId,
                     topology_role = "main",
-                    source_element_id = item.MainPipeId,
-                    start = SerializeCadPathPoint(start),
-                    end = SerializeCadPathPoint(end)
+                    source_element_id = item.PipeId,
+                    diameter_mm = UnitUtils.ConvertFromInternalUnits(
+                        item.DiameterFeet,
+                        UnitTypeId.Millimeters),
+                    start = SerializeCadPathPoint(item.Start),
+                    end = SerializeCadPathPoint(item.End),
+                    connections = BuildFireBranchMainConnectionRecords(item)
                 });
+            }
+            return result;
+        }
+
+        private static List<object> BuildFireBranchMainConnectionRecords(
+            FireMainPipeData item)
+        {
+            var result = new List<object>();
+            Pipe pipe = item == null ? null : item.Pipe;
+            if (pipe == null || !pipe.IsValidObject)
+            {
+                return result;
+            }
+            ConnectorSet connectors = GetFirePhysicalConnectors(pipe);
+            if (connectors == null)
+            {
+                return result;
+            }
+            foreach (Connector connector in connectors.Cast<Connector>())
+            {
+                if (connector == null || connector.ConnectorType == ConnectorType.Logical)
+                {
+                    continue;
+                }
+                foreach (Connector reference in connector.AllRefs.Cast<Connector>())
+                {
+                    if (reference == null
+                        || reference.ConnectorType == ConnectorType.Logical
+                        || reference.Owner == null
+                        || reference.Owner.Id.Value == pipe.Id.Value
+                        || reference.Owner is MEPSystem)
+                    {
+                        continue;
+                    }
+                    Element owner = reference.Owner;
+                    XYZ connectionPoint = reference.Origin;
+                    ConnectorSet ownerConnectors = GetFirePhysicalConnectors(owner);
+                    if (ownerConnectors != null)
+                    {
+                        List<XYZ> physicalOrigins = ownerConnectors
+                            .Cast<Connector>()
+                            .Where(candidate => candidate != null
+                                && candidate.ConnectorType != ConnectorType.Logical)
+                            .Select(candidate => candidate.Origin)
+                            .ToList();
+                        if (physicalOrigins.Count > 0)
+                        {
+                            connectionPoint = new XYZ(
+                                physicalOrigins.Average(point => point.X),
+                                physicalOrigins.Average(point => point.Y),
+                                physicalOrigins.Average(point => point.Z));
+                        }
+                    }
+                    double startDistance = connectionPoint.DistanceTo(item.Start);
+                    double endDistance = connectionPoint.DistanceTo(item.End);
+                    result.Add(new
+                    {
+                        key = owner.Id.Value.ToString(),
+                        endpoint = startDistance <= endDistance ? "start" : "end",
+                        point = SerializeCadPathPoint(connectionPoint),
+                        owner_category = owner.Category == null ? "" : owner.Category.Name
+                    });
+                }
             }
             return result;
         }

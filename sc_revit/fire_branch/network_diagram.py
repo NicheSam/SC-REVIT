@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from sc_revit.fire_branch.model_plan import build_fire_branch_topology_plan
+from sc_revit.fire_branch.main_geometry import (
+    normalize_main_geometry,
+    project_point_to_main_geometry,
+)
 
 
 _ACI_DISPLAY_COLORS = {
@@ -34,12 +38,29 @@ _DIAMETER_INCH_LABELS = {
     250.0: '10"',
 }
 
+# SVG 色彩以管徑為主，讓不同管徑即使 CAD 原始線色相同也能快速分辨。
+# CAD 原始色仍會以 source_color 保留在 SVG data attribute 中作為證據。
+_DIAMETER_DISPLAY_COLORS = {
+    20.0: "#4c78a8",
+    25.0: "#00a8b5",
+    32.0: "#ff7f00",
+    40.0: "#e53935",
+    50.0: "#8e44ad",
+    65.0: "#2e7d32",
+    80.0: "#1565c0",
+    100.0: "#455a64",
+    125.0: "#795548",
+    150.0: "#6d4c41",
+    200.0: "#37474f",
+    250.0: "#263238",
+}
+
 _EVIDENCE_LABELS = {
     "explicit_color": "文字＋線色",
     "explicit_nearby": "鄰近文字",
     "line_color_reference": "線段顏色",
     "layer_reference": "圖層參考",
-    "drawing_default": "圖面預設",
+    "drawing_default": "CAD備註預設",
     "conflicting_label": "文字衝突",
     "conflicting_color": "線色衝突",
     "diameter_increase_conflict": "反向增徑待確認",
@@ -49,6 +70,25 @@ _EVIDENCE_LABELS = {
 _REDUCER_SYMBOL_RADIUS_PX = 15.0
 _TERMINAL_NODE_RADIUS_PX = 4.2
 _MIN_FITTING_GAP_PX = 3.0
+
+
+def _analysis_cad_path_verified(analysis: dict[str, Any]) -> bool:
+    """Tell the renderer whether CAD geometry is a trusted route source.
+
+    CAD geometry is trusted only when the producer explicitly proves the route
+    match.  A missing contract usually means a stale DLL or stale preview and
+    must never inherit CAD geometry or colour silently.
+    """
+
+    if "cad_path_verified" in analysis:
+        return bool(analysis.get("cad_path_verified"))
+    check = analysis.get("cad_path_check")
+    if isinstance(check, dict):
+        return (
+            str(check.get("status") or "").strip().casefold() == "matched"
+            and bool(check.get("coordinate_verified"))
+        )
+    return False
 
 
 def _build_reducer_layout(
@@ -82,7 +122,7 @@ def _build_reducer_layout(
         "lead_end": (reducer_x, reducer_y),
         "lead_length_px": lead_length,
         "spacing_basis": "symbol_clearance_only",
-        "lead_color": previous["color"],
+        "lead_color": previous.get("display_color", previous["color"]),
         "lead_stroke_width": previous["stroke_width"],
         "lead_diameter_mm": from_diameter,
         "source_segment_id": str(current["segment_id"]),
@@ -93,12 +133,317 @@ def _build_reducer_layout(
     }
 
 
+def _build_main_context_layout(
+    raw_segments: Any,
+    *,
+    orientation: dict[str, Any],
+    main_orientation: str,
+    row_geometry: list[dict[str, Any]],
+    station_start: float,
+    station_spacing: float,
+    station_count: int,
+    main_cross: float,
+    maximum_negative: float,
+    maximum_positive: float,
+) -> dict[str, Any]:
+    """Map the actual selected main network into the schematic SVG space.
+
+    Geometry is normalized before it is mapped: small endpoint gaps are
+    snapped, true crossings are split into graph edges, and branch anchors are
+    projected to the nearest actual edge.  No artificial straight guide line
+    replaces the selected main route.
+    """
+
+    normalized: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_segments or []):
+        if not isinstance(raw, dict):
+            continue
+        start = _project_to_view(raw.get("start") or {}, orientation)
+        end = _project_to_view(raw.get("end") or {}, orientation)
+        if math.hypot(end[0] - start[0], end[1] - start[1]) <= 1e-6:
+            continue
+        projected_connections: list[dict[str, Any]] = []
+        for raw_connection in raw.get("connections") or []:
+            if not isinstance(raw_connection, dict):
+                continue
+            connection = dict(raw_connection)
+            raw_point = raw_connection.get("point")
+            if isinstance(raw_point, dict):
+                point_x, point_y = _project_to_view(raw_point, orientation)
+                connection["point"] = {"x": point_x, "y": point_y}
+            projected_connections.append(connection)
+        normalized.append(
+            {
+                "segment_id": str(raw.get("segment_id") or f"main-context-{index}"),
+                "source_element_id": raw.get("source_element_id"),
+                "diameter_mm": raw.get("diameter_mm"),
+                "connections": projected_connections,
+                "start": start,
+                "end": end,
+            }
+        )
+
+    graph = normalize_main_geometry(normalized)
+    graph["anchors"] = {}
+    if not graph["segments"]:
+        return {
+            "shape": "linear",
+            "segments": [],
+            "anchors": {},
+            "graph": graph,
+        }
+
+    primary_index = 1 if main_orientation == "vertical" else 0
+    cross_index = 0 if main_orientation == "vertical" else 1
+    row_starts = [item["start"] for item in row_geometry if item.get("start")]
+    row_primary_values = [point[primary_index] for point in row_starts]
+    context_primary_values = [
+        value
+        for segment in graph["segments"]
+        for value in (segment["start"][primary_index], segment["end"][primary_index])
+    ]
+    primary_values = row_primary_values or context_primary_values
+    primary_min = min(primary_values)
+    primary_max = max(primary_values)
+    primary_range = primary_max - primary_min
+    screen_primary_min = station_start
+    screen_primary_max = station_start + max(0, station_count - 1) * station_spacing
+    if primary_range <= 1e-6 and max(context_primary_values) - min(context_primary_values) > 1e-6:
+        primary_min = min(context_primary_values)
+        primary_max = max(context_primary_values)
+        primary_range = primary_max - primary_min
+        primary_screen_extent = max(120.0, station_spacing)
+        screen_primary_min = station_start - primary_screen_extent / 2.0
+        screen_primary_max = station_start + primary_screen_extent / 2.0
+
+    cross_values = [point[cross_index] for point in row_starts]
+    if not cross_values:
+        cross_values = [
+            value
+            for segment in graph["segments"]
+            for value in (segment["start"][cross_index], segment["end"][cross_index])
+        ]
+    cross_center = sum(cross_values) / len(cross_values)
+    context_cross_values = [
+        value
+        for segment in graph["segments"]
+        for value in (segment["start"][cross_index], segment["end"][cross_index])
+    ]
+    context_cross_range = max(context_cross_values) - min(context_cross_values)
+    available_cross_extent = max(maximum_negative, maximum_positive)
+    desired_cross_extent = max(80.0, min(360.0, available_cross_extent * 0.75))
+    cross_scale = (
+        desired_cross_extent / context_cross_range
+        if context_cross_range > 1e-6
+        else 1.0
+    )
+
+    def map_point(point: tuple[float, float]) -> tuple[float, float]:
+        if primary_range > 1e-6:
+            primary = screen_primary_min + (
+                (point[primary_index] - primary_min)
+                / primary_range
+                * (screen_primary_max - screen_primary_min)
+            )
+        else:
+            primary = (screen_primary_min + screen_primary_max) / 2.0
+        cross = main_cross + (point[cross_index] - cross_center) * cross_scale
+        return (cross, primary) if main_orientation == "vertical" else (primary, cross)
+
+    laid_out = []
+    for segment in graph["segments"]:
+        start = map_point(segment["start"])
+        end = map_point(segment["end"])
+        laid_out.append(
+            {
+                "segment_id": segment["segment_id"],
+                "source_segment_id": segment.get("source_segment_id"),
+                "source_element_id": segment.get("source_element_id"),
+                "component_id": segment.get("component_id"),
+                "node_start": segment.get("node_start"),
+                "node_end": segment.get("node_end"),
+                "x1": start[0],
+                "y1": start[1],
+                "x2": end[0],
+                "y2": end[1],
+            }
+        )
+
+    anchors: dict[int, tuple[float, float]] = {}
+    for item in row_geometry:
+        if item.get("start") is None or item.get("row_index") is None:
+            continue
+        projection = project_point_to_main_geometry(item["start"], graph)
+        if projection is None:
+            continue
+        graph["anchors"][int(item["row_index"])] = {
+            **projection,
+            "point": projection["point"],
+        }
+        anchors[int(item["row_index"])] = map_point(projection["point"])
+    return {
+        "shape": graph["shape"],
+        "segments": laid_out,
+        "anchors": anchors,
+        "graph": graph,
+    }
+
+
+def _build_topology_canvas_layout(
+    raw_segments: list[dict[str, Any]],
+    *,
+    orientation: dict[str, Any],
+    main_context_layout: dict[str, Any],
+    cad_verified: bool,
+) -> dict[str, Any] | None:
+    """Map trusted topology geometry into one stable, editable canvas space.
+
+    The returned transform is shared by main pipes and branch pipes.  It never
+    assigns pipe coordinates from row order, so bent mains and mixed branch
+    directions cannot collapse into the same schematic lane.
+    """
+
+    graph = main_context_layout.get("graph") or {}
+    graph_segments = list(graph.get("segments") or [])
+    if not cad_verified or not graph_segments or not raw_segments:
+        return None
+
+    branch_sources: dict[str, dict[str, tuple[float, float]]] = {}
+    points: list[tuple[float, float]] = []
+    for segment in graph_segments:
+        points.extend((segment["start"], segment["end"]))
+    for index, raw in enumerate(raw_segments):
+        start_raw = raw.get("cad_geometry_start") or raw.get("start")
+        end_raw = raw.get("cad_geometry_end") or raw.get("end")
+        if not isinstance(start_raw, dict) or not isinstance(end_raw, dict):
+            return None
+        start = _project_to_view(start_raw, orientation)
+        end = _project_to_view(end_raw, orientation)
+        if math.hypot(end[0] - start[0], end[1] - start[1]) <= 1e-9:
+            return None
+        segment_id = str(raw.get("segment_id") or f"canvas-segment-{index}")
+        branch_sources[segment_id] = {"start": start, "end": end}
+        points.extend((start, end))
+
+    minimum_x = min(point[0] for point in points)
+    maximum_x = max(point[0] for point in points)
+    minimum_y = min(point[1] for point in points)
+    maximum_y = max(point[1] for point in points)
+    span_x = max(maximum_x - minimum_x, 1e-6)
+    span_y = max(maximum_y - minimum_y, 1e-6)
+    margin_x = 150.0
+    margin_y = 90.0
+    maximum_content_width = 1500.0
+    maximum_content_height = 1600.0
+    preferred_scale = 22.0
+    scale = min(
+        preferred_scale,
+        maximum_content_width / span_x,
+        maximum_content_height / span_y,
+    )
+    content_width = span_x * scale
+    content_height = span_y * scale
+    width = max(760.0, content_width + margin_x * 2.0)
+    height = max(520.0, content_height + margin_y * 2.0)
+    offset_x = (width - content_width) / 2.0 - minimum_x * scale
+    offset_y = (height - content_height) / 2.0 - minimum_y * scale
+
+    def map_point(point: tuple[float, float]) -> tuple[float, float]:
+        return point[0] * scale + offset_x, point[1] * scale + offset_y
+
+    main_segments = []
+    for segment in graph_segments:
+        start = map_point(segment["start"])
+        end = map_point(segment["end"])
+        main_segments.append(
+            {
+                "segment_id": segment["segment_id"],
+                "source_segment_id": segment.get("source_segment_id"),
+                "source_element_id": segment.get("source_element_id"),
+                "component_id": segment.get("component_id"),
+                "node_start": segment.get("node_start"),
+                "node_end": segment.get("node_end"),
+                "x1": start[0],
+                "y1": start[1],
+                "x2": end[0],
+                "y2": end[1],
+            }
+        )
+
+    branch_segments = {
+        segment_id: {
+            "start": map_point(source["start"]),
+            "end": map_point(source["end"]),
+        }
+        for segment_id, source in branch_sources.items()
+    }
+    anchors = {
+        int(row_index): map_point(anchor["point"])
+        for row_index, anchor in (graph.get("anchors") or {}).items()
+        if isinstance(anchor, dict) and anchor.get("point") is not None
+    }
+    return {
+        "coordinate_space": "topology_canvas",
+        "width": width,
+        "height": height,
+        "main_segments": main_segments,
+        "branch_segments": branch_segments,
+        "anchors": anchors,
+        "transform": {
+            "scale": scale,
+            "offset_x": offset_x,
+            "offset_y": offset_y,
+            "source_bounds": {
+                "minimum_x": minimum_x,
+                "maximum_x": maximum_x,
+                "minimum_y": minimum_y,
+                "maximum_y": maximum_y,
+            },
+        },
+    }
+
+
+def _classify_main_context_shape(segments: list[dict[str, Any]]) -> str:
+    """Classify the visible main context without changing its geometry."""
+
+    if not segments:
+        return "linear"
+    axes = [_segment_axis_name(item["start"], item["end"]) for item in segments]
+    if all(axis == axes[0] for axis in axes):
+        return "linear"
+    if len(segments) == 2 and _main_segments_share_endpoint(segments[0], segments[1]):
+        return "L"
+    return "compound_bend"
+
+
+def _segment_axis_name(start: tuple[float, float], end: tuple[float, float]) -> str:
+    dx = abs(end[0] - start[0])
+    dy = abs(end[1] - start[1])
+    return "x" if dx >= dy else "y"
+
+
+def _main_segments_share_endpoint(
+    first: dict[str, Any],
+    second: dict[str, Any],
+    tolerance: float = 5.0 / 304.8,
+) -> bool:
+    points_first = (first["start"], first["end"])
+    points_second = (second["start"], second["end"])
+    return any(
+        math.hypot(point_a[0] - point_b[0], point_a[1] - point_b[1]) <= tolerance
+        for point_a in points_first
+        for point_b in points_second
+    )
+
+
 def build_fire_branch_network_layout(
     analysis: dict[str, Any],
     *,
     main_diameter_mm: float | None = None,
 ) -> dict[str, Any]:
     """Build a schematic that preserves the active Revit view orientation."""
+
+    cad_verified = _analysis_cad_path_verified(analysis)
 
     raw_segments = sorted(
         list(analysis.get("segments") or []),
@@ -118,13 +463,21 @@ def build_fire_branch_network_layout(
     for row_index, segments in rows.items():
         ordered = sorted(segments, key=lambda item: int(item.get("sequence") or 0))
         start = _project_to_view(
-            ordered[0].get("cad_geometry_start")
+            (
+                ordered[0].get("cad_geometry_start")
+                if cad_verified
+                else None
+            )
             or ordered[0].get("start")
             or {},
             orientation,
         )
         end = _project_to_view(
-            ordered[-1].get("cad_geometry_end")
+            (
+                ordered[-1].get("cad_geometry_end")
+                if cad_verified
+                else None
+            )
             or ordered[-1].get("end")
             or {},
             orientation,
@@ -188,7 +541,7 @@ def build_fire_branch_network_layout(
         geometry = row_geometry_by_index[row_index]
         delta = geometry["dx"] if branch_axis == "x" else geometry["dy"]
         side = _direction_sign(delta, row_index)
-        lengths = _row_display_lengths(row_segments)
+        lengths = _row_display_lengths(row_segments, cad_verified=cad_verified)
         extent = sum(lengths)
         row_metrics[row_index] = {"side": side, "lengths": lengths, "extent": extent}
         if side < 0:
@@ -217,6 +570,31 @@ def build_fire_branch_network_layout(
             760.0,
             station_start + (station_count - 1) * station_spacing + 132.0,
         )
+    main_context_layout = _build_main_context_layout(
+        analysis.get("main_context_segments"),
+        orientation=orientation,
+        main_orientation=main_orientation,
+        row_geometry=row_geometry,
+        station_start=station_start,
+        station_spacing=station_spacing,
+        station_count=station_count,
+        main_cross=main_cross,
+        maximum_negative=maximum_negative,
+        maximum_positive=maximum_positive,
+    )
+    topology_canvas = _build_topology_canvas_layout(
+        raw_segments,
+        orientation=orientation,
+        main_context_layout=main_context_layout,
+        cad_verified=cad_verified,
+    )
+    coordinate_space = "schematic_lanes"
+    if topology_canvas is not None:
+        coordinate_space = "topology_canvas"
+        width = float(topology_canvas["width"])
+        height = float(topology_canvas["height"])
+        main_context_layout["segments"] = topology_canvas["main_segments"]
+        main_context_layout["anchors"] = topology_canvas["anchors"]
     laid_out_segments: list[dict[str, Any]] = []
     laid_out_reducers: list[dict[str, Any]] = []
     laid_out_junctions: list[dict[str, Any]] = []
@@ -229,7 +607,9 @@ def build_fire_branch_network_layout(
         station = station_start + station_index * station_spacing
         metrics = row_metrics[row_index]
         side = int(metrics["side"])
-        if main_orientation == "vertical":
+        if topology_canvas is not None:
+            lane = None
+        elif main_orientation == "vertical":
             lane = {
                 "x": 18.0,
                 "y": station - 58.0,
@@ -247,32 +627,79 @@ def build_fire_branch_network_layout(
                 "label_x": station,
                 "label_y": 42.0,
             }
-        lane.update(
-            {
-                "row_index": row_index,
-                "position": station_index,
-                "station": station,
-                "side": side,
-                "label": f"第 {row_index + 1} 排",
-                "segment_count": len(row_segments),
-            }
-        )
-        row_lanes.append(lane)
-        cursor = main_cross
+        if lane is not None:
+            lane.update(
+                {
+                    "row_index": row_index,
+                    "position": station_index,
+                    "station": station,
+                    "side": side,
+                    "label": f"第 {row_index + 1} 排",
+                    "segment_count": len(row_segments),
+                }
+            )
+            row_lanes.append(lane)
+        anchor = main_context_layout["anchors"].get(row_index)
+        if topology_canvas is not None:
+            cursor = 0.0
+        elif anchor is not None:
+            if main_orientation == "vertical":
+                station = anchor[1]
+                lane["y"] = station - 58.0
+                lane["label_y"] = station + 5.0
+                cursor = anchor[0]
+            else:
+                station = anchor[0]
+                lane["x"] = station - 100.0
+                lane["label_x"] = station
+                cursor = anchor[1]
+        else:
+            cursor = main_cross
         for segment_position, raw in enumerate(row_segments):
-            length_mm = _segment_length_mm(raw)
+            length_mm = _segment_length_mm(raw, cad_verified=cad_verified)
             length_px = float(metrics["lengths"][segment_position])
-            next_cursor = cursor + side * length_px
             diameter = _float_or_none(raw.get("diameter_mm"))
             evidence = str(raw.get("evidence") or "unresolved")
             segment_id = str(raw.get("segment_id") or f"row-{row_index}-{len(laid_out_segments)}")
-            center = (cursor + next_cursor) / 2
-            if main_orientation == "vertical":
-                x1, y1, x2, y2 = cursor, station, next_cursor, station
-                label_x, label_y = center, station - 30.0
+            canvas_segment = (
+                topology_canvas["branch_segments"].get(segment_id)
+                if topology_canvas is not None
+                else None
+            )
+            if canvas_segment is not None:
+                x1, y1 = canvas_segment["start"]
+                x2, y2 = canvas_segment["end"]
+                delta_x = x2 - x1
+                delta_y = y2 - y1
+                segment_axis = "x" if abs(delta_x) >= abs(delta_y) else "y"
+                center_x = (x1 + x2) / 2.0
+                center_y = (y1 + y2) / 2.0
+                if segment_axis == "x":
+                    label_x, label_y = center_x, center_y - 30.0
+                else:
+                    label_x, label_y = center_x + 82.0, center_y
             else:
-                x1, y1, x2, y2 = station, cursor, station, next_cursor
-                label_x, label_y = station + 82.0, center
+                next_cursor = cursor + side * length_px
+                center = (cursor + next_cursor) / 2
+                if main_orientation == "vertical":
+                    x1, y1, x2, y2 = cursor, station, next_cursor, station
+                    label_x, label_y = center, station - 30.0
+                    segment_axis = branch_axis
+                else:
+                    x1, y1, x2, y2 = station, cursor, station, next_cursor
+                    label_x, label_y = station + 82.0, center
+                    segment_axis = branch_axis
+            raw_source_color = str(raw.get("color") or "")
+            source_color = (
+                cad_color_to_hex(raw.get("color"))
+                if cad_verified
+                else "#8a8a8a"
+            )
+            evidence_label = (
+                _EVIDENCE_LABELS.get(evidence, evidence or "待確認")
+                if cad_verified
+                else "CAD路徑未驗證"
+            )
             item = {
                 "segment_id": segment_id,
                 "row_index": row_index,
@@ -281,28 +708,39 @@ def build_fire_branch_network_layout(
                 "y1": y1,
                 "x2": x2,
                 "y2": y2,
-                "color": cad_color_to_hex(raw.get("color")),
-                "source_color": str(raw.get("color") or ""),
+                "color": source_color,
+                "display_color": (
+                    diameter_to_display_color(diameter, source_color)
+                    if cad_verified
+                    else "#8a8a8a"
+                ),
+                "source_color": source_color,
+                "cad_source_color": raw_source_color,
                 "diameter_mm": diameter,
                 "diameter_label": format_diameter_label(diameter),
                 "length_label": format_length_label(length_mm),
                 "evidence": evidence,
-                "evidence_label": _EVIDENCE_LABELS.get(evidence, evidence or "待確認"),
-                "review_required": diameter is None or "conflict" in evidence,
+                "evidence_label": evidence_label,
+                "review_required": (
+                    not cad_verified
+                    or diameter is None
+                    or "conflict" in evidence
+                ),
                 "length_mm": length_mm,
                 "stroke_width": _pipe_stroke_width(diameter),
                 "label_x": label_x,
                 "label_y": label_y,
                 "terminal_x": x2,
                 "terminal_y": y2,
-                "branch_axis": branch_axis,
+                "branch_axis": segment_axis,
                 "is_sprinkler_terminal": bool(raw.get("is_sprinkler_terminal")),
                 "sprinkler_id": raw.get("sprinkler_id"),
                 "source": raw,
             }
             laid_out_segments.append(item)
             segment_by_id[segment_id] = item
-            cursor = next_cursor
+            if canvas_segment is None:
+                cursor = next_cursor
 
     topology_plan = analysis.get("topology_plan") or build_fire_branch_topology_plan(
         analysis
@@ -342,11 +780,17 @@ def build_fire_branch_network_layout(
         kind = str(raw.get("kind") or "unresolved_tee")
         label = "待確認"
         if main_diameter is not None and common_diameter is not None:
-            label = (
-                f"DN{float(main_diameter):g} × DN{float(main_diameter):g}"
-                f" × DN{float(common_diameter):g}"
-            )
-            if len(branch_ids) == 2:
+            if "endpoint_tee" in kind:
+                label = (
+                    f"DN{float(common_diameter):g} × DN{float(common_diameter):g}"
+                    f" × DN{float(main_diameter):g}"
+                )
+            else:
+                label = (
+                    f"DN{float(main_diameter):g} × DN{float(main_diameter):g}"
+                    f" × DN{float(common_diameter):g}"
+                )
+            if len(branch_ids) == 2 and "endpoint_tee" not in kind:
                 label += f" × DN{float(common_diameter):g}"
         laid_out_junctions.append(
             {
@@ -366,7 +810,10 @@ def build_fire_branch_network_layout(
         )
 
     for raw in topology_plan.get("reducers") or []:
-        if str(raw.get("placement") or "") != "after_cross":
+        if str(raw.get("placement") or "") not in {
+            "after_cross",
+            "after_endpoint_tee",
+        }:
             continue
         current = segment_by_id.get(str(raw.get("branch_segment_id") or ""))
         if current is None:
@@ -375,6 +822,7 @@ def build_fire_branch_network_layout(
             previous={
                 **current,
                 "color": current["color"],
+                "display_color": current.get("display_color", current["color"]),
                 "stroke_width": _pipe_stroke_width(float(raw["from_diameter_mm"])),
             },
             current=current,
@@ -389,7 +837,17 @@ def build_fire_branch_network_layout(
     main_label = "主管"
     if main_diameter_mm:
         main_label += "｜" + format_diameter_label(float(main_diameter_mm))
-    if main_orientation == "vertical":
+    if topology_canvas is not None and main_context_layout["segments"]:
+        first_main = main_context_layout["segments"][0]
+        main = {
+            "x1": first_main["x1"],
+            "y1": first_main["y1"],
+            "x2": first_main["x2"],
+            "y2": first_main["y2"],
+            "label_x": min(item["x1"] for item in main_context_layout["segments"]),
+            "label_y": min(item["y1"] for item in main_context_layout["segments"]) - 22.0,
+        }
+    elif main_orientation == "vertical":
         main = {
             "x1": main_cross,
             "y1": station_start - 58.0,
@@ -423,6 +881,22 @@ def build_fire_branch_network_layout(
         "width": width,
         "height": height,
         "main": main,
+        "main_shape": main_context_layout["shape"],
+        "main_segments": main_context_layout["segments"],
+        "main_graph": main_context_layout.get("graph") or {
+            "segments": [],
+            "nodes": [],
+            "components": [],
+            "anchors": {},
+            "shape": "linear",
+            "edge_count": 0,
+            "node_count": 0,
+            "component_count": 0,
+        },
+        "coordinate_space": coordinate_space,
+        "canvas_transform": (
+            topology_canvas.get("transform") if topology_canvas is not None else None
+        ),
         "orientation": {
             **orientation,
             "branch_axis": branch_axis,
@@ -434,6 +908,10 @@ def build_fire_branch_network_layout(
         "junctions": laid_out_junctions,
         "row_count": len(rows),
         "station_count": len(station_groups),
+        "cad_verified": cad_verified,
+        "cad_status": str(
+            (analysis.get("cad_path_check") or {}).get("status") or ""
+        ),
     }
 
 
@@ -456,6 +934,8 @@ def render_fire_branch_network_svg(
     orientation = layout["orientation"]
     main_width = _pipe_stroke_width(_float_or_none(main.get("diameter_mm")))
     orientation_source = html.escape(str(orientation.get("source") or ""), quote=True)
+    cad_verified = bool(layout.get("cad_verified"))
+    cad_status = html.escape(str(layout.get("cad_status") or ""), quote=True)
     compass_x = width * 0.5
     compass_y = 47.0
     north = orientation["north_screen"]
@@ -466,13 +946,18 @@ def render_fire_branch_network_svg(
     east_y = compass_y + float(east["y"]) * 22.0
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" data-orientation-source="{orientation_source}">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" data-coordinate-space="{html.escape(str(layout.get("coordinate_space") or "schematic_lanes"), quote=True)}" data-orientation-source="{orientation_source}" data-main-shape="{html.escape(str(layout.get("main_shape") or "linear"), quote=True)}" data-cad-verified="{str(cad_verified).lower()}" data-cad-status="{cad_status}">',
         f"<title>{html.escape(title)}</title>",
         '<rect width="100%" height="100%" fill="#ffffff"/>',
         '<rect x="0" y="0" width="100%" height="92" fill="#ffffff"/>',
         '<line x1="22" y1="91" x2="100%" y2="91" stroke="#d7d7d7" stroke-width="1"/>',
         f'<text x="28" y="37" font-family="Microsoft JhengHei, sans-serif" font-size="23" font-weight="700" fill="#202020">{html.escape(title)}</text>',
-        '<text x="28" y="64" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#666666">方向依目前 Revit 視圖｜虛線表示待確認</text>',
+        (
+            '<text x="28" y="64" font-family="Microsoft JhengHei, sans-serif" '
+            'font-size="13" fill="#a15c00">CAD 路徑未驗證｜本圖僅供示意，不可用於建模</text>'
+            if not cad_verified
+            else '<text x="28" y="64" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#666666">方向依目前 Revit 視圖｜虛線表示待確認</text>'
+        ),
         f'<circle cx="{compass_x:.1f}" cy="{compass_y:.1f}" r="3" fill="#555555"/>',
         f'<line x1="{compass_x:.1f}" y1="{compass_y:.1f}" x2="{north_x:.1f}" y2="{north_y:.1f}" stroke="#334e68" stroke-width="2"/>',
         f'<text x="{compass_x + float(north["x"]) * 32.0:.1f}" y="{compass_y + float(north["y"]) * 32.0 + 4:.1f}" text-anchor="middle" font-family="Microsoft JhengHei, sans-serif" font-size="12" font-weight="700" fill="#334e68">北</text>',
@@ -493,10 +978,23 @@ def render_fire_branch_network_svg(
                 f'<text x="{lane["label_x"]:.1f}" y="{lane["label_y"] + 17:.1f}" text-anchor="middle" font-family="Microsoft JhengHei, sans-serif" font-size="11" fill="#888888">{lane["segment_count"]} 段</text>',
             ]
         )
+    if layout.get("main_segments"):
+        for context_segment in layout["main_segments"]:
+            parts.extend(
+                [
+                    f'<line class="main-context-segment" data-main-shape="{html.escape(str(layout.get("main_shape") or "linear"), quote=True)}" data-main-segment-id="{html.escape(str(context_segment["segment_id"]), quote=True)}" x1="{context_segment["x1"]:.1f}" y1="{context_segment["y1"]:.1f}" x2="{context_segment["x2"]:.1f}" y2="{context_segment["y2"]:.1f}" stroke="#d7d7d7" stroke-width="{main_width + 4:.1f}" stroke-linecap="round"/>',
+                    f'<line class="main-context-segment" data-main-shape="{html.escape(str(layout.get("main_shape") or "linear"), quote=True)}" data-main-segment-id="{html.escape(str(context_segment["segment_id"]), quote=True)}" x1="{context_segment["x1"]:.1f}" y1="{context_segment["y1"]:.1f}" x2="{context_segment["x2"]:.1f}" y2="{context_segment["y2"]:.1f}" stroke="#34495e" stroke-width="{main_width:.1f}" stroke-linecap="round"/>',
+                ]
+            )
+    else:
+        parts.extend(
+            [
+                f'<line x1="{main["x1"]:.1f}" y1="{main["y1"]:.1f}" x2="{main["x2"]:.1f}" y2="{main["y2"]:.1f}" stroke="#d7d7d7" stroke-width="{main_width + 4:.1f}" stroke-linecap="round"/>',
+                f'<line x1="{main["x1"]:.1f}" y1="{main["y1"]:.1f}" x2="{main["x2"]:.1f}" y2="{main["y2"]:.1f}" stroke="#34495e" stroke-width="{main_width:.1f}" stroke-linecap="round"/>',
+            ]
+        )
     parts.extend(
         [
-            f'<line x1="{main["x1"]:.1f}" y1="{main["y1"]:.1f}" x2="{main["x2"]:.1f}" y2="{main["y2"]:.1f}" stroke="#d7d7d7" stroke-width="{main_width + 4:.1f}" stroke-linecap="round"/>',
-            f'<line x1="{main["x1"]:.1f}" y1="{main["y1"]:.1f}" x2="{main["x2"]:.1f}" y2="{main["y2"]:.1f}" stroke="#34495e" stroke-width="{main_width:.1f}" stroke-linecap="round"/>',
             f'<rect x="{main["label_x"] - 10:.1f}" y="{main["label_y"] - 19:.1f}" width="160" height="28" rx="4" fill="#ffffff" stroke="#cccccc"/>',
             f'<text x="{main["label_x"]:.1f}" y="{main["label_y"]:.1f}" font-family="Microsoft JhengHei, sans-serif" font-size="14" font-weight="700" fill="#333333">{html.escape(main["label"])}</text>',
         ]
@@ -510,9 +1008,9 @@ def render_fire_branch_network_svg(
         pipe_width = float(segment["stroke_width"])
         parts.extend(
             [
-                f'<g id="segment-{html.escape(segment["segment_id"], quote=True)}" data-row="{segment["row_index"]}" data-sequence="{segment["sequence"]}" data-diameter-mm="{segment["diameter_mm"] if segment["diameter_mm"] is not None else ""}">',
+                f'<g id="segment-{html.escape(segment["segment_id"], quote=True)}" data-row="{segment["row_index"]}" data-sequence="{segment["sequence"]}" data-diameter-mm="{segment["diameter_mm"] if segment["diameter_mm"] is not None else ""}" data-source-color="{html.escape(segment["color"], quote=True)}" data-cad-source-color="{html.escape(segment.get("cad_source_color") or "", quote=True)}" data-evidence="{html.escape(segment["evidence"], quote=True)}">',
                 f'<line x1="{segment["x1"]:.1f}" y1="{segment["y1"]:.1f}" x2="{segment["x2"]:.1f}" y2="{segment["y2"]:.1f}" stroke="#d0d0d0" stroke-width="{pipe_width + 4:.1f}" stroke-linecap="round"{dash}/>',
-                f'<line x1="{segment["x1"]:.1f}" y1="{segment["y1"]:.1f}" x2="{segment["x2"]:.1f}" y2="{segment["y2"]:.1f}" stroke="{segment["color"]}" stroke-width="{pipe_width:.1f}" stroke-linecap="round"{dash}/>',
+                f'<line x1="{segment["x1"]:.1f}" y1="{segment["y1"]:.1f}" x2="{segment["x2"]:.1f}" y2="{segment["y2"]:.1f}" stroke="{segment["display_color"]}" stroke-width="{pipe_width:.1f}" stroke-linecap="round"{dash}/>',
                 f'<circle cx="{segment["x1"]:.1f}" cy="{segment["y1"]:.1f}" r="4.2" fill="#ffffff" stroke="#555555" stroke-width="1.5"/>',
                 f'<rect x="{label_x - 73:.1f}" y="{label_y - 24:.1f}" width="146" height="44" rx="4" fill="{label_fill}" stroke="{label_border}"/>',
                 f'<text x="{label_x:.1f}" y="{label_y - 5:.1f}" text-anchor="middle" font-family="Microsoft JhengHei, sans-serif" font-size="14" font-weight="700" fill="#1f1f1f">{html.escape(segment["diameter_label"])}</text>',
@@ -552,7 +1050,7 @@ def render_fire_branch_network_svg(
             title = "異徑四通"
         elif kind == "cross":
             title = "四通"
-        elif kind == "reducing_tee":
+        elif kind in {"reducing_tee", "reducing_endpoint_tee"}:
             title = "異徑三通"
         else:
             title = "三通"
@@ -570,7 +1068,7 @@ def render_fire_branch_network_svg(
         [
             "</g>",
             f'<line x1="22" y1="{height - footer_height}" x2="{width - 22}" y2="{height - footer_height}" stroke="#dddddd"/>',
-            f'<text x="28" y="{height - 16}" font-family="Microsoft JhengHei, sans-serif" font-size="11.5" fill="#777777">管線顏色沿用 CAD｜管徑與長度標示於管段上方｜虛線與淡黃色框需人工確認</text>',
+            f'<text x="28" y="{height - 16}" font-family="Microsoft JhengHei, sans-serif" font-size="11.5" fill="#777777">管線色彩依管徑｜CAD 原始線色保留於資料｜管徑與長度標示於管段上方｜虛線與淡黃色框需人工確認</text>',
             "</svg>",
         ]
     )
@@ -647,6 +1145,24 @@ def cad_color_to_hex(value: Any) -> str:
     return named.get(text, "#555555")
 
 
+def diameter_to_display_color(
+    diameter_mm: float | None,
+    source_color: str | None = None,
+) -> str:
+    """Return a stable SVG colour for a resolved diameter.
+
+    Unknown diameters remain neutral instead of inheriting a misleading CAD
+    colour.  The original CAD colour is kept separately for evidence/audit.
+    """
+    if diameter_mm is None:
+        return "#8a8a8a"
+    nominal = float(diameter_mm)
+    for known, color in _DIAMETER_DISPLAY_COLORS.items():
+        if abs(known - nominal) <= 0.01:
+            return color
+    return source_color or "#8a8a8a"
+
+
 def format_diameter_label(value: float | None) -> str:
     if value is None:
         return "待確認"
@@ -663,8 +1179,14 @@ def format_length_label(value_mm: float) -> str:
     return f"{length:.0f} mm"
 
 
-def _row_display_lengths(segments: list[dict[str, Any]]) -> list[float]:
-    lengths_mm = [_segment_length_mm(item) for item in segments]
+def _row_display_lengths(
+    segments: list[dict[str, Any]],
+    *,
+    cad_verified: bool = False,
+) -> list[float]:
+    lengths_mm = [
+        _segment_length_mm(item, cad_verified=cad_verified) for item in segments
+    ]
     total_mm = sum(lengths_mm)
     if total_mm <= 1e-9:
         return [0.0 for _ in segments]
@@ -752,7 +1274,20 @@ def _project_to_view(
     return screen_x, screen_y
 
 
-def _segment_length_mm(segment: dict[str, Any]) -> float:
+def _segment_length_mm(
+    segment: dict[str, Any],
+    *,
+    cad_verified: bool = False,
+) -> float:
+    if cad_verified:
+        cad_start = segment.get("cad_geometry_start") or {}
+        cad_end = segment.get("cad_geometry_end") or {}
+        if cad_start and cad_end:
+            dx = float(cad_end.get("x") or 0) - float(cad_start.get("x") or 0)
+            dy = float(cad_end.get("y") or 0) - float(cad_start.get("y") or 0)
+            cad_length = math.hypot(dx, dy) * 304.8
+            if cad_length > 1e-9:
+                return cad_length
     explicit = _float_or_none(segment.get("planned_length_mm"))
     if explicit and explicit > 0:
         return explicit

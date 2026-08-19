@@ -47,6 +47,25 @@ def semantic_zoom_visibility(scale: float) -> dict[str, bool]:
     }
 
 
+def main_context_render_segments(layout: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the selected main geometry for the Tk canvas.
+
+    The SVG writer already prefers ``main_segments``.  The interactive preview
+    must use the same geometry; otherwise an L/U-shaped main is replaced by the
+    old synthetic straight guide line and the preview disagrees with the SVG.
+    """
+
+    context_segments = [
+        dict(item)
+        for item in (layout.get("main_segments") or [])
+        if isinstance(item, dict)
+    ]
+    if context_segments:
+        return context_segments
+    main = layout.get("main")
+    return [dict(main)] if isinstance(main, dict) else []
+
+
 class FireBranchNetworkPreview(tk.Toplevel):
     """Simple pan-and-zoom schematic backed by the same data as the SVG export."""
 
@@ -79,8 +98,14 @@ class FireBranchNetworkPreview(tk.Toplevel):
         self._selected_segment_id: str | None = None
         self._saved_copy = False
         self._svg_path = self._create_svg(batch_id)
+        cad_verified = bool(self._layout.get("cad_verified"))
         self._status_var = tk.StringVar(
-            value="滑鼠滾輪縮放｜按住左鍵拖動｜雙擊管段可回到 Revit 定位"
+            value=(
+                "CAD 路徑未驗證｜本圖僅供示意，不可用於建模｜滑鼠滾輪縮放｜"
+                "按住左鍵拖動｜雙擊管段可回到 Revit 定位"
+                if not cad_verified
+                else "滑鼠滾輪縮放｜按住左鍵拖動｜雙擊管段可回到 Revit 定位"
+            )
         )
 
         self.columnconfigure(0, weight=1)
@@ -209,26 +234,28 @@ class FireBranchNetworkPreview(tk.Toplevel):
                 tags=("diagram", "lane", "lane-text"),
             )
         main_width = float(main.get("stroke_width") or 9.0)
-        self.canvas.create_line(
-            main["x1"],
-            main["y1"],
-            main["x2"],
-            main["y2"],
-            fill="#d7d7d7",
-            width=main_width + 4,
-            capstyle="round",
-            tags=("diagram", "main", "main-casing"),
-        )
-        self.canvas.create_line(
-            main["x1"],
-            main["y1"],
-            main["x2"],
-            main["y2"],
-            fill="#34495e",
-            width=main_width,
-            capstyle="round",
-            tags=("diagram", "main", "main-pipe"),
-        )
+        main_segments = main_context_render_segments(self._layout)
+        for main_segment in main_segments:
+            self.canvas.create_line(
+                main_segment["x1"],
+                main_segment["y1"],
+                main_segment["x2"],
+                main_segment["y2"],
+                fill="#d7d7d7",
+                width=main_width + 4,
+                capstyle="round",
+                tags=("diagram", "main", "main-casing"),
+            )
+            self.canvas.create_line(
+                main_segment["x1"],
+                main_segment["y1"],
+                main_segment["x2"],
+                main_segment["y2"],
+                fill="#34495e",
+                width=main_width,
+                capstyle="round",
+                tags=("diagram", "main", "main-pipe"),
+            )
         self.canvas.create_text(
             main["label_x"],
             main["label_y"],
@@ -260,7 +287,15 @@ class FireBranchNetworkPreview(tk.Toplevel):
                 segment["y1"],
                 segment["x2"],
                 segment["y2"],
-                fill=segment["color"],
+                # Use the resolved display colour.  ``color`` is the raw CAD
+                # evidence and may be the neutral fallback when CAD matching
+                # is incomplete; using it here made every interactive pipe
+                # appear grey even when the SVG had diameter colours.
+                fill=(
+                    segment.get("display_color")
+                    or segment.get("color")
+                    or "#8a8a8a"
+                ),
                 width=pipe_width,
                 dash=dash,
                 capstyle="round",

@@ -92,6 +92,31 @@ class FireBranchDevelopmentFlowTests(unittest.TestCase):
         self.assertIn("略過灑水頭：1 顆", result["summary_lines"])
         self.assertNotIn("review_required", "\n".join(result["summary_lines"]))
 
+    def test_hot_analysis_does_not_reset_to_unanalyzed_when_cad_route_is_missing(self) -> None:
+        from sc_revit.fire_branch.hot_analysis import build_preview_summary
+
+        result = build_preview_summary(
+            {
+                "row_count": 1,
+                "estimated_pipe_count": 3,
+                "sprinkler_count": 2,
+                "skipped": [],
+                "cad_path_check": {
+                    "status": "cad_no_paths",
+                    "selected_source_path": "Z:/example.dwg",
+                    "coordinate_verified": False,
+                    "diameter_probe_segments": [
+                        {"segment_id": "row-0-0", "row_index": 0, "sequence": 0}
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(result["status"], "needs_attention")
+        analysis = result["diameter_analysis"]
+        self.assertEqual(analysis["status"], "needs_attention")
+        self.assertIn("CAD 對位尚未驗證", analysis["message"])
+
     def test_sandbox_request_is_explicit_and_preserves_preview(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             request_dir = Path(temp_dir) / "requests"
@@ -377,7 +402,7 @@ class FireBranchDevelopmentFlowTests(unittest.TestCase):
             )
 
         self.assertIn(
-            "中文預設規則：已偵測 1 筆｜未標註管徑 25 mm",
+            "CAD 備註預設：已偵測 1 筆｜未標註管徑 25 mm",
             result["summary_lines"],
         )
 

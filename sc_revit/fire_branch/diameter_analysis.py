@@ -736,6 +736,12 @@ def analyze_diameter_evidence(
         "resolved_segment_count": len(results) - unresolved_count,
         "unresolved_segment_count": unresolved_count,
         "segments": results,
+        # Keep the selected main geometry in the analysis result.  The SVG
+        # renderer and the Revit execution plan must consume the same main
+        # route; dropping this field here silently rebuilt a synthetic
+        # straight main in the real GUI even when Revit had returned an L/U
+        # or fragmented route.
+        "main_context_segments": [dict(item) for item in (main_context_segments or [])],
         "reducers": reducers,
         "junctions": junctions,
         "label_matches": label_matches,

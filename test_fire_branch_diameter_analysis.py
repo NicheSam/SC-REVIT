@@ -433,6 +433,39 @@ class FireBranchDiameterAnalysisTests(unittest.TestCase):
         self.assertEqual("main-1001", junction["main_segment_id"])
         self.assertFalse(junction["review_required"])
 
+    def test_analysis_keeps_main_context_for_svg_and_execution_consumers(self):
+        main_context = [
+            {
+                "segment_id": "main-1",
+                "source_element_id": 1001,
+                "start": {"x": 0, "y": 0},
+                "end": {"x": 0, "y": 10},
+            },
+            {
+                "segment_id": "main-2",
+                "source_element_id": 1002,
+                "start": {"x": 0, "y": 10},
+                "end": {"x": 10, "y": 10},
+            },
+        ]
+
+        result = analyze_diameter_evidence(
+            texts=[],
+            segments=[
+                {
+                    "segment_id": "row-0-0",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 0, "y": 5},
+                }
+            ],
+            main_context_segments=main_context,
+            maximum_label_distance=2,
+        )
+
+        self.assertEqual(main_context, result["main_context_segments"])
+
     def test_perpendicular_branch_label_does_not_conflict_with_aligned_main_labels(self):
         result = analyze_diameter_evidence(
             texts=[

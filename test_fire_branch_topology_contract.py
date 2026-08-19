@@ -19,6 +19,14 @@ def method_body(source: str, method_name: str, next_method_name: str) -> str:
 
 
 class FireBranchTopologyContractTests(unittest.TestCase):
+    def test_selected_main_is_expanded_without_longest_path_pruning(self) -> None:
+        source = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("ExpandFireMainPipeIds(doc, ids)", source)
+        self.assertIn("Follow the physical Connector graph", source)
+        self.assertIn("return mains;", source)
+        self.assertIn("main_pipe_ids = mainPipes.Select(item => item.PipeId).ToList()", source)
+
     def test_tee_endpoint_fallback_accepts_pipe_endpoints(self) -> None:
         source = (ROOT / "revit_addin" / "src" / "RfaMetadataApplication.cs").read_text(
             encoding="utf-8"
@@ -30,6 +38,29 @@ class FireBranchTopologyContractTests(unittest.TestCase):
         self.assertIn(
             "pipe => IsPointOnPipeXYIncludingEnds(pipe, tiePoint, tolerance)",
             method,
+        )
+
+    def test_tee_helper_keeps_branch_connector_in_the_branch_position(self) -> None:
+        source = APPLICATION_SOURCE.read_text(encoding="utf-8")
+        helper = method_body(
+            source,
+            "private static FamilyInstance TryNewTeeFitting",
+            "private static bool TryCreateTeeAtPoint",
+        )
+
+        self.assertIn("Connector[][] orders", helper)
+        self.assertIn("new Connector[] { mainA, mainB, branch }", helper)
+        self.assertIn("new Connector[] { mainB, mainA, branch }", helper)
+        self.assertNotIn("new Connector[] { mainA, branch, mainB }", helper)
+        self.assertNotIn("new Connector[] { branch, mainB, mainA }", helper)
+        self.assertIn("foreach (Connector[] order in orders)", helper)
+        self.assertIn(
+            "doc.Create.NewTeeFitting(order[0], order[1], order[2])",
+            helper,
+        )
+        self.assertNotIn(
+            "fitting does not physically reference all three planned pipes",
+            helper,
         )
 
     def test_junction_planner_distinguishes_current_and_future_topologies(self):
@@ -65,6 +96,19 @@ class FireBranchTopologyContractTests(unittest.TestCase):
         cross_loop = source[deferred_cross:source.index("{", deferred_cross)]
         self.assertIn("OrderBy(plan => plan.MainPipeId)", cross_loop)
         self.assertIn("ThenBy(plan => plan.MainParameter)", cross_loop)
+
+    def test_opposite_branches_at_a_main_endpoint_use_one_tee(self):
+        handler = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn('item.Kind == "endpoint_tee"', handler)
+        self.assertIn('item.Kind == "reducing_endpoint_tee"', handler)
+        self.assertIn('executionCross.Kind == "endpoint_tee"', handler)
+        self.assertIn("Pipe mainEnd = FindPipeEndingAtPoint(", handler)
+        self.assertIn(
+            "TryCreateTeeAtPipeEnds(\n                                                    doc,\n                                                    crossBranchA,\n                                                    crossBranchB,\n                                                    mainEnd,",
+            handler,
+        )
+        self.assertIn("opposite_side_endpoint_tee_creation_failed", handler)
 
     def test_cross_uses_prepared_equal_diameter_ends_and_plain_cross(self):
         source = APPLICATION_SOURCE.read_text(encoding="utf-8")
@@ -199,6 +243,30 @@ class FireBranchTopologyContractTests(unittest.TestCase):
             handler.index("TryCreateCrossAtPipeEnds(", handler.index("foreach (FireBranchJunctionPlan crossPlan")),
         )
 
+    def test_revit_consumes_planned_geometry_instead_of_rebuilding_average_row(self):
+        handler = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
+        model_plan = (ROOT / "sc_revit" / "fire_branch" / "model_plan.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('"sprinkler_id": item.get("sprinkler_id")', model_plan)
+        self.assertIn('"is_sprinkler_terminal": bool(item.get("is_sprinkler_terminal"))', model_plan)
+        planned_run = method_body(
+            handler,
+            "private static List<Pipe> BuildFireBranchPlannedRun",
+            "private static int ApplyFireBranchDiameterPlan",
+        )
+        self.assertIn("segment.Start", planned_run)
+        self.assertIn("segment.End", planned_run)
+        self.assertIn("segment.DiameterFeet", planned_run)
+        self.assertIn("NewTransitionFitting", planned_run)
+        self.assertIn("BuildFireBranchPlannedRun(", handler)
+        self.assertIn("plannedRowSegments.First().Start", handler)
+        self.assertIn("terminalPlan.End", handler)
+        self.assertIn("IsSprinklerTerminal", handler)
+        self.assertIn("ResolveFireBranchPlanRowIndex(", handler)
+        self.assertIn("sprinklerIds.Contains(item.SprinklerId)", handler)
+
     def test_planned_cross_reacquires_pipe_references_after_revit_mutations(self):
         handler = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
         preparation = method_body(
@@ -323,26 +391,45 @@ class FireBranchTopologyContractTests(unittest.TestCase):
         self.assertIn("sprinklerDropFeet", routing)
         self.assertIn("connector.Radius * 2.0", routing)
 
-    def test_confirmed_successful_drop_path_is_frozen_while_cross_is_reworked(self):
+    def test_confirmed_sprinkler_connector_path_is_frozen_while_branch_inlet_changes(self):
         handler = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
         connect = method_body(
             handler,
             "private static bool TryConnectCompletedDropToSprinkler",
             "private static FireDropAssembly CreateFireDropWithTransition",
         ).replace("\r\n", "\n")
-        create = method_body(
-            handler,
-            "private static FireDropAssembly CreateFireDropWithTransition",
-            "private static List<ElementId> ResolveConnectedFireSystemIds",
-        ).replace("\r\n", "\n")
-
         self.assertEqual(
             "706ade85816e82313e19f0072c1951db73fa35f359da6ef248a7571e0d2d1021",
             hashlib.sha256(connect.encode("utf-8")).hexdigest(),
         )
-        self.assertEqual(
-            "ff515f9506352f6141b3b39d797ca4db4cbe69c2a1f9149bd36520c66ecf76fe",
-            hashlib.sha256(create.encode("utf-8")).hexdigest(),
+
+    def test_drop_uses_one_reducing_tee_without_branch_transition_spool(self):
+        handler = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
+        create = method_body(
+            handler,
+            "private static FireDropAssembly CreateFireDropWithTransition",
+            "private static List<ElementId> ResolveConnectedFireSystemIds",
+        )
+
+        self.assertIn("XYZ dropStart = tapPoint;", create)
+        self.assertIn("Pipe branchConnectionPipe = drop;", create)
+        self.assertNotIn("branchTransitionLength", create)
+        self.assertNotIn("Pipe upper =", create)
+        self.assertNotIn("NewTransitionFitting(upperConnector, dropConnector)", create)
+
+    def test_run_endpoint_prefers_single_tee_when_the_run_continues(self):
+        source = APPLICATION_SOURCE.read_text(encoding="utf-8")
+        connect = method_body(
+            source,
+            "private static bool TryConnectPipeToRun",
+            "private static bool TryCreateTeeAtPipeEnds",
+        )
+
+        self.assertIn("FindCollinearPipeEndingAtPoint", connect)
+        self.assertIn("TryCreateTeeAtPipeEnds", connect)
+        self.assertLess(
+            connect.index("TryCreateTeeAtPipeEnds"),
+            connect.index("TryCreateElbowAtPipeEnd"),
         )
 
     def test_failed_fitting_creation_rolls_back_pipe_breaks(self):
@@ -526,14 +613,11 @@ class FireBranchTopologyContractTests(unittest.TestCase):
         self.assertIn('item.get("actual_system_type_ids")', queue_client)
         self.assertIn('item.get("system_change_failures")', queue_client)
 
-    def test_drop_transition_spool_survives_tee_and_has_real_connections(self):
+    def test_drop_connects_directly_to_one_reducing_tee(self):
         source = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
 
-        self.assertIn(
-            "UnitUtils.ConvertToInternalUnits(100, UnitTypeId.Millimeters)",
-            source,
-        )
-        self.assertIn("branchDiameterFeet * 3.0", source)
+        self.assertNotIn("branch transition pipe creation failed", source)
+        self.assertNotIn("CreateFireDropWithTransition.branch.NewTransitionFitting", source)
         self.assertIn("currentBranchConnection", source)
         self.assertIn("branchConnectionConnectors.Any(connector => !connector.IsConnected)", source)
 

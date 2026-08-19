@@ -35,6 +35,13 @@ class FireBranchCadPathContractTests(unittest.TestCase):
         self.assertIn("cad_geometry_to_import_total_transform_to_revit_model", source)
         self.assertIn("cad_anchor_unverified", source)
 
+    def test_path_geometry_uses_same_import_transform_as_point_placement(self):
+        source = VERIFIER_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("root.GetSymbolGeometry()", source)
+        self.assertIn("root.Transform,", source)
+        self.assertNotIn("importTransform.Multiply(root.Transform)", source)
+
     def test_verifier_checks_route_and_topology_with_separate_tolerances(self):
         source = VERIFIER_SOURCE.read_text(encoding="utf-8")
 
@@ -49,6 +56,13 @@ class FireBranchCadPathContractTests(unittest.TestCase):
         self.assertIn("topology_match_ratio", source)
         self.assertIn("BuildFireBranchJunctionPlans", source)
         self.assertIn("DotXY(item, branchDirection) > 0.999", source)
+
+    def test_verifier_does_not_search_unrelated_cad_with_a_global_fallback(self):
+        source = VERIFIER_SOURCE.read_text(encoding="utf-8")
+
+        self.assertNotIn("ConvertToInternalUnits(15000", source)
+        self.assertNotIn("selected_route_corridors_expanded_after_empty_first_pass", source)
+        self.assertNotIn('warningCodes.Add("cad_scope_expanded")', source)
 
     def test_gui_displays_cad_status_without_new_user_input(self):
         source = GUI_SOURCE.read_text(encoding="utf-8")
@@ -86,7 +100,24 @@ class FireBranchCadPathContractTests(unittest.TestCase):
         self.assertIn("BuildFireBranchMainContextSegments", source)
         self.assertIn("main_context_segments", source)
         self.assertIn('topology_role = "main"', source)
-        self.assertIn("source_element_id = item.MainPipeId", source)
+        self.assertIn("source_element_id = item.PipeId", source)
+        self.assertIn("diameter_mm = UnitUtils.ConvertFromInternalUnits", source)
+        self.assertIn("BuildFireBranchMainConnectionRecords", source)
+        self.assertIn("endpoint = startDistance <= endDistance ? \"start\" : \"end\"", source)
+
+    def test_multi_main_assignment_uses_cad_route_evidence_before_rows(self):
+        handler = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("BuildFireBranchItemsFromCadEvidence", handler)
+        preview_start = handler.index('if (action == "create_fire_branch_preview")')
+        create_start = handler.index('if (action == "create_fire_branch_pipes"')
+        for action_start in (preview_start, create_start):
+            assignment = handler.index("BuildFireBranchItemsFromCadEvidence(", action_start)
+            grouping = handler.index("BuildFireBranchRows(", action_start)
+            self.assertLess(assignment, grouping)
+        self.assertIn("CompareFireBranchCadCandidateEvidence", handler)
+        self.assertIn("Candidate.BranchParameter", handler)
+        self.assertIn("CAD 路徑證據", handler)
 
 
 if __name__ == "__main__":

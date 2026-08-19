@@ -5,6 +5,8 @@ import json
 import math
 from typing import Any
 
+from sc_revit.fire_branch.main_geometry import normalize_main_geometry
+
 
 _JUNCTION_TOLERANCE_FEET = 5.0 / 304.8
 
@@ -31,6 +33,8 @@ def build_fire_branch_execution_plan(
             "start": item.get("start") or {},
             "end": item.get("end") or {},
             "diameter_mm": float(item["diameter_mm"]),
+            "sprinkler_id": item.get("sprinkler_id"),
+            "is_sprinkler_terminal": bool(item.get("is_sprinkler_terminal")),
         }
         for item in (diameter_analysis.get("segments") or [])
         if item.get("diameter_mm") is not None
@@ -45,7 +49,7 @@ def build_fire_branch_execution_plan(
         raise ValueError("目前預覽仍有尚未確認的接頭拓樸")
 
     plan = {
-        "schema_version": "fire_branch_execution_plan.v3",
+        "schema_version": "fire_branch_execution_plan.v4",
         "main_pipe_ids": sorted(int(item) for item in main_pipe_ids),
         "sprinkler_ids": sorted(int(item) for item in sprinkler_ids),
         "preview_snapshot_id": str(preview_snapshot_id),
@@ -79,6 +83,9 @@ def build_fire_branch_topology_plan(
         }
         for item in (diameter_analysis.get("reducers") or [])
     ]
+    main_graph = normalize_main_geometry(
+        diameter_analysis.get("main_context_segments") or []
+    )
 
     for index, raw in enumerate(raw_junctions):
         if index in consumed:
@@ -126,29 +133,48 @@ def build_fire_branch_topology_plan(
             and math.isclose(main_diameter, opposite_main)
         )
         common = max(branch_diameter, opposite_branch) if resolved else None
+        junction_point = _average_point(raw.get("point"), opposite.get("point"))
+        main_run_directions = _main_run_directions_at_point(main_graph, junction_point)
+        main_run_count = len(main_run_directions)
+        main_is_straight_through = _has_opposite_directions(main_run_directions)
+        has_main_geometry = bool(main_graph.get("segments"))
+        if has_main_geometry and main_run_count == 1:
+            kind = (
+                "endpoint_tee"
+                if resolved
+                and math.isclose(main_diameter, branch_diameter)
+                and math.isclose(main_diameter, opposite_branch)
+                else "reducing_endpoint_tee" if resolved else "unresolved_endpoint_tee"
+            )
+        elif not has_main_geometry or main_is_straight_through:
+            kind = (
+                "cross"
+                if resolved
+                and math.isclose(main_diameter, branch_diameter)
+                and math.isclose(main_diameter, opposite_branch)
+                else "reducing_cross" if resolved else "unresolved_cross"
+            )
+        else:
+            kind = "unresolved_main_junction"
         junctions.append(
             {
-                "kind": (
-                    "cross"
-                    if resolved
-                    and math.isclose(main_diameter, branch_diameter)
-                    and math.isclose(main_diameter, opposite_branch)
-                    else "reducing_cross" if resolved else "unresolved_cross"
-                ),
+                "kind": kind,
                 "row_indexes": [item[0] for item in rows_and_diameters],
                 "branch_segment_ids": [
                     str(item[2].get("branch_segment_id") or "")
                     for item in rows_and_diameters
                 ],
                 "main_segment_id": str(raw.get("main_segment_id") or ""),
-                "point": _average_point(raw.get("point"), opposite.get("point")),
+                "point": junction_point,
                 "main_diameter_mm": main_diameter if resolved else None,
                 "common_branch_diameter_mm": common,
                 "source_branch_diameters_mm": [item[1] for item in rows_and_diameters],
+                "main_run_count": main_run_count if has_main_geometry else None,
                 "review_required": bool(
                     not resolved
                     or raw.get("review_required")
                     or opposite.get("review_required")
+                    or kind == "unresolved_main_junction"
                 ),
             }
         )
@@ -159,7 +185,11 @@ def build_fire_branch_topology_plan(
                 continue
             reducers.append(
                 {
-                    "placement": "after_cross",
+                    "placement": (
+                        "after_endpoint_tee"
+                        if "endpoint_tee" in kind
+                        else "after_cross"
+                    ),
                     "row_index": row_index,
                     "junction_main_segment_id": str(raw.get("main_segment_id") or ""),
                     "branch_segment_id": str(side.get("branch_segment_id") or ""),
@@ -170,10 +200,61 @@ def build_fire_branch_topology_plan(
                 }
             )
     return {
-        "schema_version": "fire_branch_topology_plan.v3",
+        "schema_version": "fire_branch_topology_plan.v4",
         "junctions": junctions,
         "reducers": reducers,
     }
+
+
+def _main_run_directions_at_point(
+    graph: dict[str, Any],
+    point: dict[str, Any],
+) -> list[tuple[float, float]]:
+    """Return the distinct main-pipe rays that physically leave a junction."""
+
+    target = (
+        float((point or {}).get("x") or 0),
+        float((point or {}).get("y") or 0),
+    )
+    directions: list[tuple[float, float]] = []
+    for edge in graph.get("segments") or []:
+        start = tuple(float(value) for value in (edge.get("start") or (0, 0))[:2])
+        end = tuple(float(value) for value in (edge.get("end") or (0, 0))[:2])
+        vector = (end[0] - start[0], end[1] - start[1])
+        length_squared = vector[0] * vector[0] + vector[1] * vector[1]
+        if length_squared <= 1e-18:
+            continue
+        parameter = (
+            (target[0] - start[0]) * vector[0]
+            + (target[1] - start[1]) * vector[1]
+        ) / length_squared
+        clamped = min(1.0, max(0.0, parameter))
+        projected = (
+            start[0] + vector[0] * clamped,
+            start[1] + vector[1] * clamped,
+        )
+        if math.hypot(target[0] - projected[0], target[1] - projected[1]) > _JUNCTION_TOLERANCE_FEET:
+            continue
+        for endpoint in (start, end):
+            ray = (endpoint[0] - target[0], endpoint[1] - target[1])
+            length = math.hypot(ray[0], ray[1])
+            if length <= _JUNCTION_TOLERANCE_FEET:
+                continue
+            normalized = (ray[0] / length, ray[1] / length)
+            if not any(
+                normalized[0] * existing[0] + normalized[1] * existing[1] > 0.999
+                for existing in directions
+            ):
+                directions.append(normalized)
+    return directions
+
+
+def _has_opposite_directions(directions: list[tuple[float, float]]) -> bool:
+    return any(
+        first[0] * second[0] + first[1] * second[1] < -0.999
+        for index, first in enumerate(directions)
+        for second in directions[index + 1 :]
+    )
 
 
 def _find_opposite_junction(
@@ -309,6 +390,8 @@ def build_single_sprinkler_model_plan(
             "start": item.get("start") or {},
             "end": item.get("end") or {},
             "diameter_mm": float(item["diameter_mm"]),
+            "sprinkler_id": item.get("sprinkler_id"),
+            "is_sprinkler_terminal": bool(item.get("is_sprinkler_terminal")),
         }
         for item in row_segments
     ]

@@ -4,6 +4,7 @@
     create_fire_branch_pipes_request,
     create_fire_branch_preview_request,
     create_fire_branch_selection_request,
+    create_fire_branch_snapshot_request,
 )
 from sc_revit.core.revit_queue_client import wait_for_revit_response
 from rfa_reader import RfaReaderError
@@ -28,6 +29,19 @@ def request_fire_branch_context(timeout_seconds: int = 120) -> dict:
 
 def request_fire_branch_selection(timeout_seconds: int = 120) -> dict:
     request = create_fire_branch_selection_request()
+    return _wait(request.request_id, timeout_seconds)
+
+
+def request_fire_branch_snapshot(
+    *,
+    main_pipe_id: str | int | None = None,
+    main_pipe_ids: list[str | int] | None = None,
+    timeout_seconds: int = 120,
+) -> dict:
+    request = create_fire_branch_snapshot_request(
+        main_pipe_id=main_pipe_id,
+        main_pipe_ids=main_pipe_ids,
+    )
     return _wait(request.request_id, timeout_seconds)
 
 

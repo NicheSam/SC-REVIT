@@ -27,6 +27,7 @@ CAD_POINTS_ACTIONS = {
 FIRE_BRANCH_ACTIONS = {
     "list_fire_branch_context",
     "read_fire_branch_selection",
+    "read_fire_branch_snapshot",
     "create_fire_branch_preview",
     "create_fire_branch_pipes",
 }

@@ -416,6 +416,29 @@ def create_fire_branch_selection_request() -> QueueRequest:
     return request
 
 
+def create_fire_branch_snapshot_request(
+    *,
+    main_pipe_id: str | int | None = None,
+    main_pipe_ids: list[str | int] | None = None,
+) -> QueueRequest:
+    ensure_queue_dirs()
+    request = QueueRequest(
+        request_id=str(uuid.uuid4()),
+        rfa_path="",
+        action="read_fire_branch_snapshot",
+    )
+    payload = {
+        "request_id": request.request_id,
+        "action": request.action,
+    }
+    if main_pipe_id is not None:
+        payload["main_pipe_id"] = str(main_pipe_id)
+    if main_pipe_ids:
+        payload["main_pipe_ids"] = [str(item) for item in main_pipe_ids]
+    _write_request_json(request, payload)
+    return request
+
+
 def create_fire_branch_pipes_request(
     *,
     main_pipe_id: str | int,
