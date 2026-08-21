@@ -397,6 +397,8 @@ class FireBranchDiameterAnalysisTests(unittest.TestCase):
         self.assertEqual(1, len(result["reducers"]))
         self.assertEqual(40.0, result["reducers"][0]["from_diameter_mm"])
         self.assertEqual(25.0, result["reducers"][0]["to_diameter_mm"])
+        self.assertEqual("row-1-0", result["reducers"][0]["before_segment_id"])
+        self.assertEqual("row-1-1", result["reducers"][0]["after_segment_id"])
 
     def test_main_to_branch_size_change_is_a_reducing_tee_not_an_inline_reducer(self):
         result = analyze_diameter_evidence(
@@ -431,6 +433,38 @@ class FireBranchDiameterAnalysisTests(unittest.TestCase):
         self.assertEqual(100.0, junction["main_diameter_mm"])
         self.assertEqual(40.0, junction["branch_diameter_mm"])
         self.assertEqual("main-1001", junction["main_segment_id"])
+        self.assertFalse(junction["review_required"])
+
+    def test_selected_main_diameter_resolves_without_repeated_cad_main_label(self):
+        result = analyze_diameter_evidence(
+            texts=[],
+            segments=[
+                {
+                    "segment_id": "row-0-0",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 0, "y": 8},
+                    "diameter_mm": 25,
+                    "layer": "SPRINKLER-25",
+                }
+            ],
+            main_context_segments=[
+                {
+                    "segment_id": "main-1001",
+                    "source_element_id": 1001,
+                    "start": {"x": -8, "y": 0},
+                    "end": {"x": 8, "y": 0},
+                    "diameter_mm": 100,
+                }
+            ],
+            maximum_label_distance=2,
+        )
+
+        junction = result["junctions"][0]
+        self.assertEqual("reducing_tee", junction["kind"])
+        self.assertEqual(100.0, junction["main_diameter_mm"])
+        self.assertEqual("revit_main_context", junction["evidence"])
         self.assertFalse(junction["review_required"])
 
     def test_analysis_keeps_main_context_for_svg_and_execution_consumers(self):

@@ -1,0 +1,14 @@
+{
+  "schema_version": "fire_branch_cad_import_geometry_counts.v1",
+  "document_title": "大甲分局_MEP_sc168jobim",
+  "import_count": 28,
+  "imports_with_geometry": 28,
+  "imports_intersecting_selected_scope": 4,
+  "intersecting_imports": [
+    {"element_id": 13379262, "type_id": 13379173, "instances": 29, "curves": 3458, "polylines": 1973, "bounds_min": {"x": -5.746528389720652, "y": -505.8653109544328, "z": 0}, "bounds_max": {"x": 569.1470319243717, "y": 110.74131634221379, "z": 0}},
+    {"element_id": 13379416, "type_id": 13379263, "instances": 1475, "curves": 3279, "polylines": 1914, "bounds_min": {"x": -183.82696423395333, "y": -609.554785897148, "z": -6.760482283464204e-11}, "bounds_max": {"x": 389.6840265809856, "y": -156.99015335079088, "z": 0.4921259842519685}},
+    {"element_id": 13379549, "type_id": 13379417, "instances": 1607, "curves": 4070, "polylines": 2058, "bounds_min": {"x": -183.82696423719918, "y": -602.4036427220309, "z": -6.760482283464204e-11}, "bounds_max": {"x": 389.68402657773976, "y": -149.83901017567382, "z": 0.4921259842519685}},
+    {"element_id": 13379695, "type_id": 13379550, "instances": 1699, "curves": 5117, "polylines": 2351, "bounds_min": {"x": -183.82697099227485, "y": -601.1849538509844, "z": -6.760482283464204e-11}, "bounds_max": {"x": 389.6840198226641, "y": -148.62032130462723, "z": 0.4921259842519685}}
+  ],
+  "mutation": {"created": 0, "deleted": 0, "modified": 0}
+}

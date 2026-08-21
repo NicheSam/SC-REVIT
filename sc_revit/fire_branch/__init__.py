@@ -1,5 +1,8 @@
 ﻿from .topology_profile import classify_axis_polyline, summarize_fire_branch_snapshot
-from .cad_route_graph import build_cad_route_graph
+from .cad_route_graph import (
+    build_cad_route_graph,
+    build_revit_route_candidate_decisions,
+)
 from .client import (
     request_create_fire_branch_pipes,
     request_create_fire_branch_preview,
@@ -19,4 +22,7 @@ __all__ = [
     "classify_axis_polyline",
     "summarize_fire_branch_snapshot",
     "build_cad_route_graph",
+    "build_revit_route_candidate_decisions",
+    "compare_cad_route_candidates",
 ]
+from .cad_route_graph import compare_cad_route_candidates

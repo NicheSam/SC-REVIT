@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="620" viewBox="0 0 1400 620" role="img" aria-labelledby="title desc">
+<title id="title">SC REVIT 實機回讀元件 SVG 轉換驗證</title>
+<desc id="desc">以目前 Revit 活動視圖與唯一連結 CAD 的唯讀回讀資料，驗證管段、彎頭、三通、四通與變徑的 SVG 元件轉換。</desc>
+<rect width="1400" height="620" fill="#ffffff"/>
+<text x="40" y="38" font-family="Microsoft JhengHei, sans-serif" font-size="24" font-weight="700" fill="#263238">實機回讀｜SVG 元件轉換驗證（未部署 DLL）</text>
+<text x="40" y="66" font-family="Microsoft JhengHei, sans-serif" font-size="14" fill="#455a64">文件：大甲分局_MEP_sc168jobim｜視圖：-1. 地下壹層 撒水｜CAD ImportInstance：13379416（唯一）</text>
+<text x="40" y="92" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#607d8b">座標方向：依 Revit 活動視圖 right/up；本頁是元件轉換證據，不宣稱 CAD 路徑對位已完成。</text>
+<g id="card-pipe" data-plan-entity-id="component:pipe:13563852" data-revit-element-id="13563852" data-component-kind="pipe" data-connector-count="2">
+<rect x="30" y="120" width="250" height="430" rx="8" fill="#f8fafb" stroke="#cfd8dc"/>
+<text x="48" y="150" font-family="Microsoft JhengHei, sans-serif" font-size="18" font-weight="700" fill="#263238">管段 Pipe</text>
+<path d="M 25 210 L 225 210" fill="none" stroke="#455a64" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" transform="translate(30,0)"/>
+<text x="48" y="370" font-family="Consolas, monospace" font-size="14" fill="#263238">ElementId: 13563852</text>
+<text x="48" y="397" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">族群：FS_消防撒水管</text>
+<text x="48" y="423" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">連接器：2 個</text>
+<text x="48" y="449" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">連接器管徑：DN100</text>
+<text x="48" y="475" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">長度：7005.7 mm｜管徑 DN100</text>
+</g>
+<g id="card-elbow" data-plan-entity-id="component:elbow:13563857" data-revit-element-id="13563857" data-component-kind="elbow" data-connector-count="2">
+<rect x="300" y="120" width="250" height="430" rx="8" fill="#f8fafb" stroke="#cfd8dc"/>
+<text x="318" y="150" font-family="Microsoft JhengHei, sans-serif" font-size="18" font-weight="700" fill="#263238">彎頭 Elbow</text>
+<path d="M 25 300 L 130 300 L 130 220" fill="none" stroke="#455a64" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" transform="translate(300,0)"/>
+<text x="318" y="370" font-family="Consolas, monospace" font-size="14" fill="#263238">ElementId: 13563857</text>
+<text x="318" y="397" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">族群：FS_消防撒水管_彎頭_焊接</text>
+<text x="318" y="423" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">連接器：2 個</text>
+<text x="318" y="449" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">連接器管徑：DN100、DN100</text>
+<text x="318" y="475" font-family="Microsoft Jheng Hei, sans-serif" font-size="13" fill="#455a64">plan_entity_id：component:elbow:13563857</text>
+</g>
+<g id="card-tee" data-plan-entity-id="component:tee:13722992" data-revit-element-id="13722992" data-component-kind="tee" data-connector-count="3">
+<rect x="570" y="120" width="250" height="430" rx="8" fill="#f8fafb" stroke="#cfd8dc"/>
+<text x="588" y="150" font-family="Microsoft JhengHei, sans-serif" font-size="18" font-weight="700" fill="#263238">三通 Tee</text>
+<path d="M 70 220 L 70 300 M 25 260 L 200 260" fill="none" stroke="#00a8b5" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" transform="translate(570,0)"/>
+<circle cx="650" cy="270" r="14" fill="#ffffff" stroke="#00838f" stroke-width="4"/>
+<text x="588" y="370" font-family="Consolas, monospace" font-size="14" fill="#263238">ElementId: 13722992</text>
+<text x="588" y="397" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">族群：FS_消防撒水管_三通_螺牙</text>
+<text x="588" y="423" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">連接器：3 個</text>
+<text x="588" y="449" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">連接器管徑：DN40、DN40、DN40</text>
+<text x="588" y="475" font-family="Microsoft Jheng Hei, sans-serif" font-size="13" fill="#455a64">plan_entity_id：component:tee:13722992</text>
+</g>
+<g id="card-cross" data-plan-entity-id="component:cross:13563873" data-revit-element-id="13563873" data-component-kind="cross" data-connector-count="4">
+<rect x="840" y="120" width="250" height="430" rx="8" fill="#f8fafb" stroke="#cfd8dc"/>
+<text x="858" y="150" font-family="Microsoft JhengHei, sans-serif" font-size="18" font-weight="700" fill="#263238">四通 Cross</text>
+<path d="M 120 220 L 120 310 M 30 265 L 210 265" fill="none" stroke="#e53935" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" transform="translate(840,0)"/>
+<circle cx="940" cy="275" r="14" fill="#ffffff" stroke="#c62828" stroke-width="4"/>
+<text x="858" y="370" font-family="Consolas, monospace" font-size="14" fill="#263238">ElementId: 13563873</text>
+<text x="858" y="397" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">族群：FS_消防撒水管_十字_焊接</text>
+<text x="858" y="423" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">連接器：4 個</text>
+<text x="858" y="449" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">連接器管徑：DN100、DN100、DN100、DN100</text>
+<text x="858" y="475" font-family="Microsoft Jheng Hei, sans-serif" font-size="13" fill="#455a64">plan_entity_id：component:cross:13563873</text>
+</g>
+<g id="card-reducer" data-plan-entity-id="component:reducer:13737368" data-revit-element-id="13737368" data-component-kind="reducer" data-connector-count="2">
+<rect x="1110" y="120" width="250" height="430" rx="8" fill="#f8fafb" stroke="#cfd8dc"/>
+<text x="1128" y="150" font-family="Microsoft JhengHei, sans-serif" font-size="18" font-weight="700" fill="#263238">變徑 Reducer</text>
+<path d="M 40 260 L 90 260 L 140 290 L 200 290" fill="none" stroke="#ff7f00" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" transform="translate(1110,0)"/>
+<path d="M 1210 250 L 1245 250 L 1275 300 L 1310 300" fill="none" stroke="#ff7f00" stroke-width="18"/>
+<text x="1128" y="370" font-family="Consolas, monospace" font-size="14" fill="#263238">ElementId: 13737368</text>
+<text x="1128" y="397" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">族群：FS_消防撒水管_變徑_螺牙</text>
+<text x="1128" y="423" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">連接器：2 個</text>
+<text x="1128" y="449" font-family="Microsoft JhengHei, sans-serif" font-size="13" fill="#455a64">連接器管徑：DN20、DN25</text>
+<text x="1128" y="475" font-family="Microsoft Jheng Hei, sans-serif" font-size="13" fill="#455a64">plan_entity_id：component:reducer:13737368</text>
+</g>
+<rect x="40" y="575" width="1320" height="24" rx="4" fill="#fff8e1" stroke="#f9a825"/>
+<text x="55" y="592" font-family="Microsoft Jheng Hei, sans-serif" font-size="13" fill="#6d4c41">判讀：每個卡片均保留 live Revit ElementId、族群、連接器數量與連接器管徑；本頁沒有交易、沒有建模、沒有 DLL 載入。</text>
+</svg>

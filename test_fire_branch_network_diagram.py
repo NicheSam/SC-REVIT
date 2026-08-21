@@ -1,3 +1,5 @@
+import copy
+import math
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -55,8 +57,8 @@ class FireBranchNetworkDiagramTests(unittest.TestCase):
             "reducers": [
                 {
                     "row_index": 0,
-                    "after_segment_id": "row-0-0",
-                    "before_segment_id": "row-0-1",
+                    "before_segment_id": "row-0-0",
+                    "after_segment_id": "row-0-1",
                     "from_diameter_mm": 40,
                     "to_diameter_mm": 32,
                 }
@@ -117,9 +119,89 @@ class FireBranchNetworkDiagramTests(unittest.TestCase):
             (upstream["terminal_x"], upstream["terminal_y"]),
             (downstream["x1"], downstream["y1"]),
         )
+        self.assertEqual(upstream["display_color"], reducer["lead_color"])
         self.assertEqual(1, len(layout["junctions"]))
         self.assertEqual("DN100 × DN100 × DN40", layout["junctions"][0]["label"])
         self.assertEqual("reducing_tee", layout["junctions"][0]["kind"])
+
+    def test_svg_exposes_plan_entity_ids_for_one_to_one_review(self) -> None:
+        analysis = dict(self.analysis)
+        analysis["topology_plan"] = {
+            "plan_id": "preview-ids",
+            "revision": 1,
+            "plan_hash": "a" * 64,
+            "segments": [
+                {"segment_id": "row-0-0", "plan_entity_id": "segment:row-0-0"},
+                {"segment_id": "row-0-1", "plan_entity_id": "segment:row-0-1"},
+                {"segment_id": "row-1-0", "plan_entity_id": "segment:row-1-0"},
+            ],
+            "main_segments": [],
+            "reducers": [
+                {
+                    "before_segment_id": "row-0-0",
+                    "after_segment_id": "row-0-1",
+                    "plan_entity_id": "reducer:row-0-0:row-0-1",
+                    "from_diameter_mm": 40,
+                    "to_diameter_mm": 32,
+                }
+            ],
+            "junctions": [
+                {
+                    "branch_segment_ids": ["row-0-0"],
+                    "main_segment_id": "main-1001",
+                    "plan_entity_id": "junction:main-1001:row-0-0",
+                    "kind": "reducing_tee",
+                    "main_diameter_mm": 100,
+                    "common_branch_diameter_mm": 40,
+                    "review_required": False,
+                }
+            ],
+        }
+        svg = render_fire_branch_network_svg(analysis)
+        self.assertIn('data-plan-entity-id="segment:row-0-0"', svg)
+        self.assertIn('data-plan-entity-id="reducer:row-0-0:row-0-1"', svg)
+        self.assertIn('data-plan-entity-id="junction:main-1001:row-0-0"', svg)
+
+    def test_cross_label_uses_per_branch_outlet_diameters_from_plan(self) -> None:
+        analysis = dict(self.analysis)
+        analysis["topology_plan"] = {
+            "plan_id": "cross-outlets",
+            "revision": 1,
+            "plan_hash": "b" * 64,
+            "segments": [
+                {"segment_id": "row-0-0", "plan_entity_id": "segment:row-0-0"},
+                {"segment_id": "row-1-0", "plan_entity_id": "segment:row-1-0"},
+            ],
+            "main_segments": [],
+            "reducers": [],
+            "junctions": [
+                {
+                    "branch_segment_ids": ["row-0-0", "row-1-0"],
+                    "main_segment_id": "main-1001",
+                    "plan_entity_id": "junction:main-1001:row-0-0:row-1-0",
+                    "kind": "reducing_cross",
+                    "main_diameter_mm": 100,
+                    "common_branch_diameter_mm": 40,
+                    "branch_outlet_diameters_mm": [40, 32],
+                    "review_required": False,
+                }
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis)
+
+        self.assertEqual(1, len(layout["junctions"]))
+        self.assertEqual("DN100 × DN100 × DN40 × DN32", layout["junctions"][0]["label"])
+
+    def test_svg_uses_compact_text_labels_without_fixed_cards(self) -> None:
+        svg = render_fire_branch_network_svg(self.analysis)
+
+        self.assertNotIn('width="146" height="44"', svg)
+        self.assertNotIn('width="126" height="42"', svg)
+        self.assertNotIn('width="108" height="24"', svg)
+        self.assertIn('class="segment-label"', svg)
+        self.assertIn('class="segment-detail"', svg)
+        self.assertIn('paint-order="stroke"', svg)
 
     def test_unverified_cad_path_is_neutral_and_uses_planned_geometry(self) -> None:
         analysis = {
@@ -645,7 +727,7 @@ class FireBranchNetworkDiagramTests(unittest.TestCase):
         self.assertIn("異徑四通", svg)
         self.assertIn("DN100 × DN100 × DN25 × DN25", svg)
 
-    def test_unequal_opposite_branches_use_larger_cross_outlet_and_reduce_outward(self) -> None:
+    def test_unequal_opposite_branches_use_larger_cross_outlet_and_reduce_smaller_side(self) -> None:
         analysis = {
             "segments": [
                 {
@@ -706,12 +788,144 @@ class FireBranchNetworkDiagramTests(unittest.TestCase):
             if item.get("placement") == "after_cross"
         ]
         self.assertEqual(1, len(cross_reducers))
-        self.assertEqual("north-32", cross_reducers[0]["source_segment_id"])
         self.assertEqual("DN40 → DN32", cross_reducers[0]["label"])
-        self.assertEqual(40, cross_reducers[0]["lead_diameter_mm"])
         svg = render_fire_branch_network_svg(analysis, main_diameter_mm=100)
         self.assertIn("DN100 × DN100 × DN40 × DN40", svg)
         self.assertIn("DN40 → DN32", svg)
+
+    def test_topology_canvas_closes_small_adjacent_branch_gaps(self) -> None:
+        analysis = {
+            "cad_path_verified": True,
+            "main_context_segments": [
+                {
+                    "segment_id": "main-1",
+                    "start": {"x": 0, "y": -4},
+                    "end": {"x": 0, "y": 4},
+                }
+            ],
+            "segments": [
+                {
+                    "segment_id": "row-0-0",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 2.0, "y": 0},
+                    "diameter_mm": 32,
+                    "color": "rgb:255,127,0",
+                    "evidence": "line_color_reference",
+                },
+                {
+                    "segment_id": "row-0-1",
+                    "row_index": 0,
+                    "sequence": 1,
+                    "start": {"x": 2.2, "y": 0},
+                    "end": {"x": 5.0, "y": 0},
+                    "diameter_mm": 25,
+                    "color": "rgb:0,191,0",
+                    "evidence": "line_color_reference",
+                },
+            ],
+        }
+
+        layout = build_fire_branch_network_layout(analysis, main_diameter_mm=100)
+        by_id = {item["segment_id"]: item for item in layout["segments"]}
+
+        self.assertEqual("topology_canvas", layout["coordinate_space"])
+        self.assertLess(
+            math.hypot(
+                by_id["row-0-0"]["x2"] - by_id["row-0-1"]["x1"],
+                by_id["row-0-0"]["y2"] - by_id["row-0-1"]["y1"],
+            ),
+            0.01,
+        )
+
+    def test_topology_canvas_reuses_existing_contract_during_edits(self) -> None:
+        analysis = {
+            "cad_path_verified": True,
+            "main_context_segments": [
+                {
+                    "segment_id": "main-1",
+                    "start": {"x": 0, "y": -4},
+                    "end": {"x": 0, "y": 4},
+                }
+            ],
+            "segments": [
+                {
+                    "segment_id": "row-0-0",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 2.0, "y": 0},
+                    "cad_geometry_start": {"x": 0, "y": 0},
+                    "cad_geometry_end": {"x": 2.0, "y": 0},
+                    "diameter_mm": 32,
+                    "color": "rgb:255,127,0",
+                    "evidence": "line_color_reference",
+                }
+            ],
+        }
+        initial = build_fire_branch_network_layout(analysis, main_diameter_mm=100)
+        edited_analysis = copy.deepcopy(analysis)
+        edited_analysis["network_canvas_contract"] = initial["canvas_contract"]
+        edited_analysis["segments"][0]["diameter_mm"] = 25
+        edited_analysis["segments"][0]["cad_geometry_end"] = {"x": 12.0, "y": 0}
+
+        edited = build_fire_branch_network_layout(edited_analysis, main_diameter_mm=100)
+
+        self.assertEqual(initial["width"], edited["width"])
+        self.assertEqual(initial["height"], edited["height"])
+        self.assertTrue(edited["canvas_transform"]["contract_reused"])
+
+    def test_svg_ignores_invalid_legacy_cross_outlet_reducers(self) -> None:
+        analysis = {
+            "segments": [
+                {
+                    "segment_id": "branch-40",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 8, "y": 0},
+                    "diameter_mm": 40,
+                }
+            ],
+            "topology_plan": {
+                "plan_id": "legacy-cross-reducer",
+                "revision": 1,
+                "plan_hash": "c" * 64,
+                "segments": [
+                    {
+                        "segment_id": "branch-40",
+                        "plan_entity_id": "segment:branch-40",
+                    }
+                ],
+                "main_segments": [],
+                "reducers": [
+                    {
+                        "branch_segment_id": "branch-40",
+                        "placement": "after_cross",
+                        "from_diameter_mm": 40,
+                        "to_diameter_mm": 32,
+                        "plan_entity_id": "legacy:after-cross",
+                    }
+                ],
+                "junctions": [
+                    {
+                        "branch_segment_ids": ["branch-40"],
+                        "main_segment_id": "main-1",
+                        "kind": "reducing_tee",
+                        "main_diameter_mm": 100,
+                        "common_branch_diameter_mm": 40,
+                    }
+                ],
+            },
+        }
+
+        layout = build_fire_branch_network_layout(analysis, main_diameter_mm=100)
+        svg = render_fire_branch_network_svg(analysis, main_diameter_mm=100)
+
+        self.assertEqual([], layout["reducers"])
+        self.assertNotIn("DN40 → DN32", svg)
+        self.assertNotIn("legacy:after-cross", svg)
 
     def test_svg_is_valid_simple_engineering_drawing(self) -> None:
         svg = render_fire_branch_network_svg(self.analysis, title="消防支管路網")
@@ -869,7 +1083,7 @@ class FireBranchNetworkDiagramTests(unittest.TestCase):
         self.assertIn("semantic_zoom_visibility(self._scale)", source)
         self.assertIn('"diameter-text"', source)
         self.assertIn('"segment-detail"', source)
-        self.assertIn('"junction_label": not overview', source)
+        self.assertIn('"junction_label": False', source)
 
     def test_zoom_in_can_escape_a_fit_scale_below_the_minimum(self) -> None:
         self.assertGreater(next_zoom_scale(0.20, 1), 0.20)
@@ -884,12 +1098,12 @@ class FireBranchNetworkDiagramTests(unittest.TestCase):
         self.assertFalse(visibility["junction_label"])
         self.assertFalse(visibility["main_label"])
 
-    def test_readable_scale_restores_junction_and_diameter_labels(self) -> None:
-        visibility = semantic_zoom_visibility(0.80)
+    def test_readable_scale_prioritizes_pipe_labels_over_fitting_labels(self) -> None:
+        visibility = semantic_zoom_visibility(1.0)
 
         self.assertTrue(visibility["diameter_text"])
-        self.assertTrue(visibility["reducer_label"])
-        self.assertTrue(visibility["junction_label"])
+        self.assertFalse(visibility["reducer_label"])
+        self.assertFalse(visibility["junction_label"])
         self.assertFalse(visibility["segment_detail"])
 
     def test_preview_opens_at_readable_scale_and_has_explicit_zoom_controls(self) -> None:
@@ -906,6 +1120,19 @@ class FireBranchNetworkDiagramTests(unittest.TestCase):
         self.assertIn("self._zoom_percent_var", source)
         self.assertIn('self.bind("<MouseWheel>"', source)
         self.assertIn("def _refresh_scaled_styles", source)
+
+    def test_preview_preserves_canvas_contract_and_zoom_after_plan_edits(self) -> None:
+        source = (
+            __import__("pathlib").Path(__file__).resolve().parent
+            / "sc_revit"
+            / "fire_branch"
+            / "network_preview.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("def _sync_canvas_contract_from_layout", source)
+        self.assertIn("network_canvas_contract", source)
+        self.assertIn("view_state = self._capture_canvas_view()", source)
+        self.assertIn("self._restore_canvas_view(view_state)", source)
 
 
 if __name__ == "__main__":

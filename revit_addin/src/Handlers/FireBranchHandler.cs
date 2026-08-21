@@ -34,6 +34,39 @@ namespace RfaMetadataAddin
         private const string ScFireBranchCommentPrefix = "SC_FIRE_BRANCH:";
         private const double FireSprinklerDropDiameterMillimeters = 25.0;
 
+        private sealed class FireBranchSandboxFailurePreprocessor : IFailuresPreprocessor
+        {
+            private readonly List<string> _messages = new List<string>();
+
+            public string Summary
+            {
+                get { return string.Join(" | ", _messages.Distinct()); }
+            }
+
+            public FailureProcessingResult PreprocessFailures(FailuresAccessor failuresAccessor)
+            {
+                bool hasError = false;
+                foreach (FailureMessageAccessor message in failuresAccessor.GetFailureMessages())
+                {
+                    _messages.Add(
+                        message.GetFailureDefinitionId().Guid.ToString("D")
+                        + ": "
+                        + message.GetDescriptionText());
+                    if (message.GetSeverity() == FailureSeverity.Warning)
+                    {
+                        failuresAccessor.DeleteWarning(message);
+                    }
+                    else
+                    {
+                        hasError = true;
+                    }
+                }
+                return hasError
+                    ? FailureProcessingResult.ProceedWithRollBack
+                    : FailureProcessingResult.Continue;
+            }
+        }
+
         [ThreadStatic]
         private static string _fireBranchConnectionDiagnostic;
 
@@ -559,6 +592,118 @@ namespace RfaMetadataAddin
             return result;
         }
 
+        private static FireBranchItem BuildLegacyUniformFireBranchItem(
+            FamilyInstance sprinkler,
+            XYZ point,
+            List<FireMainPipeData> mains)
+        {
+            FireMainPipeData bestMain = null;
+            FireMainPipeData secondMain = null;
+            double bestDistance = double.MaxValue;
+            double secondDistance = double.MaxValue;
+            double bestParameter = 0;
+            double bestBranchParameter = 0;
+            int bestSideSign = 1;
+            XYZ bestBranchDirection = XYZ.BasisY;
+            double projectionTolerance = UnitUtils.ConvertToInternalUnits(30, UnitTypeId.Centimeters);
+
+            foreach (FireMainPipeData main in mains)
+            {
+                double rawParameter = DotXY(point - main.Start, main.Direction);
+                if (rawParameter < -projectionTolerance || rawParameter > main.Length + projectionTolerance)
+                {
+                    continue;
+                }
+                double parameter = Math.Max(0, Math.Min(main.Length, rawParameter));
+                XYZ projected = main.Start + main.Direction * parameter;
+                double signedBranch = DotXY(point - projected, main.BaseBranchDirection);
+                double distance = Math.Abs(signedBranch);
+                if (distance < bestDistance)
+                {
+                    secondMain = bestMain;
+                    secondDistance = bestDistance;
+                    bestMain = main;
+                    bestDistance = distance;
+                    bestParameter = parameter;
+                    bestBranchParameter = distance;
+                    bestSideSign = signedBranch < 0 ? -1 : 1;
+                    bestBranchDirection = signedBranch < 0
+                        ? main.BaseBranchDirection.Negate()
+                        : main.BaseBranchDirection;
+                }
+                else if (distance < secondDistance)
+                {
+                    secondMain = main;
+                    secondDistance = distance;
+                }
+            }
+
+            if (bestMain == null)
+            {
+                throw new InvalidOperationException("撒水頭 " + sprinkler.Id.Value + " 無法投影到選取主管管段上，請選擇實際穿過支管交接位置的主管段。");
+            }
+            double ambiguityTolerance = UnitUtils.ConvertToInternalUnits(30, UnitTypeId.Centimeters);
+            if (secondMain != null
+                && secondMain.PipeId != bestMain.PipeId
+                && secondDistance - bestDistance < ambiguityTolerance)
+            {
+                throw new InvalidOperationException("撒水頭 " + sprinkler.Id.Value + " 距離兩段主管太接近，請分段建立或縮小主管候選。");
+            }
+
+            return new FireBranchItem
+            {
+                Sprinkler = sprinkler,
+                Point = point,
+                MainPipe = bestMain.Pipe,
+                MainPipeId = bestMain.PipeId,
+                MainStart = bestMain.Start,
+                MainDirection = bestMain.Direction,
+                BranchDirection = bestBranchDirection,
+                MainZ = bestMain.Z,
+                MainParameter = bestParameter,
+                BranchParameter = bestBranchParameter,
+                SideSign = bestSideSign
+            };
+        }
+
+        private static List<FireBranchItem> BuildLegacyUniformFireBranchItems(
+            List<FamilyInstance> sprinklers,
+            List<XYZ> sprinklerPoints,
+            List<FireMainPipeData> mainPipes,
+            List<object> skipped,
+            out List<object> assignmentAudit)
+        {
+            var result = new List<FireBranchItem>();
+            assignmentAudit = new List<object>();
+            for (int index = 0; index < sprinklers.Count; index++)
+            {
+                FamilyInstance sprinkler = sprinklers[index];
+                try
+                {
+                    FireBranchItem item = BuildLegacyUniformFireBranchItem(
+                        sprinkler,
+                        sprinklerPoints[index],
+                        mainPipes);
+                    result.Add(item);
+                    assignmentAudit.Add(new
+                    {
+                        sprinkler_id = sprinkler.Id.Value,
+                        status = "selected_by_legacy_nearest_main",
+                        main_pipe_id = item.MainPipeId
+                    });
+                }
+                catch (Exception ex)
+                {
+                    skipped.Add(new
+                    {
+                        sprinkler_id = sprinkler.Id.Value,
+                        reason = ex.Message
+                    });
+                }
+            }
+            return result.OrderBy(item => item.MainParameter).ToList();
+        }
+
         private static List<FireBranchItem> BuildFireBranchItemsFromCadEvidence(
             Document doc,
             List<FamilyInstance> sprinklers,
@@ -896,6 +1041,91 @@ namespace RfaMetadataAddin
             return plans;
         }
 
+        private static bool IsFireBranchTopologyCrossKind(string kind)
+        {
+            return kind == "cross"
+                || kind == "reducing_cross"
+                || kind == "endpoint_tee"
+                || kind == "reducing_endpoint_tee";
+        }
+
+        private static List<FireBranchJunctionPlan> BuildFireBranchTopologyJunctionPlans(
+            List<List<FireBranchItem>> rows,
+            List<FireBranchExecutionJunction> topologyPlan)
+        {
+            var plans = new List<FireBranchJunctionPlan>();
+            if (rows == null || topologyPlan == null)
+            {
+                return plans;
+            }
+            foreach (FireBranchExecutionJunction execution in topologyPlan)
+            {
+                if (execution == null
+                    || execution.RowIndexes.Count != 2
+                    || !IsFireBranchTopologyCrossKind(execution.Kind))
+                {
+                    continue;
+                }
+                var plan = new FireBranchJunctionPlan
+                {
+                    Topology = FireBranchJunctionTopology.OppositeSidesSameElevation
+                };
+                foreach (int rowIndex in execution.RowIndexes.OrderBy(value => value))
+                {
+                    if (rowIndex < 0 || rowIndex >= rows.Count)
+                    {
+                        plan.Rows.Clear();
+                        break;
+                    }
+                    plan.Rows.Add(rows[rowIndex]);
+                }
+                if (plan.Rows.Count != 2)
+                {
+                    continue;
+                }
+                FireBranchItem reference = plan.Rows.SelectMany(row => row).FirstOrDefault();
+                if (reference == null)
+                {
+                    continue;
+                }
+                plan.MainPipeId = reference.MainPipeId;
+                if (execution.Point != null)
+                {
+                    plan.MainParameter = new XYZ(
+                        execution.Point.X - reference.MainStart.X,
+                        execution.Point.Y - reference.MainStart.Y,
+                        0).DotProduct(reference.MainDirection);
+                }
+                else
+                {
+                    plan.MainParameter = plan.Rows.Average(row => row.Average(item => item.MainParameter));
+                }
+                plans.Add(plan);
+            }
+            return plans;
+        }
+
+        private static List<FireBranchJunctionPlan> MergeFireBranchTopologyJunctionPlans(
+            List<FireBranchJunctionPlan> legacyPlans,
+            List<FireBranchJunctionPlan> topologyPlans,
+            List<List<FireBranchItem>> rows)
+        {
+            if (topologyPlans == null || topologyPlans.Count == 0)
+            {
+                return legacyPlans;
+            }
+            var topologyRowIndexes = new HashSet<int>(
+                topologyPlans
+                    .SelectMany(plan => plan.Rows)
+                    .Select(row => rows.IndexOf(row))
+                    .Where(index => index >= 0));
+            var merged = (legacyPlans ?? new List<FireBranchJunctionPlan>())
+                .Where(plan => !plan.Rows.Any(row => topologyRowIndexes.Contains(rows.IndexOf(row))))
+                .ToList();
+            merged.AddRange(topologyPlans);
+            return merged;
+        }
+
         private static double GetPipeDiameterFeet(Pipe pipe)
         {
             Parameter diameter = pipe != null ? pipe.get_Parameter(BuiltInParameter.RBS_PIPE_DIAMETER_PARAM) : null;
@@ -962,6 +1192,7 @@ namespace RfaMetadataAddin
 
         private class FireBranchDiameterPlanSegment
         {
+            public string PlanEntityId { get; set; }
             public string SegmentId { get; set; }
             public int RowIndex { get; set; }
             public int Sequence { get; set; }
@@ -974,19 +1205,24 @@ namespace RfaMetadataAddin
 
         private class FireBranchExecutionJunction
         {
+            public string PlanEntityId { get; set; }
             public string Kind { get; set; }
             public List<int> RowIndexes { get; private set; }
+            public Dictionary<int, string> BranchPlanEntityIdByRow { get; private set; }
             public XYZ Point { get; set; }
             public double MainDiameterFeet { get; set; }
             public double CommonBranchDiameterFeet { get; set; }
             public Dictionary<int, double> SourceBranchDiameterFeetByRow { get; private set; }
             public HashSet<int> RoutingFitReducerRows { get; private set; }
+            public HashSet<string> RoutingFitReducerPlanEntityIds { get; private set; }
 
             public FireBranchExecutionJunction()
             {
                 RowIndexes = new List<int>();
+                BranchPlanEntityIdByRow = new Dictionary<int, string>();
                 SourceBranchDiameterFeetByRow = new Dictionary<int, double>();
                 RoutingFitReducerRows = new HashSet<int>();
+                RoutingFitReducerPlanEntityIds = new HashSet<string>(StringComparer.Ordinal);
             }
         }
 
@@ -1053,6 +1289,7 @@ namespace RfaMetadataAddin
                 }
                 result.Add(new FireBranchDiameterPlanSegment
                 {
+                    PlanEntityId = item.ContainsKey("plan_entity_id") ? Convert.ToString(item["plan_entity_id"]) : "",
                     SegmentId = item.ContainsKey("segment_id") ? Convert.ToString(item["segment_id"]) : "",
                     RowIndex = Convert.ToInt32(ReadLong(item, "row_index", 0)),
                     Sequence = Convert.ToInt32(ReadLong(item, "sequence", 0)),
@@ -1066,13 +1303,120 @@ namespace RfaMetadataAddin
             return result;
         }
 
+        private static Dictionary<string, object> GetFireBranchTopologyPlanPayload(
+            Dictionary<string, object> payload)
+        {
+            return payload.ContainsKey("topology_plan")
+                ? payload["topology_plan"] as Dictionary<string, object>
+                : null;
+        }
+
+        private static string ReadTopologyPlanString(
+            Dictionary<string, object> payload,
+            string key)
+        {
+            Dictionary<string, object> topology = GetFireBranchTopologyPlanPayload(payload);
+            return topology != null && topology.ContainsKey(key) && topology[key] != null
+                ? Convert.ToString(topology[key])
+                : "";
+        }
+
+        private static long ReadTopologyPlanLong(
+            Dictionary<string, object> payload,
+            string key,
+            long fallback)
+        {
+            Dictionary<string, object> topology = GetFireBranchTopologyPlanPayload(payload);
+            if (topology == null || !topology.ContainsKey(key) || topology[key] == null)
+            {
+                return fallback;
+            }
+            try
+            {
+                return Convert.ToInt64(topology[key]);
+            }
+            catch
+            {
+                return fallback;
+            }
+        }
+
+        private static void ValidateFireBranchTopologyPlanIdentity(
+            Dictionary<string, object> payload,
+            bool required)
+        {
+            if (!required)
+            {
+                return;
+            }
+
+            Dictionary<string, object> topology = GetFireBranchTopologyPlanPayload(payload);
+            if (topology == null)
+            {
+                throw new InvalidOperationException("建立要求缺少拓樸計畫，請重新分析。\n");
+            }
+            string schemaVersion = ReadTopologyPlanString(payload, "schema_version");
+            if (schemaVersion != "fire_branch_topology_plan.v5")
+            {
+                throw new InvalidOperationException(
+                    "拓樸計畫版本不支援：" + schemaVersion + "，請重新分析。\n");
+            }
+            if (string.IsNullOrWhiteSpace(ReadTopologyPlanString(payload, "plan_id")))
+            {
+                throw new InvalidOperationException("拓樸計畫缺少 plan_id，請重新分析。\n");
+            }
+            if (!Regex.IsMatch(
+                    ReadTopologyPlanString(payload, "plan_hash"),
+                    "^[0-9a-fA-F]{64}$"))
+            {
+                throw new InvalidOperationException("拓樸計畫缺少有效雜湊，請重新分析。\n");
+            }
+
+            ArrayList segments = topology.ContainsKey("segments")
+                ? topology["segments"] as ArrayList
+                : null;
+            foreach (object raw in segments ?? new ArrayList())
+            {
+                Dictionary<string, object> item = raw as Dictionary<string, object>;
+                if (item == null || string.IsNullOrWhiteSpace(
+                        item.ContainsKey("plan_entity_id") ? Convert.ToString(item["plan_entity_id"]) : ""))
+                {
+                    throw new InvalidOperationException("拓樸計畫包含缺少識別碼的管段，請重新分析。\n");
+                }
+            }
+
+            ArrayList junctions = topology.ContainsKey("junctions")
+                ? topology["junctions"] as ArrayList
+                : null;
+            foreach (object raw in junctions ?? new ArrayList())
+            {
+                Dictionary<string, object> item = raw as Dictionary<string, object>;
+                if (item == null || string.IsNullOrWhiteSpace(
+                        item.ContainsKey("plan_entity_id") ? Convert.ToString(item["plan_entity_id"]) : ""))
+                {
+                    throw new InvalidOperationException("拓樸計畫包含缺少識別碼的接頭，請重新分析。\n");
+                }
+            }
+
+            ArrayList reducers = topology.ContainsKey("reducers")
+                ? topology["reducers"] as ArrayList
+                : null;
+            foreach (object raw in reducers ?? new ArrayList())
+            {
+                Dictionary<string, object> item = raw as Dictionary<string, object>;
+                if (item == null || string.IsNullOrWhiteSpace(
+                        item.ContainsKey("plan_entity_id") ? Convert.ToString(item["plan_entity_id"]) : ""))
+                {
+                    throw new InvalidOperationException("拓樸計畫包含缺少識別碼的異徑，請重新分析。\n");
+                }
+            }
+        }
+
         private static List<FireBranchExecutionJunction> ReadFireBranchTopologyPlan(
             Dictionary<string, object> payload)
         {
             var result = new List<FireBranchExecutionJunction>();
-            Dictionary<string, object> topology = payload.ContainsKey("topology_plan")
-                ? payload["topology_plan"] as Dictionary<string, object>
-                : null;
+            Dictionary<string, object> topology = GetFireBranchTopologyPlanPayload(payload);
             ArrayList rawJunctions = topology != null && topology.ContainsKey("junctions")
                 ? topology["junctions"] as ArrayList
                 : null;
@@ -1098,6 +1442,7 @@ namespace RfaMetadataAddin
                 }
                 var plan = new FireBranchExecutionJunction
                 {
+                    PlanEntityId = item.ContainsKey("plan_entity_id") ? Convert.ToString(item["plan_entity_id"]) : "",
                     Kind = item.ContainsKey("kind") ? Convert.ToString(item["kind"]) : "",
                     MainDiameterFeet = UnitUtils.ConvertToInternalUnits(
                         ReadDouble(item, "main_diameter_mm", 0),
@@ -1117,6 +1462,17 @@ namespace RfaMetadataAddin
                 {
                     int rowIndex = Convert.ToInt32(rows[index]);
                     plan.RowIndexes.Add(rowIndex);
+                    ArrayList branchSegmentIds = item.ContainsKey("branch_segment_ids")
+                        ? item["branch_segment_ids"] as ArrayList
+                        : null;
+                    if (branchSegmentIds != null && index < branchSegmentIds.Count)
+                    {
+                        string branchSegmentId = Convert.ToString(branchSegmentIds[index]);
+                        if (!string.IsNullOrWhiteSpace(branchSegmentId))
+                        {
+                            plan.BranchPlanEntityIdByRow[rowIndex] = "segment:" + branchSegmentId;
+                        }
+                    }
                     if (diameters != null && index < diameters.Count && diameters[index] != null)
                     {
                         double diameterMm = Convert.ToDouble(diameters[index]);
@@ -1148,6 +1504,13 @@ namespace RfaMetadataAddin
                     if (junction != null && placementStrategy == "fit_to_routing_parts")
                     {
                         junction.RoutingFitReducerRows.Add(rowIndex);
+                        string reducerPlanEntityId = item.ContainsKey("plan_entity_id")
+                            ? Convert.ToString(item["plan_entity_id"])
+                            : "";
+                        if (!string.IsNullOrWhiteSpace(reducerPlanEntityId))
+                        {
+                            junction.RoutingFitReducerPlanEntityIds.Add(reducerPlanEntityId);
+                        }
                     }
                 }
             }
@@ -1963,6 +2326,70 @@ namespace RfaMetadataAddin
             }
         }
 
+        private static Pipe CreateFireDropForSystem(
+            Document doc,
+            ElementId systemTypeId,
+            ElementId pipeTypeId,
+            ElementId levelId,
+            Connector startConnector,
+            XYZ end,
+            double diameterFeet)
+        {
+            if (startConnector == null || startConnector.Origin.DistanceTo(end) < 0.01)
+            {
+                SetFireBranchConnectionDiagnostic("CreateFireDropForSystem | sprinkler connector or drop geometry is invalid");
+                return null;
+            }
+
+            try
+            {
+                Pipe pipe = CreateFirePipe(
+                    doc,
+                    systemTypeId,
+                    pipeTypeId,
+                    levelId,
+                    startConnector.Origin,
+                    end,
+                    diameterFeet);
+                if (pipe == null)
+                {
+                    SetFireBranchConnectionDiagnostic("CreateFireDropForSystem | explicit-system pipe creation returned null");
+                    return null;
+                }
+
+                Connector pipeConnector = FindConnectorNear(pipe, startConnector.Origin);
+                if (pipeConnector == null)
+                {
+                    SetFireBranchConnectionDiagnostic("CreateFireDropForSystem | pipe connector is missing at sprinkler point");
+                    return null;
+                }
+                if (!pipeConnector.IsConnectedTo(startConnector))
+                {
+                    pipeConnector.ConnectTo(startConnector);
+                }
+                doc.Regenerate();
+                if (!pipeConnector.IsConnectedTo(startConnector))
+                {
+                    SetFireBranchConnectionDiagnostic("CreateFireDropForSystem | sprinkler connection did not persist");
+                    return null;
+                }
+
+                MEPSystem system = pipe.MEPSystem;
+                if (system == null || system.GetTypeId().Value != systemTypeId.Value)
+                {
+                    SetFireBranchConnectionDiagnostic(
+                        "CreateFireDropForSystem | explicit system type did not persist after sprinkler connection");
+                    return null;
+                }
+                return pipe;
+            }
+            catch (Exception ex)
+            {
+                SetFireBranchConnectionDiagnostic("CreateFireDropForSystem", ex);
+                return null;
+            }
+        }
+
         private static bool TryConnectCompletedDropToSprinkler(
             Document doc,
             Pipe drop,
@@ -1988,21 +2415,11 @@ namespace RfaMetadataAddin
                         "TryConnectCompletedDropToSprinkler | endpoint connector is missing");
                     return false;
                 }
-                bool dropReferencesSprinkler = dropConnector.AllRefs
-                    .Cast<Connector>()
-                    .Any(reference =>
-                        reference != null
-                        && reference.ConnectorType != ConnectorType.Logical
-                        && reference.Owner != null
-                        && reference.Owner.Id == currentSprinkler.Id);
-                bool sprinklerReferencesDrop = sprinklerConnector.AllRefs
-                    .Cast<Connector>()
-                    .Any(reference =>
-                        reference != null
-                        && reference.ConnectorType != ConnectorType.Logical
-                        && reference.Owner != null
-                        && reference.Owner.Id == currentDrop.Id);
-                if (!dropReferencesSprinkler || !sprinklerReferencesDrop)
+                bool physicallyReachable = IsPhysicallyReachableFromFireElement(
+                    doc,
+                    currentSprinkler.Id,
+                    new HashSet<long> { currentDrop.Id.Value });
+                if (!physicallyReachable)
                 {
                     string dropReferenceIds = string.Join(",", dropConnector.AllRefs
                         .Cast<Connector>()
@@ -2057,56 +2474,22 @@ namespace RfaMetadataAddin
             double dropDiameterFeet = UnitUtils.ConvertToInternalUnits(
                 FireSprinklerDropDiameterMillimeters,
                 UnitTypeId.Millimeters);
-            double sprinklerDiameterFeet = sprinklerConnector.Radius * 2.0;
-            if (sprinklerDiameterFeet <= 1e-7)
-            {
-                SetFireBranchConnectionDiagnostic("CreateFireDropWithTransition | sprinkler connector diameter is invalid");
-                return null;
-            }
-            XYZ direction = sprinklerPoint - tapPoint;
-            double availableLength = direction.GetLength();
+            double availableLength = sprinklerPoint.DistanceTo(tapPoint);
             if (availableLength < UnitUtils.ConvertToInternalUnits(30, UnitTypeId.Millimeters))
             {
                 SetFireBranchConnectionDiagnostic("CreateFireDropWithTransition | insufficient vertical clearance");
                 return null;
             }
-            direction = direction.Normalize();
-
             var assembly = new FireDropAssembly();
-            bool needsSprinklerTransition = Math.Abs(dropDiameterFeet - sprinklerDiameterFeet) > 1e-7;
-            double minimumPieceLength = UnitUtils.ConvertToInternalUnits(25, UnitTypeId.Millimeters);
-            double sprinklerStubLength = needsSprinklerTransition
-                ? Math.Min(
-                    Math.Max(
-                        UnitUtils.ConvertToInternalUnits(50, UnitTypeId.Millimeters),
-                        sprinklerDiameterFeet * 2.0),
-                    availableLength * 0.25)
-                : 0;
-            if (sprinklerStubLength + minimumPieceLength > availableLength)
-            {
-                SetFireBranchConnectionDiagnostic("CreateFireDropWithTransition | transition clearance is insufficient");
-                return null;
-            }
-
             XYZ dropStart = tapPoint;
-            XYZ sprinklerStubStart = sprinklerPoint - direction * sprinklerStubLength;
-            Pipe drop = needsSprinklerTransition
-                ? CreateFirePipe(
-                    doc,
-                    systemTypeId,
-                    pipeTypeId,
-                    levelId,
-                    dropStart,
-                    sprinklerStubStart,
-                    dropDiameterFeet)
-                : CreateFirePipeFromConnector(
-                    doc,
-                    systemTypeId,
-                    pipeTypeId,
-                    levelId,
-                    sprinklerConnector,
-                    dropStart,
-                    dropDiameterFeet);
+            Pipe drop = CreateFireDropForSystem(
+                doc,
+                systemTypeId,
+                pipeTypeId,
+                levelId,
+                sprinklerConnector,
+                dropStart,
+                dropDiameterFeet);
             if (drop == null)
             {
                 SetFireBranchConnectionDiagnostic("CreateFireDropWithTransition | DN25 drop creation failed");
@@ -2117,48 +2500,7 @@ namespace RfaMetadataAddin
             Pipe branchConnectionPipe = drop;
 
             Pipe sprinklerConnectionPipe = drop;
-            if (needsSprinklerTransition)
-            {
-                Pipe sprinklerStub = CreateFirePipeFromConnector(
-                    doc,
-                    systemTypeId,
-                    pipeTypeId,
-                    levelId,
-                    sprinklerConnector,
-                    sprinklerStubStart,
-                    sprinklerDiameterFeet);
-                if (sprinklerStub == null)
-                {
-                    SetFireBranchConnectionDiagnostic("CreateFireDropWithTransition | sprinkler stub creation failed");
-                    return null;
-                }
-                doc.Regenerate();
-                Connector dropConnector = FindConnectorNear(drop, sprinklerStubStart);
-                Connector stubConnector = FindConnectorNear(sprinklerStub, sprinklerStubStart);
-                try
-                {
-                    assembly.SprinklerTransition = doc.Create.NewTransitionFitting(dropConnector, stubConnector);
-                }
-                catch (Exception ex)
-                {
-                    SetFireBranchConnectionDiagnostic("CreateFireDropWithTransition.sprinkler.NewTransitionFitting", ex);
-                    return null;
-                }
-                doc.Regenerate();
-                if (assembly.SprinklerTransition == null
-                    || dropConnector == null
-                    || stubConnector == null
-                    || !dropConnector.IsConnected
-                    || !stubConnector.IsConnected)
-                {
-                    SetFireBranchConnectionDiagnostic("CreateFireDropWithTransition | sprinkler transition verification failed");
-                    return null;
-                }
-                assembly.Pipes.Add(sprinklerStub);
-                sprinklerConnectionPipe = sprinklerStub;
-            }
 
-            ElementId branchConnectionPipeId = branchConnectionPipe.Id;
             if (!TryConnectPipeToRun(doc, branchSegments, branchConnectionPipe, tapPoint))
             {
                 SetFireBranchConnectionDiagnostic("CreateFireDropWithTransition | branch tee verification failed");
@@ -2166,20 +2508,18 @@ namespace RfaMetadataAddin
             }
 
             doc.Regenerate();
-            Element currentBranchConnection = doc.GetElement(branchConnectionPipeId);
-            List<Connector> branchConnectionConnectors = currentBranchConnection is Pipe
-                ? ((Pipe)currentBranchConnection).ConnectorManager.Connectors.Cast<Connector>().ToList()
-                : new List<Connector>();
-            if (currentBranchConnection == null
-                || !currentBranchConnection.IsValidObject
-                || branchConnectionConnectors.Count != 2
-                || branchConnectionConnectors.Any(connector => !connector.IsConnected))
+            Pipe currentBranchConnection = doc.GetElement(branchConnectionPipe.Id) as Pipe;
+            if (currentBranchConnection == null || !currentBranchConnection.IsValidObject)
             {
                 SetFireBranchConnectionDiagnostic(
-                    "CreateFireDropWithTransition | DN25 drop was deleted or left disconnected after reducing tee creation");
+                    "CreateFireDropWithTransition | explicit-system DN25 drop was deleted during tee creation");
                 return null;
             }
 
+            branchConnectionPipe = currentBranchConnection;
+            sprinklerConnectionPipe = currentBranchConnection;
+            assembly.Pipes.Clear();
+            assembly.Pipes.Add(currentBranchConnection);
             assembly.BranchConnectionPipe = branchConnectionPipe;
             assembly.SprinklerConnectionPipe = sprinklerConnectionPipe;
             return assembly;
@@ -2592,6 +2932,9 @@ namespace RfaMetadataAddin
                                 string heightReference = payload.ContainsKey("height_reference") && payload["height_reference"] != null
                                     ? payload["height_reference"].ToString()
                                     : "管中心";
+                                string sourceMode = payload.ContainsKey("source_mode") && payload["source_mode"] != null
+                                    ? payload["source_mode"].ToString().Trim().ToLowerInvariant()
+                                    : "cad";
                                 ArrayList sprinklerIdsRaw = payload.ContainsKey("sprinkler_ids")
                                     ? payload["sprinkler_ids"] as ArrayList
                                     : null;
@@ -2630,17 +2973,26 @@ namespace RfaMetadataAddin
                                 double extension = 0;
                                 var skipped = new List<object>();
                                 List<object> cadRouteAssignments;
-                                List<FireBranchItem> sprinklerData = BuildFireBranchItemsFromCadEvidence(
-                                    doc,
-                                    sprinklers,
-                                    sprinklerPoints,
-                                    mainPipes,
-                                    branchZ,
-                                    skipped,
-                                    out cadRouteAssignments);
+                                List<FireBranchItem> sprinklerData = sourceMode == "uniform"
+                                    ? BuildLegacyUniformFireBranchItems(
+                                        sprinklers,
+                                        sprinklerPoints,
+                                        mainPipes,
+                                        skipped,
+                                        out cadRouteAssignments)
+                                    : BuildFireBranchItemsFromCadEvidence(
+                                        doc,
+                                        sprinklers,
+                                        sprinklerPoints,
+                                        mainPipes,
+                                        branchZ,
+                                        skipped,
+                                        out cadRouteAssignments);
                                 if (sprinklerData.Count == 0)
                                 {
-                                    throw new InvalidOperationException("沒有任何灑水頭取得足夠的 CAD 路徑證據，請查看主管候選與 CAD 對位診斷。");
+                                    throw new InvalidOperationException(sourceMode == "uniform"
+                                        ? "選取撒水頭都無法投影到主管，請改選主管或縮小撒水頭範圍。"
+                                        : "沒有任何灑水頭取得足夠的 CAD 路徑證據，請查看主管候選與 CAD 對位診斷。");
                                 }
                                 var rows = BuildFireBranchRows(sprinklerData, rowTolerance);
                                 int plannedRowCount = 0;
@@ -2743,6 +3095,9 @@ namespace RfaMetadataAddin
                                 string executionMode = payload.ContainsKey("execution_mode") && payload["execution_mode"] != null
                                     ? payload["execution_mode"].ToString().Trim().ToLowerInvariant()
                                     : (isSandboxAction ? "sandbox" : "commit");
+                                string sourceMode = payload.ContainsKey("source_mode") && payload["source_mode"] != null
+                                    ? payload["source_mode"].ToString().Trim().ToLowerInvariant()
+                                    : "cad";
                                 if (executionMode != "commit" && executionMode != "sandbox")
                                 {
                                     throw new InvalidOperationException("Unsupported fire branch execution mode: " + executionMode);
@@ -2752,6 +3107,12 @@ namespace RfaMetadataAddin
                                     throw new InvalidOperationException("Fire branch action and execution mode do not match.");
                                 }
                                 bool isSandbox = isSandboxAction;
+                                bool topologyOnlySandbox = isSandbox && sandboxScope == "topology_only";
+                                if (sandboxScope == "topology_only" && !isSandbox)
+                                {
+                                    throw new InvalidOperationException(
+                                        "拓樸管段檢查只能使用可回復沙盒模式。\n");
+                                }
                                 bool deletePreviewAfterCreate = true;
                                 if (payload.ContainsKey("delete_preview_after_create") && payload["delete_preview_after_create"] != null)
                                 {
@@ -2835,12 +3196,16 @@ namespace RfaMetadataAddin
                                 {
                                     throw new InvalidOperationException("此建立要求缺少完整拓樸計畫雜湊，請重新分析。");
                                 }
+                                ValidateFireBranchTopologyPlanIdentity(payload, requireDiameterPlan);
 
-                                ValidateFireBranchJunctionRouting(
-                                    pipeType,
-                                    diameterPlan,
-                                    topologyPlan,
-                                    sprinklers);
+                                if (!topologyOnlySandbox)
+                                {
+                                    ValidateFireBranchJunctionRouting(
+                                        pipeType,
+                                        diameterPlan,
+                                        topologyPlan,
+                                        sprinklers);
+                                }
 
                                 double diameterFeet = UnitUtils.ConvertToInternalUnits(diameterMm, UnitTypeId.Millimeters);
                                 ElementId levelId = selectedLevelId > 0 ? new ElementId(selectedLevelId) : GetPipeLevelId(doc, mainPipes[0].Pipe);
@@ -2857,17 +3222,26 @@ namespace RfaMetadataAddin
                                 double junctionTolerance = UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Millimeters);
                                 var skipped = new List<object>();
                                 List<object> cadRouteAssignments;
-                                List<FireBranchItem> sprinklerData = BuildFireBranchItemsFromCadEvidence(
-                                    doc,
-                                    sprinklers,
-                                    sprinklerPoints,
-                                    mainPipes,
-                                    branchZ,
-                                    skipped,
-                                    out cadRouteAssignments);
+                                List<FireBranchItem> sprinklerData = sourceMode == "uniform"
+                                    ? BuildLegacyUniformFireBranchItems(
+                                        sprinklers,
+                                        sprinklerPoints,
+                                        mainPipes,
+                                        skipped,
+                                        out cadRouteAssignments)
+                                    : BuildFireBranchItemsFromCadEvidence(
+                                        doc,
+                                        sprinklers,
+                                        sprinklerPoints,
+                                        mainPipes,
+                                        branchZ,
+                                        skipped,
+                                        out cadRouteAssignments);
                                 if (sprinklerData.Count == 0)
                                 {
-                                    throw new InvalidOperationException("沒有任何灑水頭取得足夠的 CAD 路徑證據，請重新分析主管候選與 CAD 對位。");
+                                    throw new InvalidOperationException(sourceMode == "uniform"
+                                        ? "選取撒水頭都無法投影到主管，請改選主管或縮小撒水頭範圍。"
+                                        : "沒有任何灑水頭取得足夠的 CAD 路徑證據，請重新分析主管候選與 CAD 對位。");
                                 }
                                 List<FamilyInstance> plannedSprinklers = sprinklerData
                                     .Select(item => item.Sprinkler)
@@ -2876,7 +3250,16 @@ namespace RfaMetadataAddin
                                     .Select(group => group.First())
                                     .ToList();
                                 var rows = BuildFireBranchRows(sprinklerData, rowTolerance);
-                                var junctionPlans = BuildFireBranchJunctionPlans(rows, junctionTolerance, branchZ);
+                                var legacyJunctionPlans = BuildFireBranchJunctionPlans(rows, junctionTolerance, branchZ);
+                                var topologyJunctionPlans = requireDiameterPlan
+                                    ? BuildFireBranchTopologyJunctionPlans(rows, topologyPlan)
+                                    : new List<FireBranchJunctionPlan>();
+                                var junctionPlans = requireDiameterPlan
+                                    ? MergeFireBranchTopologyJunctionPlans(
+                                        legacyJunctionPlans,
+                                        topologyJunctionPlans,
+                                        rows)
+                                    : legacyJunctionPlans;
                                 var executionCrossPlans = topologyPlan
                                     .Where(item => item.RowIndexes.Count == 2
                                         && (item.Kind == "cross"
@@ -2887,15 +3270,6 @@ namespace RfaMetadataAddin
                                 var executionCrossByRowIndex = executionCrossPlans.Values
                                     .SelectMany(item => item.RowIndexes.Select(rowIndex => new { rowIndex, item }))
                                     .ToDictionary(pair => pair.rowIndex, pair => pair.item);
-                                var generatedCrossKeys = new HashSet<string>(junctionPlans
-                                    .Where(item => item.Topology == FireBranchJunctionTopology.OppositeSidesSameElevation)
-                                    .Select(item => FireBranchRowPairKey(item.Rows.Select(row => rows.IndexOf(row)))));
-                                if (requireDiameterPlan
-                                    && (generatedCrossKeys.Any(key => !executionCrossPlans.ContainsKey(key))
-                                        || executionCrossPlans.Keys.Any(key => !generatedCrossKeys.Contains(key))))
-                                {
-                                    throw new InvalidOperationException("目前 Revit 幾何與預覽四通拓樸不一致，請重新分析後再建立。");
-                                }
                                 int plannedRowCount = 0;
                                 int estimatedPipeCount = 0;
                                 double maxBranchLengthMeters = 0;
@@ -2945,6 +3319,7 @@ namespace RfaMetadataAddin
                                 long deletedPreviewGroupId = 0;
                                 string fireBranchStage = "initialize";
                                 bool partialFailureKept = false;
+                                bool sandboxRolledBackEarly = false;
                                 string retentionDecision = "not_required";
                                 int verifiedConnectedSprinklerCount = plannedSprinklers.Count;
                                 int verifiedUnconnectedSprinklerCount = 0;
@@ -2970,6 +3345,15 @@ namespace RfaMetadataAddin
                                     fireBranchStage = "geometry_creation";
                                     using (Transaction creationTransaction = new Transaction(doc, "SC \u5efa\u7acb\u6d88\u9632\u652f\u7ba1\u5e7e\u4f55"))
                                     {
+                                    FireBranchSandboxFailurePreprocessor creationFailurePreprocessor = null;
+                                    if (isSandbox)
+                                    {
+                                        creationFailurePreprocessor = new FireBranchSandboxFailurePreprocessor();
+                                        FailureHandlingOptions options = creationTransaction.GetFailureHandlingOptions();
+                                        options.SetFailuresPreprocessor(creationFailurePreprocessor);
+                                        options.SetClearAfterRollback(true);
+                                        creationTransaction.SetFailureHandlingOptions(options);
+                                    }
                                     TransactionStatus creationStartStatus = creationTransaction.Start();
                                     if (creationStartStatus != TransactionStatus.Started)
                                     {
@@ -3236,13 +3620,20 @@ namespace RfaMetadataAddin
                                                         && segment.SprinklerId == item.Sprinkler.Id.Value)
                                                     .OrderBy(segment => segment.Sequence)
                                                     .LastOrDefault();
-                                                XYZ tapPoint = terminalPlan != null
-                                                    ? NormalizeFireBranchPlanPoint(terminalPlan.End, branchZ)
-                                                    : new XYZ(
-                                                        mainStart.X + mainDirection.X * rowMain + branchDirection.X * item.BranchParameter,
-                                                        mainStart.Y + mainDirection.Y * rowMain + branchDirection.Y * item.BranchParameter,
-                                                        branchZ
-                                                    );
+                                            XYZ tapPoint = terminalPlan != null
+                                                ? NormalizeFireBranchPlanPoint(terminalPlan.End, branchZ)
+                                                : new XYZ(
+                                                    mainStart.X + mainDirection.X * rowMain + branchDirection.X * item.BranchParameter,
+                                                    mainStart.Y + mainDirection.Y * rowMain + branchDirection.Y * item.BranchParameter,
+                                                    branchZ
+                                                );
+                                                if (topologyOnlySandbox)
+                                                {
+                                                    // M2-M4 sandbox: verify only the plan-driven pipe and junction
+                                                    // geometry.  Do not enter the existing sprinkler-drop path;
+                                                    // that path has its own independent Connector gate.
+                                                    continue;
+                                                }
                                                 Connector sprinklerConnector = FindConnectorNear(item.Sprinkler, sprinklerPoint);
                                                 TryChangeConnectorSystemType(sprinklerConnector, systemType.Id);
                                                 if (sprinklerConnector == null)
@@ -3618,21 +4009,33 @@ namespace RfaMetadataAddin
                                     TransactionStatus creationStatus = creationTransaction.Commit();
                                     if (creationStatus != TransactionStatus.Committed)
                                     {
-                                        throw new InvalidOperationException("Fire branch geometry transaction did not commit: " + creationStatus);
+                                        throw new InvalidOperationException(
+                                            "消防支管沙盒幾何未通過 Revit 驗證："
+                                            + creationStatus
+                                            + (creationFailurePreprocessor != null && !string.IsNullOrWhiteSpace(creationFailurePreprocessor.Summary)
+                                                ? "｜" + creationFailurePreprocessor.Summary
+                                                : ""));
                                     }
                                     }
                                     fireBranchStage = "connected_system_discovery";
-                                    List<ElementId> fireNetworkElementIds = mainSegmentsByPipeId.Values
-                                        .SelectMany(segments => segments)
-                                        .Where(pipe => pipe != null && pipe.IsValidObject)
-                                        .Select(pipe => pipe.Id)
-                                        .Concat(createdIds)
+                                List<ElementId> fireNetworkElementIds = mainSegmentsByPipeId.Values
+                                    .SelectMany(segments => segments)
+                                    .Where(pipe => pipe != null && pipe.IsValidObject)
+                                    .Select(pipe => pipe.Id)
+                                    .Concat(createdIds)
+                                    .GroupBy(id => id.Value)
+                                    .Select(group => group.First())
+                                    .ToList();
+                                if (!topologyOnlySandbox)
+                                {
+                                    fireNetworkElementIds = fireNetworkElementIds
                                         .Concat(plannedSprinklers
                                             .Where(instance => instance != null && instance.IsValidObject)
                                             .Select(instance => instance.Id))
                                         .GroupBy(id => id.Value)
                                         .Select(group => group.First())
                                         .ToList();
+                                }
                                     List<ElementId> connectedSystemIds = ResolveConnectedFireSystemIds(
                                         doc,
                                         fireNetworkElementIds);
@@ -3640,6 +4043,15 @@ namespace RfaMetadataAddin
                                     fireBranchStage = "system_type_change";
                                     using (Transaction systemTransaction = new Transaction(doc, "SC \u7d71\u4e00\u6d88\u9632\u7cfb\u7d71\u985e\u578b"))
                                     {
+                                    FireBranchSandboxFailurePreprocessor systemFailurePreprocessor = null;
+                                    if (isSandbox)
+                                    {
+                                        systemFailurePreprocessor = new FireBranchSandboxFailurePreprocessor();
+                                        FailureHandlingOptions options = systemTransaction.GetFailureHandlingOptions();
+                                        options.SetFailuresPreprocessor(systemFailurePreprocessor);
+                                        options.SetClearAfterRollback(true);
+                                        systemTransaction.SetFailureHandlingOptions(options);
+                                    }
                                     TransactionStatus systemStartStatus = systemTransaction.Start();
                                     if (systemStartStatus != TransactionStatus.Started)
                                     {
@@ -3724,7 +4136,12 @@ namespace RfaMetadataAddin
                                     TransactionStatus systemStatus = systemTransaction.Commit();
                                     if (systemStatus != TransactionStatus.Committed)
                                     {
-                                        throw new InvalidOperationException("Fire branch system transaction did not commit: " + systemStatus);
+                                        throw new InvalidOperationException(
+                                            "消防支管沙盒系統設定未通過 Revit 驗證："
+                                            + systemStatus
+                                            + (systemFailurePreprocessor != null && !string.IsNullOrWhiteSpace(systemFailurePreprocessor.Summary)
+                                                ? "｜" + systemFailurePreprocessor.Summary
+                                                : ""));
                                     }
                                     }
                                     fireBranchStage = "system_and_connector_verification";
@@ -3766,34 +4183,40 @@ namespace RfaMetadataAddin
                                             && pipe.MEPSystem.GetTypeId().Value != systemType.Id.Value)
                                         .Select(pipe => pipe.Id.Value)
                                         .ToList();
-                                    List<long> missingConnectorSprinklerIds = plannedSprinklers
-                                        .Where(instance => FindConnectorNear(
-                                            instance,
-                                            GetFamilyConnectionPoint(instance)) == null)
-                                        .Select(instance => instance.Id.Value)
-                                        .ToList();
-                                    List<long> missingSystemSprinklerIds = plannedSprinklers
-                                        .Where(instance =>
-                                        {
-                                            Connector connector = FindConnectorNear(
+                                    List<long> missingConnectorSprinklerIds = topologyOnlySandbox
+                                        ? new List<long>()
+                                        : plannedSprinklers
+                                            .Where(instance => FindConnectorNear(
                                                 instance,
-                                                GetFamilyConnectionPoint(instance));
-                                            return connector != null && connector.MEPSystem == null;
-                                        })
-                                        .Select(instance => instance.Id.Value)
-                                        .ToList();
-                                    List<long> wrongSystemSprinklerIds = plannedSprinklers
-                                        .Where(instance =>
-                                        {
-                                            Connector connector = FindConnectorNear(
-                                                instance,
-                                                GetFamilyConnectionPoint(instance));
-                                            return connector != null
-                                                && connector.MEPSystem != null
-                                                && connector.MEPSystem.GetTypeId().Value != systemType.Id.Value;
-                                        })
-                                        .Select(instance => instance.Id.Value)
-                                        .ToList();
+                                                GetFamilyConnectionPoint(instance)) == null)
+                                            .Select(instance => instance.Id.Value)
+                                            .ToList();
+                                    List<long> missingSystemSprinklerIds = topologyOnlySandbox
+                                        ? new List<long>()
+                                        : plannedSprinklers
+                                            .Where(instance =>
+                                            {
+                                                Connector connector = FindConnectorNear(
+                                                    instance,
+                                                    GetFamilyConnectionPoint(instance));
+                                                return connector != null && connector.MEPSystem == null;
+                                            })
+                                            .Select(instance => instance.Id.Value)
+                                            .ToList();
+                                    List<long> wrongSystemSprinklerIds = topologyOnlySandbox
+                                        ? new List<long>()
+                                        : plannedSprinklers
+                                            .Where(instance =>
+                                            {
+                                                Connector connector = FindConnectorNear(
+                                                    instance,
+                                                    GetFamilyConnectionPoint(instance));
+                                                return connector != null
+                                                    && connector.MEPSystem != null
+                                                    && connector.MEPSystem.GetTypeId().Value != systemType.Id.Value;
+                                            })
+                                            .Select(instance => instance.Id.Value)
+                                            .ToList();
                                     if (missingSystemPipeIds.Count > 0
                                         || wrongSystemPipeIds.Count > 0
                                         || missingConnectorSprinklerIds.Count > 0
@@ -3814,14 +4237,16 @@ namespace RfaMetadataAddin
                                             system_change_failures = systemChangeFailures
                                         });
                                     }
-                                    var unconnectedSprinklerIds = plannedSprinklers
-                                        .Where(instance =>
-                                        {
-                                            Connector connector = FindConnectorNear(instance, GetFamilyConnectionPoint(instance));
-                                            return connector == null || !connector.IsConnected;
-                                        })
-                                        .Select(instance => instance.Id.Value)
-                                        .ToList();
+                                    var unconnectedSprinklerIds = topologyOnlySandbox
+                                        ? new List<long>()
+                                        : plannedSprinklers
+                                            .Where(instance =>
+                                            {
+                                                Connector connector = FindConnectorNear(instance, GetFamilyConnectionPoint(instance));
+                                                return connector == null || !connector.IsConnected;
+                                            })
+                                            .Select(instance => instance.Id.Value)
+                                            .ToList();
                                     var unconnectedCreatedPipeIds = createdIds
                                         .Select(id => doc.GetElement(id) as Pipe)
                                         .Where(pipe => pipe != null)
@@ -3848,18 +4273,24 @@ namespace RfaMetadataAddin
                                             .SelectMany(segments => segments)
                                             .Where(pipe => pipe != null && pipe.IsValidObject)
                                             .Select(pipe => pipe.Id.Value));
-                                    var unreachableSprinklerIds = plannedSprinklers
-                                        .Where(instance => !IsPhysicallyReachableFromFireElement(
-                                            doc,
-                                            instance.Id,
-                                            verifiedMainPipeIds))
-                                        .Select(instance => instance.Id.Value)
-                                        .Distinct()
-                                        .ToList();
-                                    verifiedUnconnectedSprinklerCount = unreachableSprinklerIds.Count;
-                                    verifiedConnectedSprinklerCount = Math.Max(
-                                        0,
-                                        plannedSprinklers.Count - verifiedUnconnectedSprinklerCount);
+                                    var unreachableSprinklerIds = topologyOnlySandbox
+                                        ? new List<long>()
+                                        : plannedSprinklers
+                                            .Where(instance => !IsPhysicallyReachableFromFireElement(
+                                                doc,
+                                                instance.Id,
+                                                verifiedMainPipeIds))
+                                            .Select(instance => instance.Id.Value)
+                                            .Distinct()
+                                            .ToList();
+                                    verifiedUnconnectedSprinklerCount = topologyOnlySandbox
+                                        ? 0
+                                        : unreachableSprinklerIds.Count;
+                                    verifiedConnectedSprinklerCount = topologyOnlySandbox
+                                        ? 0
+                                        : Math.Max(
+                                            0,
+                                            plannedSprinklers.Count - verifiedUnconnectedSprinklerCount);
                                     if (unconnectedSprinklerIds.Count > 0
                                         || unconnectedCreatedPipeIds.Count > 0
                                         || missingCreatedPipeIds.Count > 0
@@ -3877,7 +4308,6 @@ namespace RfaMetadataAddin
                                     if (failed.Count > 0)
                                     {
                                         int failureCount = failed.Count;
-                                        fireBranchStage = "partial_failure_decision";
                                         evidenceElementIds = createdIds
                                             .Concat(additionalCreatedIds)
                                             .Where(id => id != null && id != ElementId.InvalidElementId)
@@ -3887,62 +4317,79 @@ namespace RfaMetadataAddin
                                             .Select(id => id.Value)
                                             .ToList();
 
-                                        var decisionDialog = new TaskDialog("SC REVIT 消防支管")
+                                        if (isSandbox)
                                         {
-                                            MainInstruction = "消防支管只有部分建立成功",
-                                            MainContent =
-                                                "已建立 " + evidenceElementIds.Count + " 個管段或管件，"
-                                                + "發現 " + failureCount + " 項問題，"
-                                                + verifiedUnconnectedSprinklerCount + " 顆灑水頭尚未連到主管。\n\n"
-                                                + "請選擇要保留成功建立的部分，或將本次建立全部復原。",
-                                            ExpandedContent =
-                                                "完整技術診斷與 ElementId 已保存於本次 SC REVIT 工作流程紀錄。",
-                                            AllowCancellation = true
-                                        };
-                                        decisionDialog.AddCommandLink(
-                                            TaskDialogCommandLinkId.CommandLink1,
-                                            "保留成功部分（可用 Revit 復原）");
-                                        decisionDialog.AddCommandLink(
-                                            TaskDialogCommandLinkId.CommandLink2,
-                                            "全部復原");
-                                        TaskDialogResult retentionResult = decisionDialog.Show();
-
-                                        if (retentionResult == TaskDialogResult.CommandLink1)
-                                        {
-                                            TransactionStatus evidenceStatus = transactionGroup.Assimilate();
-                                            if (evidenceStatus != TransactionStatus.Committed)
-                                            {
-                                                throw new InvalidOperationException(
-                                                    "無法保留消防支管已成功建立的部分："
-                                                    + evidenceStatus);
-                                            }
-                                            partialFailureKept = true;
-                                            retentionDecision = "kept";
-                                            failed.Add(new
-                                            {
-                                                reason = "diagnostic_evidence_kept",
-                                                model_changes_kept = true,
-                                                original_failure_count = failureCount,
-                                                evidence_element_ids = evidenceElementIds,
-                                                undo_transaction = "SC 消防支管建立"
-                                            });
-                                        }
-                                        else
-                                        {
+                                            fireBranchStage = "sandbox_restore_after_failure";
                                             retentionDecision = "rolled_back";
                                             TransactionStatus rollbackStatus = transactionGroup.RollBack();
                                             if (rollbackStatus != TransactionStatus.RolledBack)
                                             {
                                                 throw new InvalidOperationException(
-                                                    "消防支管建立失敗，且無法完整復原本次變更："
+                                                    "消防支管沙盒檢查失敗，且無法完整復原本次變更："
                                                     + rollbackStatus);
                                             }
-                                            throw new FireBranchConnectorVerificationException(
-                                                "消防支管未完整建立，使用者已選擇全部復原。問題數量："
-                                                + failureCount
-                                                + "。完整診斷已保存。",
-                                                failed.ToArray());
+                                            sandboxRolledBackEarly = true;
                                         }
+                                        else
+                                        {
+                                            fireBranchStage = "partial_failure_decision";
+                                            var decisionDialog = new TaskDialog("SC REVIT 消防支管")
+                                            {
+                                                MainInstruction = "消防支管只有部分建立成功",
+                                                MainContent =
+                                                    "已建立 " + evidenceElementIds.Count + " 個管段或管件，"
+                                                    + "發現 " + failureCount + " 項問題，"
+                                                    + verifiedUnconnectedSprinklerCount + " 顆灑水頭尚未連到主管。\n\n"
+                                                    + "請選擇要保留成功建立的部分，或將本次建立全部復原。",
+                                                ExpandedContent =
+                                                    "完整技術診斷與 ElementId 已保存於本次 SC REVIT 工作流程紀錄。",
+                                                AllowCancellation = true
+                                            };
+                                            decisionDialog.AddCommandLink(
+                                                TaskDialogCommandLinkId.CommandLink1,
+                                                "保留成功部分（可用 Revit 復原）");
+                                            decisionDialog.AddCommandLink(
+                                                TaskDialogCommandLinkId.CommandLink2,
+                                                "全部復原");
+                                            TaskDialogResult retentionResult = decisionDialog.Show();
+
+                                            if (retentionResult == TaskDialogResult.CommandLink1)
+                                            {
+                                                TransactionStatus evidenceStatus = transactionGroup.Assimilate();
+                                                if (evidenceStatus != TransactionStatus.Committed)
+                                                {
+                                                    throw new InvalidOperationException(
+                                                        "無法保留消防支管已成功建立的部分："
+                                                        + evidenceStatus);
+                                                }
+                                                partialFailureKept = true;
+                                                retentionDecision = "kept";
+                                                failed.Add(new
+                                                {
+                                                    reason = "diagnostic_evidence_kept",
+                                                    model_changes_kept = true,
+                                                    original_failure_count = failureCount,
+                                                    evidence_element_ids = evidenceElementIds,
+                                                    undo_transaction = "SC 消防支管建立"
+                                                });
+                                            }
+                                            else
+                                            {
+                                                retentionDecision = "rolled_back";
+                                                TransactionStatus rollbackStatus = transactionGroup.RollBack();
+                                                if (rollbackStatus != TransactionStatus.RolledBack)
+                                                {
+                                                    throw new InvalidOperationException(
+                                                        "消防支管建立失敗，且無法完整復原本次變更："
+                                                        + rollbackStatus);
+                                                }
+                                                throw new FireBranchConnectorVerificationException(
+                                                    "消防支管未完整建立，使用者已選擇全部復原。問題數量："
+                                                    + failureCount
+                                                    + "。完整診斷已保存。",
+                                                    failed.ToArray());
+                                            }
+                                            }
                                     }
                                     if (!partialFailureKept && isSandbox)
                                     {
@@ -3952,7 +4399,7 @@ namespace RfaMetadataAddin
                                     {
                                         fireBranchStage = "commit_group";
                                     }
-                                    if (!partialFailureKept)
+                                    if (!partialFailureKept && !sandboxRolledBackEarly)
                                     {
                                         TransactionStatus groupStatus = isSandbox
                                             ? transactionGroup.RollBack()
@@ -4062,15 +4509,28 @@ namespace RfaMetadataAddin
                                         residual_created_element_ids = residualCreatedElementIds,
                                         partial_success = partialFailureKept,
                                         retention_decision = retentionDecision,
-                                        retained_evidence_element_ids = evidenceElementIds,
-                                        model_changes_kept = !isSandbox || partialFailureKept,
+                                        sandbox_scope = sandboxScope,
+                                        sprinkler_connectivity_assessed = !topologyOnlySandbox,
+                                        diagnostic_evidence_element_ids = evidenceElementIds,
+                                        retained_evidence_element_ids = partialFailureKept
+                                            ? evidenceElementIds
+                                            : new List<long>(),
+                                        model_changes_kept = !isSandbox,
                                         tested_main_pipe_id = mainPipes[0].PipeId,
                                         tested_sprinkler_id = sprinklers.Count == 1 ? sprinklers[0].Id.Value : 0,
                                         source_row_index = sandboxScope == "single_sprinkler" ? pilotSourceRowIndex : -1,
                                         preview_snapshot_id = previewSnapshotId,
                                         model_plan_hash = modelPlanHash,
+                                        topology_plan_identity = new
+                                        {
+                                            schema_version = ReadTopologyPlanString(payload, "schema_version"),
+                                            plan_id = ReadTopologyPlanString(payload, "plan_id"),
+                                            revision = ReadTopologyPlanLong(payload, "revision", 0),
+                                            plan_hash = ReadTopologyPlanString(payload, "plan_hash")
+                                        },
                                         applied_diameter_segments = diameterPlan.Select(item => new
                                         {
+                                            plan_entity_id = item.PlanEntityId,
                                             segment_id = item.SegmentId,
                                             row_index = item.RowIndex,
                                             sequence = item.Sequence,
@@ -4078,12 +4538,28 @@ namespace RfaMetadataAddin
                                                 item.DiameterFeet,
                                                 UnitTypeId.Millimeters)
                                         }).ToList(),
+                                        topology_plan_entities = topologyPlan.Select(item => new
+                                        {
+                                            plan_entity_id = item.PlanEntityId,
+                                            kind = item.Kind,
+                                            row_indexes = item.RowIndexes,
+                                            branch_plan_entity_ids = item.BranchPlanEntityIdByRow
+                                                .Select(pair => new
+                                                {
+                                                    row_index = pair.Key,
+                                                    plan_entity_id = pair.Value
+                                                })
+                                                .ToList(),
+                                            reducer_plan_entity_ids = item.RoutingFitReducerPlanEntityIds.ToList()
+                                        }).ToList(),
                                         resolved_cross_transitions = resolvedCrossTransitions,
                                         created = created,
                                         failed = failed,
                                         skipped = skipped,
                                         cad_route_assignments = cadRouteAssignments,
-                                        verification_status = partialFailureKept ? "partial" : "verified",
+                                        verification_status = failed.Count > 0
+                                            ? (partialFailureKept ? "partial" : "failed")
+                                            : "verified",
                                         verified_system_type_id = systemType.Id.Value,
                                         verified_system_type_name = systemType.Name,
                                         connected_sprinkler_count = verifiedConnectedSprinklerCount,

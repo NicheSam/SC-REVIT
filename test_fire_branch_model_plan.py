@@ -5,6 +5,7 @@ from sc_revit.fire_branch.model_plan import (
     build_single_sprinkler_model_plan,
     select_single_sprinkler,
 )
+from sc_revit.fire_branch.topology_plan import create_topology_plan
 from sc_revit.fire_branch.diameter_analysis import _nearest_main_connection
 
 
@@ -26,7 +27,7 @@ class FireBranchModelPlanTests(unittest.TestCase):
         self.assertAlmostEqual(4.0, point["x"])
         self.assertAlmostEqual(0.0, point["y"])
 
-    def test_execution_plan_is_the_shared_source_for_reducing_cross(self) -> None:
+    def test_reducing_cross_uses_larger_outlet_and_reduces_smaller_side(self) -> None:
         analysis = {
             "status": "ready",
             "unresolved_segment_count": 0,
@@ -81,9 +82,9 @@ class FireBranchModelPlanTests(unittest.TestCase):
             level_id=500,
         )
 
-        self.assertEqual("fire_branch_execution_plan.v4", plan["schema_version"])
+        self.assertEqual("fire_branch_execution_plan.v5", plan["schema_version"])
         self.assertEqual(
-            "fire_branch_topology_plan.v4",
+            "fire_branch_topology_plan.v5",
             plan["topology_plan"]["schema_version"],
         )
         self.assertEqual(2, len(plan["diameter_plan"]))
@@ -93,12 +94,143 @@ class FireBranchModelPlanTests(unittest.TestCase):
         self.assertEqual([0, 1], cross["row_indexes"])
         self.assertEqual(40.0, cross["common_branch_diameter_mm"])
         self.assertEqual([40.0, 32.0], cross["source_branch_diameters_mm"])
-        self.assertEqual(1, len(plan["topology_plan"]["reducers"]))
-        reducer = plan["topology_plan"]["reducers"][0]
-        self.assertEqual("after_cross", reducer["placement"])
-        self.assertEqual("fit_to_routing_parts", reducer["placement_strategy"])
-        self.assertNotIn("offset_mm", reducer)
+        self.assertEqual([40.0, 40.0], cross["branch_outlet_diameters_mm"])
+        self.assertEqual(
+            {"row-0-0": 40.0, "row-1-0": 40.0},
+            cross["branch_outlet_diameters_by_segment_id"],
+        )
+        self.assertEqual(
+            [
+                {
+                    "row_index": 1,
+                    "branch_segment_id": "row-1-0",
+                    "placement": "after_cross",
+                    "from_diameter_mm": 40.0,
+                    "to_diameter_mm": 32.0,
+                }
+            ],
+            [
+                {
+                    "row_index": item["row_index"],
+                    "branch_segment_id": item["branch_segment_id"],
+                    "placement": item["placement"],
+                    "from_diameter_mm": item["from_diameter_mm"],
+                    "to_diameter_mm": item["to_diameter_mm"],
+                }
+                for item in plan["topology_plan"]["reducers"]
+            ],
+        )
         self.assertEqual(64, len(plan["plan_hash"]))
+
+    def test_topology_plan_discards_legacy_cross_outlet_reducers(self) -> None:
+        analysis = {
+            "status": "ready",
+            "unresolved_segment_count": 0,
+            "segments": [
+                {
+                    "segment_id": "row-0-0",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0, "z": 0},
+                    "end": {"x": 6, "y": 0, "z": 0},
+                    "diameter_mm": 40,
+                }
+            ],
+            "reducers": [
+                {
+                    "branch_segment_id": "row-0-0",
+                    "placement": "after_cross",
+                    "from_diameter_mm": 40,
+                    "to_diameter_mm": 32,
+                }
+            ],
+            "junctions": [
+                {
+                    "row_index": 0,
+                    "branch_segment_id": "row-0-0",
+                    "main_segment_id": "main-0",
+                    "point": {"x": 0, "y": 0, "z": 0},
+                    "main_diameter_mm": 100,
+                    "branch_diameter_mm": 40,
+                    "review_required": False,
+                }
+            ],
+        }
+
+        plan = build_fire_branch_execution_plan(
+            diameter_analysis=analysis,
+            main_pipe_ids=[100],
+            sprinkler_ids=[200],
+            preview_snapshot_id="preview-legacy-reducer",
+            pipe_type_id=300,
+            system_type_id=400,
+            level_id=500,
+        )
+
+        self.assertEqual([], plan["topology_plan"]["reducers"])
+
+    def test_execution_plan_reuses_the_exact_reviewed_topology_revision(self) -> None:
+        analysis = {
+            "status": "ready",
+            "cad_path_verified": True,
+            "unresolved_segment_count": 0,
+            "segments": [
+                {
+                    "segment_id": "row-0-0",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0, "z": 0},
+                    "end": {"x": 5, "y": 0, "z": 0},
+                    "diameter_mm": 32,
+                }
+            ],
+            "reducers": [],
+            "junctions": [],
+        }
+        reviewed = create_topology_plan(
+            analysis,
+            source_mode="cad",
+            preview_snapshot_id="reviewed-plan",
+        )
+
+        plan = build_fire_branch_execution_plan(
+            diameter_analysis=analysis,
+            topology_plan=reviewed,
+            main_pipe_ids=[100],
+            sprinkler_ids=[200],
+            preview_snapshot_id="reviewed-plan",
+            pipe_type_id=300,
+            system_type_id=400,
+            level_id=500,
+        )
+
+        self.assertEqual(reviewed["plan_hash"], plan["topology_plan"]["plan_hash"])
+        self.assertEqual(reviewed["revision"], plan["topology_plan_revision"])
+        self.assertEqual(reviewed["source_mode"], plan["source_mode"])
+        self.assertEqual(
+            reviewed["segments"][0]["plan_entity_id"],
+            plan["diameter_plan"][0]["plan_entity_id"],
+        )
+        self.assertEqual(
+            [
+                (
+                    item["segment_id"],
+                    item["start"],
+                    item["end"],
+                    float(item["diameter_mm"]),
+                )
+                for item in reviewed["segments"]
+            ],
+            [
+                (
+                    item["segment_id"],
+                    item["start"],
+                    item["end"],
+                    item["diameter_mm"],
+                )
+                for item in plan["diameter_plan"]
+            ],
+        )
 
     def test_opposite_branches_at_main_endpoint_are_a_tee_not_a_cross(self) -> None:
         analysis = {
@@ -168,6 +300,101 @@ class FireBranchModelPlanTests(unittest.TestCase):
         self.assertEqual(1, junction["main_run_count"])
         self.assertEqual([0, 1], junction["row_indexes"])
 
+    def test_reducing_endpoint_tee_uses_larger_outlets_and_reduces_smaller_side(self) -> None:
+        analysis = {
+            "status": "ready",
+            "unresolved_segment_count": 0,
+            "main_context_segments": [
+                {
+                    "segment_id": "main-100",
+                    "source_element_id": 100,
+                    "start": {"x": -10, "y": 0, "z": 0},
+                    "end": {"x": 0, "y": 0, "z": 0},
+                    "diameter_mm": 100,
+                }
+            ],
+            "segments": [
+                {
+                    "segment_id": "row-0-0",
+                    "row_index": 0,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0, "z": 0},
+                    "end": {"x": 0, "y": 10, "z": 0},
+                    "diameter_mm": 40,
+                },
+                {
+                    "segment_id": "row-1-0",
+                    "row_index": 1,
+                    "sequence": 0,
+                    "start": {"x": 0, "y": 0, "z": 0},
+                    "end": {"x": 0, "y": -10, "z": 0},
+                    "diameter_mm": 32,
+                },
+            ],
+            "reducers": [],
+            "junctions": [
+                {
+                    "row_index": 0,
+                    "branch_segment_id": "row-0-0",
+                    "main_segment_id": "main-100",
+                    "point": {"x": 0, "y": 0, "z": 0},
+                    "main_diameter_mm": 100,
+                    "branch_diameter_mm": 40,
+                    "review_required": False,
+                },
+                {
+                    "row_index": 1,
+                    "branch_segment_id": "row-1-0",
+                    "main_segment_id": "main-100",
+                    "point": {"x": 0, "y": 0, "z": 0},
+                    "main_diameter_mm": 100,
+                    "branch_diameter_mm": 32,
+                    "review_required": False,
+                },
+            ],
+        }
+
+        plan = build_fire_branch_execution_plan(
+            diameter_analysis=analysis,
+            main_pipe_ids=[100],
+            sprinkler_ids=[200, 201],
+            preview_snapshot_id="preview-reducing-endpoint-tee",
+            pipe_type_id=300,
+            system_type_id=400,
+            level_id=500,
+        )
+
+        junction = plan["topology_plan"]["junctions"][0]
+        self.assertEqual("reducing_endpoint_tee", junction["kind"])
+        self.assertEqual(40.0, junction["common_branch_diameter_mm"])
+        self.assertEqual([40.0, 32.0], junction["source_branch_diameters_mm"])
+        self.assertEqual([40.0, 40.0], junction["branch_outlet_diameters_mm"])
+        self.assertEqual(
+            {"row-0-0": 40.0, "row-1-0": 40.0},
+            junction["branch_outlet_diameters_by_segment_id"],
+        )
+        self.assertEqual(
+            [
+                {
+                    "row_index": 1,
+                    "branch_segment_id": "row-1-0",
+                    "placement": "after_endpoint_tee",
+                    "from_diameter_mm": 40.0,
+                    "to_diameter_mm": 32.0,
+                }
+            ],
+            [
+                {
+                    "row_index": item["row_index"],
+                    "branch_segment_id": item["branch_segment_id"],
+                    "placement": item["placement"],
+                    "from_diameter_mm": item["from_diameter_mm"],
+                    "to_diameter_mm": item["to_diameter_mm"],
+                }
+                for item in plan["topology_plan"]["reducers"]
+            ],
+        )
+
     def test_pilot_requires_exactly_one_explicit_tree_selection(self) -> None:
         sprinklers = [{"element_id": 200}, {"element_id": 201}]
 
@@ -183,6 +410,7 @@ class FireBranchModelPlanTests(unittest.TestCase):
             "segments": [
                 {
                     "segment_id": "row-3-0",
+                    "plan_entity_id": "segment:row-3-0",
                     "row_index": 3,
                     "sequence": 0,
                     "start": {"x": 0, "y": 10, "z": 0},
@@ -192,6 +420,7 @@ class FireBranchModelPlanTests(unittest.TestCase):
                 },
                 {
                     "segment_id": "row-3-1",
+                    "plan_entity_id": "segment:row-3-1",
                     "row_index": 3,
                     "sequence": 1,
                     "start": {"x": 5, "y": 10, "z": 0},
@@ -225,6 +454,10 @@ class FireBranchModelPlanTests(unittest.TestCase):
         self.assertEqual(3, plan["source_row_index"])
         self.assertEqual(200, plan["sprinkler_id"])
         self.assertEqual(["row-3-0", "row-3-1"], [item["segment_id"] for item in plan["diameter_plan"]])
+        self.assertEqual(
+            ["segment:row-3-0", "segment:row-3-1"],
+            [item["plan_entity_id"] for item in plan["diameter_plan"]],
+        )
         self.assertTrue(plan["require_diameter_plan"])
         self.assertEqual(64, len(plan["plan_hash"]))
 

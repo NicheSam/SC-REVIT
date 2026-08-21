@@ -40,7 +40,10 @@ class FireBranchCadPathContractTests(unittest.TestCase):
 
         self.assertIn("root.GetSymbolGeometry()", source)
         self.assertIn("root.Transform,", source)
-        self.assertNotIn("importTransform.Multiply(root.Transform)", source)
+        self.assertIn("OwnerViewId", source)
+        self.assertIn("activeViewImports", source)
+        self.assertIn("modelWideImports.Count == 1", source)
+        self.assertIn("importTransform", source)
 
     def test_verifier_checks_route_and_topology_with_separate_tolerances(self):
         source = VERIFIER_SOURCE.read_text(encoding="utf-8")

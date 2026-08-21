@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import copy
 from typing import Any
 
 from sc_revit.fire_branch.main_geometry import normalize_main_geometry
@@ -20,14 +21,30 @@ def build_fire_branch_execution_plan(
     pipe_type_id: str | int,
     system_type_id: str | int,
     level_id: str | int,
+    topology_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the immutable topology contract shared by preview and Revit."""
 
     if not str(preview_snapshot_id or "").strip():
         raise ValueError("缺少預覽批次，請重新分析")
+    if topology_plan is None:
+        from sc_revit.fire_branch.topology_plan import create_topology_plan
+
+        topology_plan = create_topology_plan(
+            diameter_analysis,
+            source_mode=str(diameter_analysis.get("source_mode") or "cad"),
+            preview_snapshot_id=str(preview_snapshot_id),
+        )
+    else:
+        topology_plan = copy.deepcopy(topology_plan)
+    validation = topology_plan.get("validation") or {}
+    if str(validation.get("status") or "") == "invalid":
+        raise ValueError("目前拓樸計畫無效，請修正後重新執行建立前檢查")
+
     segments = [
         {
             "segment_id": str(item.get("segment_id") or ""),
+            "plan_entity_id": str(item.get("plan_entity_id") or ""),
             "row_index": int(item.get("row_index") or 0),
             "sequence": int(item.get("sequence") or 0),
             "start": item.get("start") or {},
@@ -36,7 +53,7 @@ def build_fire_branch_execution_plan(
             "sprinkler_id": item.get("sprinkler_id"),
             "is_sprinkler_terminal": bool(item.get("is_sprinkler_terminal")),
         }
-        for item in (diameter_analysis.get("segments") or [])
+        for item in (topology_plan.get("segments") or [])
         if item.get("diameter_mm") is not None
     ]
     if not segments:
@@ -44,12 +61,14 @@ def build_fire_branch_execution_plan(
     if int(diameter_analysis.get("unresolved_segment_count") or 0) != 0:
         raise ValueError("目前預覽仍有尚未確認的管徑分段")
 
-    topology_plan = build_fire_branch_topology_plan(diameter_analysis)
     if any(item.get("review_required") for item in topology_plan["junctions"]):
         raise ValueError("目前預覽仍有尚未確認的接頭拓樸")
 
     plan = {
-        "schema_version": "fire_branch_execution_plan.v4",
+        "schema_version": "fire_branch_execution_plan.v5",
+        "source_mode": str(topology_plan.get("source_mode") or "cad"),
+        "topology_plan_revision": int(topology_plan.get("revision") or 1),
+        "topology_plan_hash": str(topology_plan.get("plan_hash") or ""),
         "main_pipe_ids": sorted(int(item) for item in main_pipe_ids),
         "sprinkler_ids": sorted(int(item) for item in sprinkler_ids),
         "preview_snapshot_id": str(preview_snapshot_id),
@@ -79,9 +98,12 @@ def build_fire_branch_topology_plan(
     reducers = [
         {
             **item,
-            "placement": str(item.get("placement") or "along_branch"),
+            "placement": "along_branch",
         }
         for item in (diameter_analysis.get("reducers") or [])
+        if str(item.get("placement") or "along_branch") == "along_branch"
+        and str(item.get("before_segment_id") or "").strip()
+        and str(item.get("after_segment_id") or "").strip()
     ]
     main_graph = normalize_main_geometry(
         diameter_analysis.get("main_context_segments") or []
@@ -109,6 +131,10 @@ def build_fire_branch_topology_plan(
                     "main_diameter_mm": main_diameter,
                     "common_branch_diameter_mm": branch_diameter,
                     "source_branch_diameters_mm": [branch_diameter],
+                    "branch_outlet_diameters_mm": [branch_diameter],
+                    "branch_outlet_diameters_by_segment_id": {
+                        str(raw.get("branch_segment_id") or ""): branch_diameter
+                    },
                     "review_required": bool(raw.get("review_required")),
                 }
             )
@@ -156,6 +182,27 @@ def build_fire_branch_topology_plan(
             )
         else:
             kind = "unresolved_main_junction"
+        branch_outlet_diameters = [item[1] for item in rows_and_diameters]
+        if kind in {"reducing_cross", "reducing_endpoint_tee"} and common is not None:
+            branch_outlet_diameters = [common for _ in rows_and_diameters]
+            reducer_placement = (
+                "after_cross" if kind == "reducing_cross" else "after_endpoint_tee"
+            )
+            for row_index, source_diameter, source_junction in rows_and_diameters:
+                if source_diameter is None or math.isclose(float(source_diameter), common):
+                    continue
+                reducers.append(
+                    {
+                        "row_index": row_index,
+                        "branch_segment_id": str(
+                            source_junction.get("branch_segment_id") or ""
+                        ),
+                        "placement": reducer_placement,
+                        "point": source_junction.get("point") or junction_point,
+                        "from_diameter_mm": float(common),
+                        "to_diameter_mm": float(source_diameter),
+                    }
+                )
         junctions.append(
             {
                 "kind": kind,
@@ -169,6 +216,11 @@ def build_fire_branch_topology_plan(
                 "main_diameter_mm": main_diameter if resolved else None,
                 "common_branch_diameter_mm": common,
                 "source_branch_diameters_mm": [item[1] for item in rows_and_diameters],
+                "branch_outlet_diameters_mm": branch_outlet_diameters,
+                "branch_outlet_diameters_by_segment_id": {
+                    str(item[2].get("branch_segment_id") or ""): diameter
+                    for item, diameter in zip(rows_and_diameters, branch_outlet_diameters)
+                },
                 "main_run_count": main_run_count if has_main_geometry else None,
                 "review_required": bool(
                     not resolved
@@ -178,27 +230,6 @@ def build_fire_branch_topology_plan(
                 ),
             }
         )
-        if common is None:
-            continue
-        for row_index, side_diameter, side in rows_and_diameters:
-            if side_diameter is None or math.isclose(side_diameter, common):
-                continue
-            reducers.append(
-                {
-                    "placement": (
-                        "after_endpoint_tee"
-                        if "endpoint_tee" in kind
-                        else "after_cross"
-                    ),
-                    "row_index": row_index,
-                    "junction_main_segment_id": str(raw.get("main_segment_id") or ""),
-                    "branch_segment_id": str(side.get("branch_segment_id") or ""),
-                    "point": side.get("point") or {},
-                    "from_diameter_mm": common,
-                    "to_diameter_mm": side_diameter,
-                    "placement_strategy": "fit_to_routing_parts",
-                }
-            )
     return {
         "schema_version": "fire_branch_topology_plan.v4",
         "junctions": junctions,
@@ -384,6 +415,7 @@ def build_single_sprinkler_model_plan(
 
     diameter_plan = [
         {
+            "plan_entity_id": str(item.get("plan_entity_id") or ""),
             "segment_id": str(item.get("segment_id") or ""),
             "row_index": source_row_index,
             "sequence": int(item.get("sequence") or 0),

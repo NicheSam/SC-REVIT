@@ -4,7 +4,7 @@ SC REVIT 是 Revit 2024 的 MEP 輔助工具集，提供消防支管、CAD 點�
 
 ## 下載與安裝
 
-[下載 SC REVIT v0.7.0 一鍵安裝／更新包](https://github.com/NicheSam/SC-REVIT/releases/download/v0.7.0/SC_REVIT_v0.7.0_installer.zip)
+[下載 SC REVIT v0.75 一鍵安裝／更新包](https://github.com/NicheSam/SC-REVIT/releases/download/v0.75/SC_REVIT_v0.75_installer.zip)
 
 1. 關閉 Revit 2024 與所有 SC REVIT 視窗。
 2. 完整解壓縮下載的 ZIP。
@@ -13,9 +13,9 @@ SC REVIT 是 Revit 2024 的 MEP 輔助工具集，提供消防支管、CAD 點�
 
 同一個安裝包可用於首次安裝與覆蓋更新。請勿使用 GitHub 自動產生的 `Source code` 壓縮檔安裝。
 
-- [v0.7.0 版本說明](RELEASE_NOTES_v0.7.0.md)
+- [v0.75 版本說明](RELEASE_NOTES_v0.75.md)
 - [完整更新紀錄](CHANGELOG.md)
-- [SC REVIT v0.7.0 使用說明](docs/SC_REVIT_v0.7.0_user_guide.md)
+- [SC REVIT v0.75 使用說明](docs/SC_REVIT_v0.75_user_guide.md)
 - [排水操作手冊](docs/SC_REVIT_drainage_operation_manual.md)
 
 ## 功能狀態
@@ -85,8 +85,8 @@ flowchart LR
 
 - CAD 管徑模式需要目前視圖中有可見且已正確對位的 CAD 連結。
 - 不同專案的撒水頭 Connector、系統分類、Pipe Type 與 Routing Preferences 可能不同，應先執行建立前完整檢查。
-- 多段或轉折主管已進入 CAD 幾何辨識流程，但複雜交會仍應先核對路網圖；直接編輯 SVG 拓樸尚未提供。
-- 少數端點三通可能因目前專案的管件族群、短管長度或 Routing Preferences 被 Revit 拒絕。工具會保留其餘成功結果、列出受影響灑水頭，並提供全部復原選項。
+- 多段或轉折主管已進入 CAD 幾何辨識流程，但複雜交會仍應先核對路網圖；SVG 目前提供有限管段管徑修正，接頭與異徑配件會依工程規則自動重算。
+- 少數複雜交會可能因目前專案的管件族群、短管長度或 Routing Preferences 被 Revit 拒絕。工具會保留其餘成功結果、列出受影響灑水頭，並提供全部復原選項。
 - 自動避梁仍在規劃中，尚未列入本版正式功能。
 - 無 CAD 底圖的統一管徑舊版模式仍在規劃中，本版尚未提供獨立頁籤。
 

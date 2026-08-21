@@ -62,7 +62,11 @@ from sc_revit.fire_branch import (
 from sc_revit.fire_branch.hot_worker_client import run_hot_preview_analysis
 from sc_revit.fire_branch.model_plan import (
     build_fire_branch_execution_plan,
-    build_fire_branch_topology_plan,
+)
+from sc_revit.fire_branch.topology_plan import (
+    build_uniform_route_analysis,
+    create_topology_plan,
+    create_uniform_topology_plan,
 )
 from sc_revit.fire_branch.network_preview import FireBranchNetworkPreview
 from sc_revit.drainage import (
@@ -79,7 +83,10 @@ from sc_revit.drainage.models import (
 from sc_revit.connect_fitting import request_connect_pipe_fittings, request_diagnose_mep_connectors
 from sc_revit.core.backstage import request_delete_tracked_elements, request_sync_tracked_elements
 from sc_revit.core.batch import BatchStore, DB_PATH, activate_batch, batch_context
-from sc_revit.core.revit_queue_client import format_fire_branch_failure_item
+from sc_revit.core.revit_queue_client import (
+    format_fire_branch_failure_item,
+    format_fire_branch_verification_failure,
+)
 from sc_revit.element_inspector import request_inspect_selected_elements
 from sc_revit.parameter_audit import request_scan_sc_parameters
 from sc_revit.piping_support import request_preview_piping_support_points
@@ -185,10 +192,35 @@ class FamilyClassifierApp(tk.Tk):
         text_font = tkfont.nametofont("TkTextFont")
         heading_font = tkfont.nametofont("TkHeadingFont")
         for item in (default_font, text_font, heading_font):
-            item.configure(family="Microsoft JhengHei UI", size=10)
+            item.configure(family="Microsoft JhengHei UI", size=11)
         style = ttk.Style(self)
-        style.configure(".", font=("Microsoft JhengHei UI", 10))
-        style.configure("Treeview.Heading", font=("Microsoft JhengHei UI", 10, "bold"))
+        # 消防工作區需要同時承載中文判定依據與 ElementId；10pt 在高 DPI
+        # 或視窗縮小時會變成難以辨讀的細字，因此將 11pt 定為全域最低值。
+        style.configure(".", font=("Microsoft JhengHei UI", 11))
+        style.configure(
+            "Treeview",
+            font=("Microsoft JhengHei UI", 11),
+            rowheight=30,
+        )
+        style.configure(
+            "Treeview.Heading",
+            font=("Microsoft JhengHei UI", 11, "bold"),
+            padding=(6, 6),
+        )
+        style.configure(
+            "SC.Section.TLabelframe.Label",
+            font=("Microsoft JhengHei UI", 12, "bold"),
+        )
+        style.configure(
+            "SC.Status.TLabel",
+            font=("Microsoft JhengHei UI", 12, "bold"),
+            foreground="#174a63",
+        )
+        style.configure(
+            "SC.Hint.TLabel",
+            font=("Microsoft JhengHei UI", 10),
+            foreground="#5c6670",
+        )
 
     def _configure_visual_identity(self) -> None:
         icon_names = {
@@ -224,13 +256,13 @@ class FamilyClassifierApp(tk.Tk):
         style = ttk.Style(self)
         style.configure(
             "SC.Title.TLabel",
-            font=("Microsoft JhengHei UI", 12, "bold"),
+            font=("Microsoft JhengHei UI", 14, "bold"),
             foreground="#1b5d74",
         )
         style.configure(
             "SC.Primary.TButton",
-            font=("Microsoft JhengHei UI", 10, "bold"),
-            padding=(10, 6),
+            font=("Microsoft JhengHei UI", 11, "bold"),
+            padding=(12, 8),
         )
 
     def _ensure_addin_installed(self) -> None:
@@ -1916,12 +1948,17 @@ class FamilyClassifierApp(tk.Tk):
 
         right_panel = ttk.Frame(fire_workspace, padding=(10, 0, 0, 0))
         right_panel.columnconfigure(0, weight=1)
-        right_panel.rowconfigure(1, weight=1)
+        right_panel.rowconfigure(1, weight=0)
         fire_workspace.add(left_panel, weight=3)
         fire_workspace.add(right_panel, weight=2)
         self.after(100, self._set_initial_fire_workspace_sash)
 
-        header = ttk.LabelFrame(left_panel, text="1. 讀取專案資料", padding=10)
+        header = ttk.LabelFrame(
+            left_panel,
+            text="1. 讀取專案資料",
+            padding=10,
+            style="SC.Section.TLabelframe",
+        )
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         header.columnconfigure(0, weight=1)
         self.fire_branch_status_var = tk.StringVar(value="準備自動讀取…")
@@ -1937,7 +1974,12 @@ class FamilyClassifierApp(tk.Tk):
             pady=(8, 0),
         )
 
-        main_frame = ttk.LabelFrame(left_panel, text="2. 主管", padding=10)
+        main_frame = ttk.LabelFrame(
+            left_panel,
+            text="2. 主管",
+            padding=10,
+            style="SC.Section.TLabelframe",
+        )
         main_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         main_frame.columnconfigure(1, weight=1)
         ttk.Label(main_frame, text="目前主管").grid(row=0, column=0, sticky="w")
@@ -1945,7 +1987,12 @@ class FamilyClassifierApp(tk.Tk):
         ttk.Label(main_frame, textvariable=self.fire_main_pipe_var, wraplength=380).grid(row=0, column=1, sticky="w", padx=(8, 8))
         ttk.Button(main_frame, text="讀取選取主管", command=self._read_fire_main_pipe_selection).grid(row=0, column=2, sticky="e")
 
-        setting_frame = ttk.LabelFrame(left_panel, text="3. 支管設定", padding=10)
+        setting_frame = ttk.LabelFrame(
+            left_panel,
+            text="3. 支管設定",
+            padding=10,
+            style="SC.Section.TLabelframe",
+        )
         setting_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         setting_frame.columnconfigure(1, weight=1)
         setting_frame.columnconfigure(3, weight=1)
@@ -1957,18 +2004,46 @@ class FamilyClassifierApp(tk.Tk):
         self.fire_pipe_type_var = tk.StringVar()
         self.fire_pipe_type_combo = ttk.Combobox(setting_frame, textvariable=self.fire_pipe_type_var, state="readonly", width=20)
         self.fire_pipe_type_combo.grid(row=0, column=3, sticky="ew", padx=(8, 0))
-        ttk.Label(setting_frame, text="管徑").grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.fire_diameter_var = tk.StringVar(value="25 mm")
-        self.fire_diameter_combo = ttk.Combobox(setting_frame, textvariable=self.fire_diameter_var, state="readonly", width=12)
-        self.fire_diameter_combo.grid(row=1, column=1, sticky="w", padx=(8, 12), pady=(10, 0))
-        ttk.Label(setting_frame, text="樓層").grid(row=1, column=2, sticky="w", pady=(10, 0))
+        self.fire_branch_mode_var = tk.StringVar(value="cad")
+        ttk.Label(setting_frame, text="管徑模式").grid(row=1, column=0, sticky="nw", pady=(10, 0))
+        self.fire_branch_mode_tabs = ttk.Notebook(setting_frame, height=62)
+        self.fire_branch_mode_tabs.grid(
+            row=1, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(10, 0)
+        )
+        cad_mode_tab = ttk.Frame(self.fire_branch_mode_tabs, padding=(8, 6))
+        ttk.Label(
+            cad_mode_tab,
+            text="管徑由 CAD 文字、線色與圖層證據分段判定，不使用人工管徑。",
+            wraplength=520,
+        ).pack(anchor="w")
+        uniform_mode_tab = ttk.Frame(self.fire_branch_mode_tabs, padding=(8, 6))
+        ttk.Label(uniform_mode_tab, text="統一支管管徑").pack(side="left")
+        self.fire_diameter_combo = ttk.Combobox(
+            uniform_mode_tab,
+            textvariable=self.fire_diameter_var,
+            state="readonly",
+            width=12,
+        )
+        self.fire_diameter_combo.pack(side="left", padx=(8, 0))
+        ttk.Label(
+            uniform_mode_tab,
+            text="不讀取 CAD 管徑，只沿用預覽路徑。",
+            foreground="#666666",
+        ).pack(side="left", padx=(12, 0))
+        self.fire_branch_mode_tabs.add(cad_mode_tab, text="CAD 智慧管徑")
+        self.fire_branch_mode_tabs.add(uniform_mode_tab, text="無 CAD／統一管徑")
+        self.fire_branch_mode_tabs.bind(
+            "<<NotebookTabChanged>>", self._on_fire_branch_mode_changed
+        )
+        ttk.Label(setting_frame, text="樓層").grid(row=2, column=0, sticky="w", pady=(10, 0))
         self.fire_level_var = tk.StringVar()
         self.fire_level_combo = ttk.Combobox(setting_frame, textvariable=self.fire_level_var, state="readonly", width=18)
-        self.fire_level_combo.grid(row=1, column=3, sticky="ew", padx=(8, 0), pady=(10, 0))
-        ttk.Label(setting_frame, text="支管距離樓層高度(cm)").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        self.fire_level_combo.grid(row=2, column=1, sticky="ew", padx=(8, 12), pady=(10, 0))
+        ttk.Label(setting_frame, text="支管距離樓層高度(cm)").grid(row=2, column=2, sticky="w", pady=(10, 0))
         self.fire_branch_offset_var = tk.StringVar(value="0")
-        ttk.Entry(setting_frame, textvariable=self.fire_branch_offset_var, width=12).grid(row=2, column=1, sticky="w", padx=(8, 12), pady=(10, 0))
-        ttk.Label(setting_frame, text="高度基準").grid(row=2, column=2, sticky="w", pady=(10, 0))
+        ttk.Entry(setting_frame, textvariable=self.fire_branch_offset_var, width=12).grid(row=2, column=3, sticky="w", padx=(8, 0), pady=(10, 0))
+        ttk.Label(setting_frame, text="高度基準").grid(row=3, column=0, sticky="w", pady=(10, 0))
         self.fire_height_reference_var = tk.StringVar(value="管中心")
         self.fire_height_reference_combo = ttk.Combobox(
             setting_frame,
@@ -1977,9 +2052,14 @@ class FamilyClassifierApp(tk.Tk):
             width=12,
             values=["管上端", "管中心", "管下端"],
         )
-        self.fire_height_reference_combo.grid(row=2, column=3, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.fire_height_reference_combo.grid(row=3, column=1, sticky="w", padx=(8, 12), pady=(10, 0))
 
-        sprinkler_frame = ttk.LabelFrame(left_panel, text="4. 選取撒水頭（Revit 內框選或多選後讀取）", padding=10)
+        sprinkler_frame = ttk.LabelFrame(
+            left_panel,
+            text="4. 選取撒水頭（Revit 內框選或多選後讀取）",
+            padding=10,
+            style="SC.Section.TLabelframe",
+        )
         sprinkler_frame.grid(row=3, column=0, sticky="nsew")
         sprinkler_frame.columnconfigure(0, weight=1)
         sprinkler_frame.rowconfigure(1, weight=1)
@@ -2007,37 +2087,75 @@ class FamilyClassifierApp(tk.Tk):
         fire_scroll = ttk.Scrollbar(sprinkler_frame, orient="vertical", command=self.fire_sprinkler_tree.yview)
         fire_scroll.grid(row=1, column=1, sticky="ns")
         self.fire_sprinkler_tree.configure(yscrollcommand=fire_scroll.set)
+        self.fire_selection_detail_var = tk.StringVar(
+            value="尚未選取撒水頭；讀取後可在表格點選一列查看 ElementId 與座標。"
+        )
+        ttk.Label(
+            sprinkler_frame,
+            textvariable=self.fire_selection_detail_var,
+            style="SC.Hint.TLabel",
+            wraplength=640,
+            justify="left",
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.fire_sprinkler_tree.bind(
+            "<<TreeviewSelect>>", self._on_fire_sprinkler_selection_changed
+        )
 
-        development_frame = ttk.LabelFrame(right_panel, text="建立前檢查", padding=10)
+        self.fire_analysis_summary_var = tk.StringVar(
+            value="尚未分析；分析只讀取資料，不會修改模型。"
+        )
+        self.fire_result_selection_var = tk.StringVar(
+            value="尚未選取分析列；選取後會顯示管段或變徑的詳細資料。"
+        )
+        self.fire_plan_status_var = tk.StringVar(
+            value="計畫狀態：尚未建立｜CAD：尚未核對｜下一步：分析並顯示預覽"
+        )
+        development_frame = ttk.LabelFrame(
+            right_panel,
+            text="目前狀態",
+            padding=10,
+            style="SC.Section.TLabelframe",
+        )
         development_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         ttk.Label(
             development_frame,
-            text="目前模式：安全預檢",
-            font=("Microsoft JhengHei UI", 10, "bold"),
-            foreground="#9a5b00",
-        ).pack(anchor="w")
-        ttk.Label(
-            development_frame,
-            text=(
-                "請先分析路徑，再執行建立前檢查。完成後會自動復原，不會在模型留下管線。\n"
-                "檢查內容包含完整路網、管徑、管件與灑水頭連通性。"
-            ),
-            wraplength=340,
+            textvariable=self.fire_plan_status_var,
+            style="SC.Status.TLabel",
+            wraplength=430,
             justify="left",
-        ).pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="w")
+        ttk.Button(
+            development_frame,
+            text="查看分析結果與異常",
+            command=self._open_fire_analysis_result,
+        ).pack(anchor="w", pady=(6, 0))
 
-        result_frame = ttk.LabelFrame(right_panel, text="5. 管徑分段", padding=10)
-        result_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
+        result_frame = ttk.LabelFrame(
+            right_panel,
+            text="5. 分析與計畫結果",
+            padding=10,
+            style="SC.Section.TLabelframe",
+        )
+        # Keep the analysis tables alive for selection/focus callbacks, but
+        # present them in the dedicated report window instead of compressing
+        # the main workflow.
         result_frame.columnconfigure(0, weight=1)
-        self.fire_analysis_summary_var = tk.StringVar(value="尚未分析。這個步驟不會修改模型。")
         ttk.Button(
             result_frame,
-            text="查看分析與檢查結果",
+            text="開啟完整分析報告（摘要／計畫／異常）",
             command=self._open_fire_analysis_result,
+            style="SC.Primary.TButton",
         ).grid(row=0, column=0, sticky="ew")
-        result_frame.rowconfigure(1, weight=1)
+        ttk.Label(
+            result_frame,
+            textvariable=self.fire_result_selection_var,
+            style="SC.Hint.TLabel",
+            wraplength=430,
+            justify="left",
+        ).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        result_frame.rowconfigure(2, weight=1)
         diameter_tabs = ttk.Notebook(result_frame)
-        diameter_tabs.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        diameter_tabs.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
 
         diameter_segment_tab = ttk.Frame(diameter_tabs)
         diameter_segment_tab.columnconfigure(0, weight=1)
@@ -2066,6 +2184,9 @@ class FamilyClassifierApp(tk.Tk):
         self.fire_diameter_segment_tree.bind(
             "<Double-1>",
             self._focus_fire_diameter_segment,
+        )
+        self.fire_diameter_segment_tree.bind(
+            "<<TreeviewSelect>>", self._on_fire_diameter_selection_changed
         )
         self.fire_diameter_segment_tree.tag_configure(
             "review",
@@ -2096,6 +2217,9 @@ class FamilyClassifierApp(tk.Tk):
         )
         reducer_scroll.grid(row=0, column=1, sticky="ns")
         self.fire_reducer_tree.configure(yscrollcommand=reducer_scroll.set)
+        self.fire_reducer_tree.bind(
+            "<<TreeviewSelect>>", self._on_fire_reducer_selection_changed
+        )
 
         drop_rule_tab = ttk.Frame(diameter_tabs, padding=6)
         drop_rule_tab.columnconfigure(0, weight=1)
@@ -2144,46 +2268,45 @@ class FamilyClassifierApp(tk.Tk):
             )
 
         action_frame = ttk.Frame(right_panel)
-        action_frame.grid(row=2, column=0, sticky="ew")
+        action_frame.grid(row=1, column=0, sticky="ew")
         action_frame.columnconfigure(0, weight=1)
         self.fire_preview_button = ttk.Button(
             action_frame,
-            text="分析並顯示預覽",
+            text="1. 分析並顯示預覽",
             command=self._preview_fire_branch_paths,
             style="SC.Primary.TButton",
         )
         self.fire_preview_button.grid(row=0, column=0, sticky="ew")
         self.fire_network_button = ttk.Button(
             action_frame,
-            text="查看路網圖",
+            text="2. 查看路網圖／修正計畫",
             command=self._open_fire_branch_network_preview,
             state="disabled",
         )
         self.fire_network_button.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         self.fire_sandbox_button = ttk.Button(
             action_frame,
-            text="建立前完整檢查（完成後自動復原）",
+            text="背景安全檢核",
             command=self._sandbox_fire_branch_pipes,
             state="disabled",
         )
-        self.fire_sandbox_button.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         self.fire_commit_button = ttk.Button(
             action_frame,
-            text="正式建立消防支管",
+            text="3. 建立消防支管",
             command=self._create_fire_branch_pipes,
             state="disabled",
         )
-        self.fire_commit_button.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        self.fire_commit_button.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         ttk.Label(
             action_frame,
-            text="正式建立會保留管線；建立前檢查完成後會自動復原。",
-            foreground="#666666",
+            text="正式建立前會在背景自動安全檢核；通過後才會要求確認保留模型。",
+            style="SC.Hint.TLabel",
             wraplength=340,
             justify="left",
-        ).grid(row=4, column=0, sticky="w", pady=(8, 0))
+        ).grid(row=3, column=0, sticky="w", pady=(8, 0))
 
         technical_row = ttk.Frame(right_panel)
-        technical_row.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        technical_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         self.fire_technical_visible = False
         self.fire_technical_button = ttk.Button(
             technical_row,
@@ -2212,7 +2335,9 @@ class FamilyClassifierApp(tk.Tk):
         self.fire_network_preview_window = None
         self.fire_analysis_result_window = None
         self.fire_diameter_segments_by_iid = {}
+        self.fire_reducers_by_iid = {}
         self.fire_sandbox_verified = False
+        self._fire_commit_requested = False
 
     def _populate_fire_diameter_analysis(self, analysis: dict) -> None:
         for tree in (self.fire_diameter_segment_tree, self.fire_reducer_tree):
@@ -2275,7 +2400,7 @@ class FamilyClassifierApp(tk.Tk):
             row_number = int(reducer.get("row_index") or 0) + 1
             before_segment = str(reducer.get("after_segment_id") or "前段")
             after_segment = str(reducer.get("before_segment_id") or "後段")
-            self.fire_reducer_tree.insert(
+            item_id = self.fire_reducer_tree.insert(
                 "",
                 "end",
                 values=(
@@ -2284,8 +2409,81 @@ class FamilyClassifierApp(tk.Tk):
                     f"{float(reducer.get('to_diameter_mm') or 0):g} mm",
                 ),
             )
+            self.fire_reducers_by_iid[item_id] = reducer
         if not reducers:
             self.fire_reducer_tree.insert("", "end", values=("本次沒有候選", "-", "-"))
+
+        plan = analysis.get("topology_plan") or {}
+        validation = analysis.get("validation") or plan.get("validation") or {}
+        validation_status = str(validation.get("status") or "尚未檢查")
+        cad_check = analysis.get("cad_path_check") or {}
+        cad_status = {
+            "matched": "吻合",
+            "mismatch": "不吻合",
+            "ambiguous": "待判斷",
+            "cad_no_paths": "無可用路徑",
+        }.get(str(cad_check.get("status") or ""), "未核對")
+        if segments:
+            self.fire_plan_status_var.set(
+                "計畫狀態："
+                f"{validation_status}｜"
+                f"CAD：{cad_status}｜管段 {len(segments)}｜變徑 {len(reducers)}"
+            )
+        else:
+            self.fire_plan_status_var.set(
+                "計畫狀態：尚未建立｜CAD：尚未核對｜下一步：分析並顯示預覽"
+            )
+
+    def _on_fire_sprinkler_selection_changed(self, _event=None) -> None:
+        tree = getattr(self, "fire_sprinkler_tree", None)
+        if tree is None:
+            return
+        selected = list(tree.selection())
+        if not selected:
+            self.fire_selection_detail_var.set("尚未選取撒水頭；可在表格點選一列查看詳細資料。")
+            return
+        ids = [str(item) for item in selected]
+        preview_ids = ", ".join(ids[:4])
+        if len(ids) > 4:
+            preview_ids += f" …（共 {len(ids)} 顆）"
+        self.fire_selection_detail_var.set(
+            f"已選取 {len(ids)} 顆撒水頭｜ElementId：{preview_ids}"
+        )
+
+    def _on_fire_diameter_selection_changed(self, _event=None) -> None:
+        tree = getattr(self, "fire_diameter_segment_tree", None)
+        if tree is None:
+            return
+        item_id = next(iter(tree.selection()), None)
+        segment = getattr(self, "fire_diameter_segments_by_iid", {}).get(item_id)
+        if not segment:
+            self.fire_result_selection_var.set("尚未選取管徑分段；雙擊列可定位 Revit 預覽。")
+            return
+        diameter = segment.get("diameter_mm")
+        diameter_label = "待確認" if diameter is None else f"{float(diameter):g} mm"
+        evidence = str(segment.get("evidence") or "待確認")
+        segment_id = str(segment.get("segment_id") or "-")
+        length = segment.get("length_m") or segment.get("length")
+        length_label = f"｜長度 {float(length):.2f} m" if length is not None else ""
+        self.fire_result_selection_var.set(
+            f"已選取管段 {segment_id}｜管徑 {diameter_label}{length_label}｜判定依據：{evidence}"
+        )
+
+    def _on_fire_reducer_selection_changed(self, _event=None) -> None:
+        tree = getattr(self, "fire_reducer_tree", None)
+        if tree is None:
+            return
+        item_id = next(iter(tree.selection()), None)
+        reducer = getattr(self, "fire_reducers_by_iid", {}).get(item_id)
+        if not reducer:
+            self.fire_result_selection_var.set("尚未選取變徑候選。")
+            return
+        self.fire_result_selection_var.set(
+            "已選取變徑｜"
+            f"{float(reducer.get('from_diameter_mm') or 0):g} mm → "
+            f"{float(reducer.get('to_diameter_mm') or 0):g} mm｜"
+            f"位置：第 {int(reducer.get('row_index') or 0) + 1} 排"
+        )
 
     def _open_fire_analysis_result(self) -> None:
         existing = getattr(self, "fire_analysis_result_window", None)
@@ -2295,8 +2493,8 @@ class FamilyClassifierApp(tk.Tk):
             return
         window = tk.Toplevel(self)
         window.title("分析與檢查結果")
-        window.geometry("620x620")
-        window.minsize(480, 420)
+        window.geometry("760x680")
+        window.minsize(560, 500)
         window.transient(self)
         window.columnconfigure(0, weight=1)
         window.rowconfigure(0, weight=1)
@@ -2304,20 +2502,113 @@ class FamilyClassifierApp(tk.Tk):
         content.grid(row=0, column=0, sticky="nsew")
         content.columnconfigure(0, weight=1)
         content.rowconfigure(0, weight=1)
-        ttk.Label(
-            content,
-            textvariable=self.fire_analysis_summary_var,
-            justify="left",
-            anchor="nw",
-            wraplength=560,
-        ).grid(row=0, column=0, sticky="nsew")
-        ttk.Button(content, text="關閉", command=window.destroy).grid(
-            row=1,
-            column=0,
+        notebook = ttk.Notebook(content)
+        notebook.grid(row=0, column=0, sticky="nsew")
+        analysis = (getattr(self, "fire_preview_group", None) or {}).get(
+            "diameter_analysis", {}
+        ) or {}
+        plan = analysis.get("topology_plan") or {}
+        validation = analysis.get("validation") or plan.get("validation") or {}
+        cad_check = analysis.get("cad_path_check") or {}
+
+        def readonly_text(parent, text: str) -> tk.Text:
+            widget = tk.Text(
+                parent,
+                wrap="word",
+                height=18,
+                padx=12,
+                pady=12,
+                font=("Microsoft JhengHei UI", 11),
+                relief="flat",
+                background="#fbfcfd",
+            )
+            widget.insert("1.0", text.strip() or "目前沒有資料。")
+            widget.configure(state="disabled")
+            widget.grid(row=0, column=0, sticky="nsew")
+            parent.rowconfigure(0, weight=1)
+            parent.columnconfigure(0, weight=1)
+            return widget
+
+        summary_tab = ttk.Frame(notebook, padding=8)
+        notebook.add(summary_tab, text="摘要")
+        summary_text = (
+            f"{self.fire_analysis_summary_var.get()}\n\n"
+            f"目前狀態：{self.fire_plan_status_var.get()}\n"
+            f"選取回饋：{self.fire_result_selection_var.get()}"
+        )
+        readonly_text(summary_tab, summary_text)
+
+        plan_tab = ttk.Frame(notebook, padding=8)
+        notebook.add(plan_tab, text="計畫資訊")
+        plan_text = "\n".join(
+            [
+                "這裡只顯示目前預覽與檢查結果；內部識別資訊已收在工作流程紀錄。",
+                f"來源：{plan.get('source_mode') or '-'}",
+                f"管段：{len(analysis.get('segments') or [])}｜主管段：{len(plan.get('main_segments') or [])}",
+                f"接頭：{len(analysis.get('junctions') or plan.get('junctions') or [])}｜異徑：{len(analysis.get('reducers') or plan.get('reducers') or [])}",
+                f"計畫檢查：{validation.get('status') or '尚未檢查'}",
+                f"CAD 核對：{cad_check.get('status') or '尚未核對'}｜覆蓋率：{float(cad_check.get('coverage_ratio') or 0):.0%}",
+                "",
+                "計畫驗證問題：",
+            ]
+            + [
+                f"- {item.get('message') or item}"
+                for item in (validation.get('issues') or [])[:30]
+            ]
+        )
+        readonly_text(plan_tab, plan_text)
+
+        issue_tab = ttk.Frame(notebook, padding=8)
+        notebook.add(issue_tab, text="候選與異常")
+        review_segments = [
+            item
+            for item in (analysis.get("segments") or [])
+            if item.get("review_required")
+        ]
+        review_junctions = [
+            item
+            for item in (analysis.get("junctions") or [])
+            if item.get("review_required")
+        ]
+        issue_lines = [
+            f"待確認管段：{len(review_segments)} 段",
+            f"待確認接頭：{len(review_junctions)} 個",
+            f"候選變徑：{len(analysis.get('reducers') or [])} 處",
+            "",
+            "管段：",
+        ]
+        issue_lines.extend(
+            f"- {item.get('segment_id') or '-'}｜{item.get('diameter_mm') or '待確認'} mm｜{item.get('evidence') or '待確認'}"
+            for item in review_segments[:30]
+        )
+        issue_lines.append("\n接頭：")
+        issue_lines.extend(
+            f"- {item.get('plan_entity_id') or '-'}｜{item.get('kind') or '待確認'}｜需要回看"
+            for item in review_junctions[:30]
+        )
+        readonly_text(issue_tab, "\n".join(issue_lines))
+
+        button_row = ttk.Frame(content)
+        button_row.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        button_row.columnconfigure(0, weight=1)
+        full_summary = "\n\n".join((summary_text, plan_text, "\n".join(issue_lines)))
+        ttk.Button(
+            button_row,
+            text="複製完整報告",
+            command=lambda: self._copy_fire_analysis_report(window, full_summary),
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(button_row, text="關閉", command=window.destroy).grid(
+            row=0,
+            column=1,
             sticky="e",
-            pady=(12, 0),
         )
         self.fire_analysis_result_window = window
+
+    def _copy_fire_analysis_report(self, window: tk.Toplevel, text: str) -> None:
+        window.clipboard_clear()
+        window.clipboard_append(text)
+        window.update()
+        self.fire_branch_status_var.set("已複製完整分析報告到剪貼簿。")
 
     def _set_initial_fire_workspace_sash(self) -> None:
         workspace = getattr(self, "fire_workspace", None)
@@ -2388,8 +2679,14 @@ class FamilyClassifierApp(tk.Tk):
             self.fire_technical_frame.pack_forget()
             self.fire_technical_button.configure(text="▶ 詳細資料")
 
-    def _reset_fire_sandbox_approval(self, summary: str | None = None) -> None:
+    def _reset_fire_sandbox_approval(
+        self,
+        summary: str | None = None,
+        *,
+        close_network_preview: bool = True,
+    ) -> None:
         self.fire_sandbox_verified = False
+        self._fire_commit_requested = False
         if hasattr(self, "fire_sandbox_button"):
             self.fire_sandbox_button.configure(state="disabled")
         if hasattr(self, "fire_commit_button"):
@@ -2397,9 +2694,10 @@ class FamilyClassifierApp(tk.Tk):
         if hasattr(self, "fire_network_button"):
             self.fire_network_button.configure(state="disabled")
         network_window = getattr(self, "fire_network_preview_window", None)
-        if network_window is not None and network_window.winfo_exists():
-            network_window._close()
-        self.fire_network_preview_window = None
+        if close_network_preview:
+            if network_window is not None and network_window.winfo_exists():
+                network_window._close()
+            self.fire_network_preview_window = None
         if summary and hasattr(self, "fire_analysis_summary_var"):
             self.fire_analysis_summary_var.set(summary)
 
@@ -2813,16 +3111,52 @@ class FamilyClassifierApp(tk.Tk):
         # Clear the result panel as well as the Revit DirectContext preview so
         # an old "ready" plan cannot be mistaken for the newly selected run.
         self.fire_analysis_summary_var.set("已讀取新選取，尚未重新分析。")
+        self.fire_selection_detail_var.set(
+            "已重新讀取選取；請在左側確認撒水頭數量，再開始分析。"
+        )
+        self.fire_result_selection_var.set(
+            "尚未選取分析列；分析完成後可選取管段查看判定依據。"
+        )
+        self.fire_plan_status_var.set(
+            "計畫狀態：尚未建立｜CAD：尚未核對｜下一步：分析並顯示預覽"
+        )
         self._populate_fire_diameter_analysis({})
         self.fire_network_button.configure(state="disabled")
-        self._reset_fire_sandbox_approval("請重新分析並執行建立前檢查")
+        self._reset_fire_sandbox_approval("請重新分析後再建立")
         self.fire_branch_status_var.set(f"已讀取｜主管 {len(self.fire_main_pipes)}｜撒水頭 {len(self.fire_sprinklers)}")
 
     def _create_fire_branch_pipes(self) -> None:
+        # The check is mandatory for model safety, but it is intentionally not
+        # a separate user task.  A fresh plan always runs the reversible
+        # sandbox first; only a verified plan reaches the keep-model prompt.
+        if not self.fire_sandbox_verified:
+            self._fire_commit_requested = True
+            self._start_fire_branch_pipes("sandbox")
+            return
         self._start_fire_branch_pipes("commit")
 
     def _sandbox_fire_branch_pipes(self) -> None:
         self._start_fire_branch_pipes("sandbox")
+
+    def _on_fire_branch_mode_changed(self, _event=None) -> None:
+        tabs = getattr(self, "fire_branch_mode_tabs", None)
+        if tabs is None:
+            return
+        mode = "uniform" if tabs.index("current") == 1 else "cad"
+        previous = str(self.fire_branch_mode_var.get() or "cad")
+        self.fire_branch_mode_var.set(mode)
+        if previous == mode:
+            return
+        self.fire_preview_group = None
+        self.fire_analysis_summary_var.set(
+            "管徑模式已切換，請重新分析。這個步驟不會修改模型。"
+        )
+        self._populate_fire_diameter_analysis({})
+        self.fire_network_button.configure(state="disabled")
+        self._reset_fire_sandbox_approval("管徑模式已切換，請重新分析並檢查")
+        self.fire_branch_status_var.set(
+            "已切換至無 CAD／統一管徑" if mode == "uniform" else "已切換至 CAD 智慧管徑"
+        )
 
     def _start_fire_branch_pipes(
         self,
@@ -2848,18 +3182,28 @@ class FamilyClassifierApp(tk.Tk):
         if not level:
             messagebox.showerror("無法建立", "請先選擇樓層")
             return
+        mode = str(self.fire_branch_mode_var.get() or "cad")
         try:
-            diameter_text = str(self.fire_diameter_var.get() or "0").replace("mm", "").strip()
-            diameter_mm = float(diameter_text)
             branch_offset_cm = float(self.fire_branch_offset_var.get() or 0)
+            if mode == "uniform":
+                diameter_text = str(self.fire_diameter_var.get() or "0").replace("mm", "").strip()
+                diameter_mm = float(diameter_text)
+            else:
+                plan_segments = list(
+                    (((self.fire_preview_group or {}).get("diameter_analysis") or {})
+                    .get("topology_plan") or {}).get("segments") or []
+                )
+                diameter_mm = float(
+                    (plan_segments[0] if plan_segments else {}).get("diameter_mm") or 25
+                )
         except ValueError:
-            messagebox.showerror("無法建立", "管徑與支管高度差必須是數字")
+            messagebox.showerror("無法建立", "支管高度與統一管徑必須是數字")
             return
-        if diameter_mm <= 0:
-            messagebox.showerror("無法建立", "管徑必須大於 0")
+        if mode == "uniform" and diameter_mm <= 0:
+            messagebox.showerror("無法建立", "統一支管管徑必須大於 0")
             return
         main_diameter_mm = float(self.fire_main_pipe.get("diameter_mm") or 0)
-        if main_diameter_mm > 0 and diameter_mm >= main_diameter_mm * 0.75:
+        if mode == "uniform" and main_diameter_mm > 0 and diameter_mm >= main_diameter_mm * 0.75:
             if not messagebox.askyesno(
                 "確認支管管徑",
                 f"目前支管管徑為 {diameter_mm:g} mm，接近主管管徑 {main_diameter_mm:g} mm。\n\n"
@@ -2868,6 +3212,13 @@ class FamilyClassifierApp(tk.Tk):
                 return
         if not self.fire_preview_group:
             messagebox.showerror("無法建立", "請先按「分析並顯示預覽」，確認路徑正確後再建立。")
+            return
+        plan_mode = str(
+            ((((self.fire_preview_group or {}).get("diameter_analysis") or {})
+            .get("topology_plan") or {}).get("source_mode") or "")
+        )
+        if plan_mode and plan_mode != mode:
+            messagebox.showerror("無法建立", "目前預覽屬於另一種管徑模式，請重新分析。")
             return
         cad_path_check = self.fire_preview_group.get("cad_path_check") or {}
         cad_status_labels = {
@@ -2895,7 +3246,7 @@ class FamilyClassifierApp(tk.Tk):
                 return
             self.fire_branch_status_var.set("正式建立消防支管中…")
         else:
-            self.fire_branch_status_var.set("建立前檢查中；完成後會自動復原…")
+            self.fire_branch_status_var.set("背景安全檢核中；完成後會自動復原…")
             self.fire_analysis_summary_var.set(
                 "正在實際試做管線與接頭，完成檢查後會自動復原模型。"
             )
@@ -2965,6 +3316,7 @@ class FamilyClassifierApp(tk.Tk):
                     level_id=level.get("element_id"),
                     branch_offset_cm=branch_offset_cm,
                     height_reference=height_reference,
+                    source_mode=str(self.fire_branch_mode_var.get() or "cad"),
                 )
         except Exception as exc:
             self.after(0, lambda exc=exc: self._finish_fire_branch_error("預覽失敗", exc))
@@ -3011,9 +3363,62 @@ class FamilyClassifierApp(tk.Tk):
             # different main segments.
             self.fire_main_pipe_ids = expanded_main_ids
         diameter_analysis = hot_analysis.get("diameter_analysis") or {}
-        if diameter_analysis.get("segments"):
-            diameter_analysis["topology_plan"] = build_fire_branch_topology_plan(
-                diameter_analysis
+        mode = str(self.fire_branch_mode_var.get() or "cad")
+        if mode == "uniform":
+            try:
+                selected_diameter = float(
+                    str(self.fire_diameter_var.get() or "0").replace("mm", "").strip()
+                )
+                route_segments = list(
+                    cad_path_check.get("diameter_probe_segments")
+                    or payload.get("diameter_probe_segments")
+                    or diameter_analysis.get("segments")
+                    or []
+                )
+                main_segments = list(
+                    cad_path_check.get("main_context_segments")
+                    or payload.get("main_context_segments")
+                    or diameter_analysis.get("main_context_segments")
+                    or []
+                )
+                diameter_analysis = build_uniform_route_analysis(
+                    route_segments=route_segments,
+                    main_segments=main_segments,
+                    diameter_mm=selected_diameter,
+                    main_diameter_mm=float(
+                        (self.fire_main_pipe or {}).get("diameter_mm") or 0
+                    ) or None,
+                )
+                diameter_analysis["topology_plan"] = create_uniform_topology_plan(
+                    diameter_analysis,
+                    diameter_mm=selected_diameter,
+                    preview_snapshot_id=str(
+                        payload.get("preview_snapshot_id") or payload.get("batch_id") or ""
+                    ),
+                    settings={
+                        "height_offset_cm": str(self.fire_branch_offset_var.get() or "0"),
+                        "height_reference": str(self.fire_height_reference_var.get() or "管中心"),
+                    },
+                )
+                hot_analysis = dict(hot_analysis)
+                hot_analysis["diameter_analysis"] = diameter_analysis
+                hot_analysis["message"] = "統一管徑路徑已建立，可查看路網；正式建立時會自動安全檢核。"
+            except (TypeError, ValueError) as exc:
+                diameter_analysis = {}
+                hot_analysis = dict(hot_analysis)
+                hot_analysis["diameter_analysis"] = {}
+                hot_analysis["message"] = str(exc)
+        elif diameter_analysis.get("segments"):
+            diameter_analysis["topology_plan"] = create_topology_plan(
+                diameter_analysis,
+                source_mode="cad",
+                preview_snapshot_id=str(
+                    payload.get("preview_snapshot_id") or payload.get("batch_id") or ""
+                ),
+                settings={
+                    "height_offset_cm": str(self.fire_branch_offset_var.get() or "0"),
+                    "height_reference": str(self.fire_height_reference_var.get() or "管中心"),
+                },
             )
         # Keep the CAD path contract beside the diameter plan.  The network
         # preview is opened from this object, so it must not lose the verifier
@@ -3158,6 +3563,7 @@ class FamilyClassifierApp(tk.Tk):
                 )
                 execution_plan = build_fire_branch_execution_plan(
                     diameter_analysis=diameter_analysis,
+                    topology_plan=diameter_analysis.get("topology_plan"),
                     main_pipe_ids=main_pipe_ids,
                     sprinkler_ids=[item.get("element_id") for item in sprinklers],
                     preview_snapshot_id=(preview_group or {}).get("preview_snapshot_id"),
@@ -3200,6 +3606,7 @@ class FamilyClassifierApp(tk.Tk):
                     pilot_source_row_index=None,
                     require_diameter_plan=True,
                     model_plan_hash=model_plan_hash,
+                    source_mode=str(topology_plan.get("source_mode") or "cad"),
                 )
         except Exception as exc:
             self.after(0, lambda exc=exc: self._finish_fire_branch_error("建立失敗", exc))
@@ -3210,6 +3617,15 @@ class FamilyClassifierApp(tk.Tk):
         created = list(payload.get("created", []))
         failed = list(payload.get("failed", []))
         skipped = list(payload.get("skipped", []) or [])
+        if (
+            payload.get("restoration_verified")
+            and payload.get("verification_status") != "verified"
+        ):
+            self._finish_fire_branch_error(
+                "建立未完成",
+                RuntimeError(format_fire_branch_verification_failure(payload)),
+            )
+            return
         if payload.get("partial_success"):
             actionable_failed = [
                 item
@@ -3218,6 +3634,7 @@ class FamilyClassifierApp(tk.Tk):
                 or item.get("reason") != "diagnostic_evidence_kept"
             ]
             self.fire_sandbox_verified = False
+            self._fire_commit_requested = False
             self.fire_sandbox_button.configure(state="normal")
             self.fire_commit_button.configure(state="disabled")
             self.fire_branch_status_var.set(
@@ -3266,16 +3683,20 @@ class FamilyClassifierApp(tk.Tk):
                 + str(payload.get("batch_id") or "-")
                 + "\n模型變更：已回復"
             )
+            if self._fire_commit_requested:
+                self._fire_commit_requested = False
+                self.fire_branch_status_var.set("背景安全檢核通過｜正在準備正式建立確認…")
+                self.after(0, self._create_fire_branch_pipes)
+                return
             messagebox.showinfo(
-                "建立前檢查完成",
+                "安全檢核完成",
                 "所有管線與接頭已通過連接檢查。\n\n"
-                "模型已自動復原，沒有留下暫存元件。\n"
-                "本次已檢查完整路網，可直接進行正式建立。",
+                "模型已自動復原，沒有留下暫存元件。",
             )
             return
         if payload.get("deleted_preview_group_id"):
             self.fire_preview_group = None
-        self._reset_fire_sandbox_approval("正式建立完成；如要再次建立，請重新分析並執行建立前檢查。")
+        self._reset_fire_sandbox_approval("正式建立完成；如要再次建立，請重新分析。")
         verification_status = payload.get("verification_status")
         verification_label = "連接驗證完成" if verification_status == "verified" else "連接未驗證"
         self.fire_branch_status_var.set(
@@ -3324,6 +3745,48 @@ class FamilyClassifierApp(tk.Tk):
             main_diameter_mm=main_diameter,
             batch_id=str(preview_group.get("batch_id") or "preview"),
             on_focus=self._focus_fire_network_segment,
+            on_plan_changed=self._accept_fire_topology_plan_revision,
+        )
+
+    def _accept_fire_topology_plan_revision(self, plan: dict) -> None:
+        preview_group = self.fire_preview_group or {}
+        analysis = preview_group.get("diameter_analysis") or {}
+        analysis["topology_plan"] = plan
+        analysis["segments"] = list(plan.get("segments") or [])
+        analysis["main_context_segments"] = list(plan.get("main_segments") or [])
+        analysis["junctions"] = list(plan.get("junctions") or [])
+        analysis["reducers"] = list(plan.get("reducers") or [])
+        analysis["resolved_segment_count"] = len(analysis["segments"])
+        analysis["unresolved_segment_count"] = sum(
+            1 for item in analysis["segments"] if item.get("review_required")
+        )
+        preview_group["diameter_analysis"] = analysis
+        self.fire_preview_group = preview_group
+        self._populate_fire_diameter_analysis(analysis)
+        validation = plan.get("validation") or {}
+        validation_status = str(validation.get("status") or "")
+        if validation_status == "invalid":
+            issue_messages = [
+                str(item.get("message") or "")
+                for item in (validation.get("issues") or [])
+                if str(item.get("message") or "").strip()
+            ]
+            reason = "拓樸修正仍有問題"
+            if issue_messages:
+                reason += "：" + "；".join(issue_messages[:3])
+            self._reset_fire_sandbox_approval(reason, close_network_preview=False)
+            self.fire_sandbox_button.configure(state="disabled")
+            self.fire_commit_button.configure(state="disabled")
+            self.fire_branch_status_var.set(reason)
+            return
+        self._reset_fire_sandbox_approval(
+            "拓樸計畫已修正；正式建立時會自動安全檢核",
+            close_network_preview=False,
+        )
+        self.fire_sandbox_button.configure(state="normal")
+        self.fire_commit_button.configure(state="normal")
+        self.fire_branch_status_var.set(
+            "拓樸計畫已更新；正式建立時會自動安全檢核。"
         )
 
     def _focus_fire_network_segment(self, segment: dict) -> None:
@@ -3343,7 +3806,8 @@ class FamilyClassifierApp(tk.Tk):
         ).start()
 
     def _finish_fire_branch_error(self, title: str, exc: Exception) -> None:
-        self._reset_fire_sandbox_approval("建立前檢查未通過，請修正後重試")
+        self._fire_commit_requested = False
+        self._reset_fire_sandbox_approval("安全檢核未通過，請修正後重試")
         if self.fire_preview_group:
             self.fire_sandbox_button.configure(state="normal")
             self.fire_commit_button.configure(state="normal")

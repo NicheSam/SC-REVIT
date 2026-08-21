@@ -41,6 +41,7 @@ def build_preview_summary(preview_payload: dict[str, Any]) -> dict[str, Any]:
         list(preview_payload.get("cad_coordinate_anchors") or []),
         str(preview_payload.get("cad_coordinate_anchor_error") or ""),
         dict(preview_payload.get("view_orientation") or {}),
+        route_assignments=list(preview_payload.get("cad_route_assignments") or []),
     )
     diameter_ready = not diameter_analysis or diameter_analysis.get("status") == "ready"
     status = (
@@ -76,6 +77,22 @@ def build_preview_summary(preview_payload: dict[str, Any]) -> dict[str, Any]:
     if skipped_count:
         lines.append(f"略過灑水頭：{skipped_count} 顆")
     if diameter_analysis:
+        route_graph = diameter_analysis.get("cad_route_graph") or {}
+        if route_graph:
+            graph_status = str(
+                diameter_analysis.get("cad_route_graph_status") or "ready"
+            )
+            lines.append(
+                "CAD 路網："
+                f"{graph_status}｜"
+                f"{int(route_graph.get('node_count') or 0)} 節點｜"
+                f"{int(route_graph.get('edge_count') or 0)} 管段｜"
+                f"{int(route_graph.get('component_count') or 0)} 個連通區"
+            )
+            lines.append(
+                "CAD 路網交點："
+                f"{sum(int(node.get('degree') or 0) >= 3 for node in route_graph.get('nodes') or [])} 處"
+            )
         default_diameter = diameter_analysis.get("default_diameter_mm")
         default_note_count = int(diameter_analysis.get("default_note_count") or 0)
         default_note_summary = (
@@ -141,6 +158,20 @@ def build_preview_summary(preview_payload: dict[str, Any]) -> dict[str, Any]:
                 "目前階段：水平管徑只供分析與預覽，待沙盒驗證落水拆段後才開放正式建立",
             ]
         )
+        route_decisions = list(
+            diameter_analysis.get("route_candidate_decisions") or []
+        )
+        if route_decisions:
+            review_count = sum(
+                str(item.get("status") or "") != "selected"
+                or not bool(item.get("selection_consistent"))
+                for item in route_decisions
+            )
+            lines.append(
+                "CAD 路徑候選："
+                f"{len(route_decisions) - review_count}/{len(route_decisions)} 顆已核對"
+                + (f"｜待核對 {review_count} 顆" if review_count else "")
+            )
 
     rule_version, rule_hash = _rule_identity()
     return {
@@ -179,6 +210,7 @@ def _build_diameter_analysis(
     revit_anchors: list[dict[str, Any]],
     anchor_error: str = "",
     view_orientation: dict[str, Any] | None = None,
+    route_assignments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     source_path = str(cad_check.get("selected_source_path") or "").strip()
     probe_segments = list(cad_check.get("diameter_probe_segments") or [])
@@ -264,8 +296,14 @@ def _build_diameter_analysis(
                 texts=default_note_texts,
                 segments=segments,
                 main_context_segments=main_context_segments,
+                route_candidates=list(cad_check.get("route_candidates") or []),
                 maximum_label_distance=500.0 / 304.8,
             )
+            _attach_revit_route_decisions(result, route_assignments)
+            route_graph = _build_cad_route_graph(cad_route_geometry_segments)
+            if route_graph:
+                result["cad_route_graph"] = route_graph
+                result["cad_route_graph_status"] = "review_only"
             result.update(
                 {
                     "status": "needs_attention",
@@ -286,8 +324,16 @@ def _build_diameter_analysis(
             texts=texts,
             segments=segments,
             main_context_segments=main_context_segments,
+            route_candidates=list(cad_check.get("route_candidates") or []),
             maximum_label_distance=500.0 / 304.8,
         )
+        _attach_revit_route_decisions(result, route_assignments)
+        route_graph = _build_cad_route_graph(cad_route_geometry_segments)
+        if route_graph:
+            result["cad_route_graph"] = route_graph
+            result["cad_route_graph_status"] = (
+                "ready" if cad_verified else "review_only"
+            )
         if not main_context_segments:
             result["status"] = "needs_attention"
             result["warning_codes"] = list(
@@ -341,8 +387,78 @@ def _build_diameter_analysis(
             "warning_codes": ["diameter_source_unavailable"],
             "message": str(exc),
         }
+        _attach_revit_route_decisions(result, route_assignments)
         _attach_view_orientation(result, view_orientation)
         return result
+
+
+def _attach_revit_route_decisions(
+    result: dict[str, Any],
+    assignments: list[dict[str, Any]] | None,
+) -> None:
+    """Keep Revit's complete CAD candidate audit in the shared plan input."""
+
+    if not assignments:
+        return
+    from .cad_route_graph import build_revit_route_candidate_decisions
+
+    decisions = build_revit_route_candidate_decisions(assignments)
+    if not decisions:
+        return
+    result["route_candidate_decisions"] = decisions
+    # Keep the old singular field only for a one-sprinkler analysis.  A
+    # multi-sprinkler run must use the plural field so one decision cannot be
+    # accidentally applied to every route.
+    if len(decisions) == 1:
+        result["route_candidate_decision"] = decisions[0]
+
+
+def _build_cad_route_graph(
+    segments: list[dict[str, Any]],
+    *,
+    coordinate_tolerance_mm: float = 150.0,
+) -> dict[str, Any]:
+    """Build the shared CAD graph used by both review output and later plans.
+
+    The Revit extractor returns model-coordinate points in internal feet. The
+    graph itself remains unit-agnostic, so the engineering tolerance is
+    converted once at this boundary and never inferred from displayed SVG
+    dimensions. Invalid fragments are ignored by the graph normalizer and are
+    therefore visible as missing evidence instead of synthetic edges.
+    """
+
+    if not segments:
+        return {}
+    from .cad_route_graph import build_cad_route_graph
+
+    graph_segments: list[dict[str, Any]] = []
+    for index, raw in enumerate(segments):
+        if not isinstance(raw, dict):
+            continue
+        start = raw.get("start")
+        end = raw.get("end")
+        if not isinstance(start, dict) or not isinstance(end, dict):
+            continue
+        graph_segments.append(
+            {
+                "segment_id": str(
+                    raw.get("segment_id") or raw.get("id") or f"cad-fragment-{index}"
+                ),
+                "start": start,
+                "end": end,
+                "layer": raw.get("layer"),
+                "color": raw.get("color_key") or raw.get("color"),
+                "geometry_kind": raw.get("geometry_kind"),
+            }
+        )
+    if not graph_segments:
+        return {}
+    tolerance = float(coordinate_tolerance_mm) / 304.8
+    return build_cad_route_graph(
+        graph_segments,
+        coordinate_tolerance=tolerance,
+        z_tolerance=tolerance,
+    )
 
 
 def _attach_view_orientation(

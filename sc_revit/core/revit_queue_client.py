@@ -12,6 +12,7 @@ class RevitQueueTimeoutError(RfaReaderError):
 
 
 _FIRE_BRANCH_REASON_LABELS = {
+    "opposite_side_endpoint_tee_creation_failed": "主管端點兩側三通建立失敗",
     "opposite_side_cross_creation_failed": "四通建立失敗",
     "opposite_side_cross_missing_branch": "四通缺少一側支管",
     "connector_verification_failed": "管路連通檢查未通過",
@@ -21,6 +22,13 @@ _FIRE_BRANCH_REASON_LABELS = {
 }
 
 _FIRE_BRANCH_DETAIL_LABELS = {
+    "revit rejected the fitting without an exception detail": (
+        "Revit 拒絕這個管件，但沒有回傳更底層的錯誤說明"
+    ),
+    "oppositesidessameelevation": "兩側支管位於同一高度的主管端點配置",
+    "fitting does not physically reference all three planned pipes": (
+        "管件沒有實際引用計畫中的三段管線"
+    ),
     "tie point is not valid on all four runs": (
         "交點位於主管端點，或未同時落在四條有效管段上"
     ),
@@ -61,6 +69,19 @@ def format_fire_branch_failure_item(item: dict[str, Any]) -> str:
         if source in detail.lower():
             lines.append(translated)
             break
+    topology = str(item.get("topology") or "")
+    if topology:
+        topology_label = {
+            "OppositeSidesSameElevation": "兩側同高端點",
+        }.get(topology, topology)
+        lines.append(f"拓樸情況：{topology_label}")
+    if reason == "opposite_side_endpoint_tee_creation_failed":
+        lines.append(
+            "判讀：這是主管端點的第一個管件建立失敗；後續灑水頭不可達屬於連鎖結果。"
+        )
+        lines.append(
+            "目前回傳沒有更底層的 Revit 連接器原因，需檢查端點位置、方向與管件族群配置。"
+        )
 
     unconnected_sprinklers = list(item.get("unconnected_sprinkler_ids") or [])
     unconnected_pipes = list(item.get("unconnected_pipe_ids") or [])
@@ -158,6 +179,41 @@ def format_fire_branch_failure_item(item: dict[str, Any]) -> str:
             + json.dumps(system_change_failures, ensure_ascii=False, separators=(",", ":"))
         )
     lines.append("｜".join(technical))
+    return "\n".join(lines)
+
+
+def format_fire_branch_verification_failure(payload: dict[str, Any]) -> str:
+    """Format a structured fire-branch verification failure for the GUI.
+
+    The Revit queue can complete successfully while the model verification
+    result is failed.  Keep the first fitting failure separate from the later
+    reachability consequences so the user can act on the correct item.
+    """
+
+    status = str(payload.get("verification_status") or "未提供")
+    details = [item for item in (payload.get("failed") or []) if isinstance(item, dict)]
+    lines = [
+        "消防支管建立未完成。",
+        f"驗證狀態：{status}",
+        f"已連接灑水頭：{payload.get('connected_sprinkler_count', 0)} 顆",
+        f"未連接灑水頭：{payload.get('unconnected_sprinkler_count', 0)} 顆",
+    ]
+    if payload.get("restoration_verified") or payload.get("rollback_status") == "verified":
+        lines.append("沙盒檢查已自動回復，這次測試沒有保留模型變更。")
+    elif payload.get("partial_success"):
+        lines.append("這次有部分模型變更，是否保留成功部分由使用者決定。")
+    else:
+        lines.append("模型是否保留變更，請以後續回復狀態為準。")
+    if details:
+        lines.append("")
+        lines.append("第一個失敗原因與後續影響：")
+        lines.extend(format_fire_branch_failure_item(item) for item in details[:12])
+        if len(details) > 12:
+            lines.append(f"另有 {len(details) - 12} 項，完整內容已保存於工作流程紀錄。")
+    else:
+        lines.append("Revit 沒有回傳可辨識的接頭診斷明細。")
+    lines.append("")
+    lines.append("完整診斷已保留於工作流程紀錄。")
     return "\n".join(lines)
 
 

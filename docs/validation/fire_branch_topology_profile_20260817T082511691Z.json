@@ -1,0 +1,2300 @@
+{
+  "schema_version": "fire_branch_topology_profile.v1",
+  "snapshot_id": "20260817T082511691Z",
+  "source_schema_version": "fire_branch_revit_snapshot.v1",
+  "scope": "main_graph_only",
+  "element_count": 419,
+  "pipe_count": 252,
+  "edge_count": 252,
+  "connection_count": 418,
+  "stopped_connection_count": 86,
+  "component_count": 1,
+  "component_sizes": [
+    419
+  ],
+  "kind_counts": {
+    "pipe": 252,
+    "pipe_fitting_or_accessory": 167
+  },
+  "pipe_axis_counts": {
+    "x": 50,
+    "y": 60,
+    "z": 142
+  },
+  "element_degree_counts": {
+    "1": 86,
+    "2": 266,
+    "3": 50,
+    "4": 17
+  },
+  "junction_element_count": 67,
+  "diameter_profiles": {
+    "DN100": {
+      "diameter_mm": 100.0,
+      "pipe_count": 22,
+      "same_diameter_component_count": 1,
+      "same_diameter_component_sizes": [
+        22
+      ],
+      "same_diameter_junction_count": 1,
+      "axis_counts": {
+        "x": 10,
+        "y": 12
+      },
+      "total_length_mm": 63215.417,
+      "route_candidate_count": 8,
+      "route_candidates": [
+        {
+          "pipe_ids": [
+            13563852,
+            13563869
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 8468.968,
+          "boundary_start": 13563852,
+          "boundary_end": 13563869
+        },
+        {
+          "pipe_ids": [
+            13563855,
+            13563866
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 6359.537,
+          "boundary_start": 13563855,
+          "boundary_end": 13563866
+        },
+        {
+          "pipe_ids": [
+            13563855,
+            13563869
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 2112.089,
+          "boundary_start": 13563855,
+          "boundary_end": 13563869
+        },
+        {
+          "pipe_ids": [
+            13563855,
+            13563876
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 4085.486,
+          "boundary_start": 13563855,
+          "boundary_end": 13563876
+        },
+        {
+          "pipe_ids": [
+            13563855,
+            13723183,
+            13723161,
+            13723139,
+            13723117,
+            13723095,
+            13723073,
+            13723051,
+            13723029,
+            13723007,
+            13722983,
+            13737973,
+            13737987,
+            13737999,
+            13738011,
+            13738023,
+            13738035,
+            13563864
+          ],
+          "segment_count": 18,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "y",
+            "y",
+            "y",
+            "y",
+            "y",
+            "y",
+            "y",
+            "y",
+            "y",
+            "y",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 45599.137,
+          "boundary_start": 13563855,
+          "boundary_end": 13563864
+        },
+        {
+          "pipe_ids": [
+            13563866,
+            13563869
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 7173.915,
+          "boundary_start": 13563866,
+          "boundary_end": 13563869
+        },
+        {
+          "pipe_ids": [
+            13563866,
+            13563876
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 9147.311,
+          "boundary_start": 13563866,
+          "boundary_end": 13563876
+        },
+        {
+          "pipe_ids": [
+            13563869,
+            13563876
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 4899.863,
+          "boundary_start": 13563869,
+          "boundary_end": 13563876
+        }
+      ]
+    },
+    "DN40": {
+      "diameter_mm": 40.0,
+      "pipe_count": 98,
+      "same_diameter_component_count": 16,
+      "same_diameter_component_sizes": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "same_diameter_junction_count": 20,
+      "axis_counts": {
+        "x": 40,
+        "y": 12,
+        "z": 46
+      },
+      "total_length_mm": 98520.514,
+      "route_candidate_count": 66,
+      "route_candidates": [
+        {
+          "pipe_ids": [
+            13722922,
+            13722920,
+            13722990
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 2794.127,
+          "boundary_start": 13722922,
+          "boundary_end": 13722990
+        },
+        {
+          "pipe_ids": [
+            13722929,
+            13722927,
+            13723013
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 2794.127,
+          "boundary_start": 13722929,
+          "boundary_end": 13723013
+        },
+        {
+          "pipe_ids": [
+            13722935,
+            13722933,
+            13723035
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 2794.127,
+          "boundary_start": 13722935,
+          "boundary_end": 13723035
+        },
+        {
+          "pipe_ids": [
+            13722941,
+            13722939,
+            13723057
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 2794.127,
+          "boundary_start": 13722941,
+          "boundary_end": 13723057
+        },
+        {
+          "pipe_ids": [
+            13722947,
+            13722945,
+            13723079
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 2794.127,
+          "boundary_start": 13722947,
+          "boundary_end": 13723079
+        },
+        {
+          "pipe_ids": [
+            13722953,
+            13722951,
+            13723101
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 2794.127,
+          "boundary_start": 13722953,
+          "boundary_end": 13723101
+        },
+        {
+          "pipe_ids": [
+            13722959,
+            13722957,
+            13723123
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 2794.127,
+          "boundary_start": 13722959,
+          "boundary_end": 13723123
+        },
+        {
+          "pipe_ids": [
+            13722965,
+            13722963,
+            13723145
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 2794.127,
+          "boundary_start": 13722965,
+          "boundary_end": 13723145
+        },
+        {
+          "pipe_ids": [
+            13722971,
+            13722969,
+            13723167
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 2794.127,
+          "boundary_start": 13722971,
+          "boundary_end": 13723167
+        },
+        {
+          "pipe_ids": [
+            13722977,
+            13722975,
+            13723189
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "x",
+            "x"
+          ],
+          "shape_class": "L",
+          "length_mm": 2794.127,
+          "boundary_start": 13722977,
+          "boundary_end": 13723189
+        },
+        {
+          "pipe_ids": [
+            13722981,
+            13722995,
+            13722997
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 4843.113,
+          "boundary_start": 13722981,
+          "boundary_end": 13722997
+        },
+        {
+          "pipe_ids": [
+            13722981,
+            13722997
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 4273.913,
+          "boundary_start": 13722981,
+          "boundary_end": 13722997
+        },
+        {
+          "pipe_ids": [
+            13722981,
+            13723001
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 2650.187,
+          "boundary_start": 13722981,
+          "boundary_end": 13723001
+        },
+        {
+          "pipe_ids": [
+            13722990,
+            13722988,
+            13722997
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 3980.131,
+          "boundary_start": 13722990,
+          "boundary_end": 13722997
+        },
+        {
+          "pipe_ids": [
+            13722990,
+            13722997
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 3410.931,
+          "boundary_start": 13722990,
+          "boundary_end": 13722997
+        },
+        {
+          "pipe_ids": [
+            13723005,
+            13723017,
+            13723019
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 4843.113,
+          "boundary_start": 13723005,
+          "boundary_end": 13723019
+        },
+        {
+          "pipe_ids": [
+            13723005,
+            13723019
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 4273.913,
+          "boundary_start": 13723005,
+          "boundary_end": 13723019
+        },
+        {
+          "pipe_ids": [
+            13723005,
+            13723023
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 2650.187,
+          "boundary_start": 13723005,
+          "boundary_end": 13723023
+        },
+        {
+          "pipe_ids": [
+            13723013,
+            13723011,
+            13723019
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 3980.131,
+          "boundary_start": 13723013,
+          "boundary_end": 13723019
+        },
+        {
+          "pipe_ids": [
+            13723013,
+            13723019
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 3410.931,
+          "boundary_start": 13723013,
+          "boundary_end": 13723019
+        },
+        {
+          "pipe_ids": [
+            13723027,
+            13723039,
+            13723041
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 4843.113,
+          "boundary_start": 13723027,
+          "boundary_end": 13723041
+        },
+        {
+          "pipe_ids": [
+            13723027,
+            13723041
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 4273.913,
+          "boundary_start": 13723027,
+          "boundary_end": 13723041
+        },
+        {
+          "pipe_ids": [
+            13723027,
+            13723045
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 2650.187,
+          "boundary_start": 13723027,
+          "boundary_end": 13723045
+        },
+        {
+          "pipe_ids": [
+            13723035,
+            13723033,
+            13723041
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 3980.131,
+          "boundary_start": 13723035,
+          "boundary_end": 13723041
+        },
+        {
+          "pipe_ids": [
+            13723035,
+            13723041
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 3410.931,
+          "boundary_start": 13723035,
+          "boundary_end": 13723041
+        },
+        {
+          "pipe_ids": [
+            13723049,
+            13723061,
+            13723063
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 4843.113,
+          "boundary_start": 13723049,
+          "boundary_end": 13723063
+        },
+        {
+          "pipe_ids": [
+            13723049,
+            13723063
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 4273.913,
+          "boundary_start": 13723049,
+          "boundary_end": 13723063
+        },
+        {
+          "pipe_ids": [
+            13723049,
+            13723067
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 2650.187,
+          "boundary_start": 13723049,
+          "boundary_end": 13723067
+        },
+        {
+          "pipe_ids": [
+            13723057,
+            13723055,
+            13723063
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 3980.131,
+          "boundary_start": 13723057,
+          "boundary_end": 13723063
+        },
+        {
+          "pipe_ids": [
+            13723057,
+            13723063
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 3410.931,
+          "boundary_start": 13723057,
+          "boundary_end": 13723063
+        },
+        {
+          "pipe_ids": [
+            13723071,
+            13723083,
+            13723085
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 4843.113,
+          "boundary_start": 13723071,
+          "boundary_end": 13723085
+        },
+        {
+          "pipe_ids": [
+            13723071,
+            13723085
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 4273.913,
+          "boundary_start": 13723071,
+          "boundary_end": 13723085
+        },
+        {
+          "pipe_ids": [
+            13723071,
+            13723089
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 2650.187,
+          "boundary_start": 13723071,
+          "boundary_end": 13723089
+        },
+        {
+          "pipe_ids": [
+            13723079,
+            13723077,
+            13723085
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 3980.131,
+          "boundary_start": 13723079,
+          "boundary_end": 13723085
+        },
+        {
+          "pipe_ids": [
+            13723079,
+            13723085
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 3410.931,
+          "boundary_start": 13723079,
+          "boundary_end": 13723085
+        },
+        {
+          "pipe_ids": [
+            13723093,
+            13723105,
+            13723107
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 4843.113,
+          "boundary_start": 13723093,
+          "boundary_end": 13723107
+        },
+        {
+          "pipe_ids": [
+            13723093,
+            13723107
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 4273.913,
+          "boundary_start": 13723093,
+          "boundary_end": 13723107
+        },
+        {
+          "pipe_ids": [
+            13723093,
+            13723111
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 2650.187,
+          "boundary_start": 13723093,
+          "boundary_end": 13723111
+        },
+        {
+          "pipe_ids": [
+            13723101,
+            13723099,
+            13723107
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 3980.131,
+          "boundary_start": 13723101,
+          "boundary_end": 13723107
+        },
+        {
+          "pipe_ids": [
+            13723101,
+            13723107
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 3410.931,
+          "boundary_start": 13723101,
+          "boundary_end": 13723107
+        },
+        {
+          "pipe_ids": [
+            13723115,
+            13723127,
+            13723129
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 4843.113,
+          "boundary_start": 13723115,
+          "boundary_end": 13723129
+        },
+        {
+          "pipe_ids": [
+            13723115,
+            13723129
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 4273.913,
+          "boundary_start": 13723115,
+          "boundary_end": 13723129
+        },
+        {
+          "pipe_ids": [
+            13723115,
+            13723133
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 2650.187,
+          "boundary_start": 13723115,
+          "boundary_end": 13723133
+        },
+        {
+          "pipe_ids": [
+            13723123,
+            13723121,
+            13723129
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 3980.131,
+          "boundary_start": 13723123,
+          "boundary_end": 13723129
+        },
+        {
+          "pipe_ids": [
+            13723123,
+            13723129
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 3410.931,
+          "boundary_start": 13723123,
+          "boundary_end": 13723129
+        },
+        {
+          "pipe_ids": [
+            13723137,
+            13723149,
+            13723151
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 4843.113,
+          "boundary_start": 13723137,
+          "boundary_end": 13723151
+        },
+        {
+          "pipe_ids": [
+            13723137,
+            13723151
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 4273.913,
+          "boundary_start": 13723137,
+          "boundary_end": 13723151
+        },
+        {
+          "pipe_ids": [
+            13723137,
+            13723155
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 2650.187,
+          "boundary_start": 13723137,
+          "boundary_end": 13723155
+        },
+        {
+          "pipe_ids": [
+            13723145,
+            13723143,
+            13723151
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 3994.116,
+          "boundary_start": 13723145,
+          "boundary_end": 13723151
+        },
+        {
+          "pipe_ids": [
+            13723145,
+            13723151
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 3424.916,
+          "boundary_start": 13723145,
+          "boundary_end": 13723151
+        },
+        {
+          "pipe_ids": [
+            13723159,
+            13723171,
+            13723173
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 4843.113,
+          "boundary_start": 13723159,
+          "boundary_end": 13723173
+        },
+        {
+          "pipe_ids": [
+            13723159,
+            13723173
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 4273.913,
+          "boundary_start": 13723159,
+          "boundary_end": 13723173
+        },
+        {
+          "pipe_ids": [
+            13723159,
+            13723177
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 2650.187,
+          "boundary_start": 13723159,
+          "boundary_end": 13723177
+        },
+        {
+          "pipe_ids": [
+            13723167,
+            13723165,
+            13723173
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 3994.11,
+          "boundary_start": 13723167,
+          "boundary_end": 13723173
+        },
+        {
+          "pipe_ids": [
+            13723167,
+            13723173
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 3424.91,
+          "boundary_start": 13723167,
+          "boundary_end": 13723173
+        },
+        {
+          "pipe_ids": [
+            13723181,
+            13723193,
+            13723195
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 4843.113,
+          "boundary_start": 13723181,
+          "boundary_end": 13723195
+        },
+        {
+          "pipe_ids": [
+            13723181,
+            13723195
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 4273.913,
+          "boundary_start": 13723181,
+          "boundary_end": 13723195
+        },
+        {
+          "pipe_ids": [
+            13723181,
+            13723199
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "x",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 2650.187,
+          "boundary_start": 13723181,
+          "boundary_end": 13723199
+        },
+        {
+          "pipe_ids": [
+            13723189,
+            13723187,
+            13723195
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "x",
+            "z",
+            "x"
+          ],
+          "shape_class": "U",
+          "length_mm": 3994.11,
+          "boundary_start": 13723189,
+          "boundary_end": 13723195
+        },
+        {
+          "pipe_ids": [
+            13723189,
+            13723195
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "x",
+            "x"
+          ],
+          "shape_class": "linear",
+          "length_mm": 3424.91,
+          "boundary_start": 13723189,
+          "boundary_end": 13723195
+        },
+        {
+          "pipe_ids": [
+            13737409,
+            13737420,
+            13737982
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 1808.471,
+          "boundary_start": 13737409,
+          "boundary_end": 13737982
+        },
+        {
+          "pipe_ids": [
+            13737470,
+            13737480,
+            13737995
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 1808.471,
+          "boundary_start": 13737470,
+          "boundary_end": 13737995
+        },
+        {
+          "pipe_ids": [
+            13737529,
+            13737539,
+            13738007
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 1808.471,
+          "boundary_start": 13737529,
+          "boundary_end": 13738007
+        },
+        {
+          "pipe_ids": [
+            13737588,
+            13737598,
+            13738019
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 1808.471,
+          "boundary_start": 13737588,
+          "boundary_end": 13738019
+        },
+        {
+          "pipe_ids": [
+            13737647,
+            13737657,
+            13738031
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 1808.471,
+          "boundary_start": 13737647,
+          "boundary_end": 13738031
+        },
+        {
+          "pipe_ids": [
+            13737706,
+            13737716,
+            13738043
+          ],
+          "segment_count": 3,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 1808.471,
+          "boundary_start": 13737706,
+          "boundary_end": 13738043
+        }
+      ]
+    },
+    "DN32": {
+      "diameter_mm": 32.0,
+      "pipe_count": 24,
+      "same_diameter_component_count": 12,
+      "same_diameter_component_sizes": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "same_diameter_junction_count": 0,
+      "axis_counts": {
+        "y": 12,
+        "z": 12
+      },
+      "total_length_mm": 17794.137,
+      "route_candidate_count": 12,
+      "route_candidates": [
+        {
+          "pipe_ids": [
+            13737390,
+            13737401
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 2039.004,
+          "boundary_start": 13737390,
+          "boundary_end": 13737401
+        },
+        {
+          "pipe_ids": [
+            13737453,
+            13737463
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 2039.004,
+          "boundary_start": 13737453,
+          "boundary_end": 13737463
+        },
+        {
+          "pipe_ids": [
+            13737512,
+            13737522
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 2039.004,
+          "boundary_start": 13737512,
+          "boundary_end": 13737522
+        },
+        {
+          "pipe_ids": [
+            13737571,
+            13737581
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 2039.004,
+          "boundary_start": 13737571,
+          "boundary_end": 13737581
+        },
+        {
+          "pipe_ids": [
+            13737630,
+            13737640
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 2039.004,
+          "boundary_start": 13737630,
+          "boundary_end": 13737640
+        },
+        {
+          "pipe_ids": [
+            13737689,
+            13737699
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 2039.004,
+          "boundary_start": 13737689,
+          "boundary_end": 13737699
+        },
+        {
+          "pipe_ids": [
+            13737726,
+            13737736
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 926.685,
+          "boundary_start": 13737726,
+          "boundary_end": 13737736
+        },
+        {
+          "pipe_ids": [
+            13737769,
+            13737779
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 926.685,
+          "boundary_start": 13737769,
+          "boundary_end": 13737779
+        },
+        {
+          "pipe_ids": [
+            13737811,
+            13737821
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 926.685,
+          "boundary_start": 13737811,
+          "boundary_end": 13737821
+        },
+        {
+          "pipe_ids": [
+            13737853,
+            13737863
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 926.685,
+          "boundary_start": 13737853,
+          "boundary_end": 13737863
+        },
+        {
+          "pipe_ids": [
+            13737895,
+            13737905
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 926.685,
+          "boundary_start": 13737895,
+          "boundary_end": 13737905
+        },
+        {
+          "pipe_ids": [
+            13737937,
+            13737947
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "z",
+            "y"
+          ],
+          "shape_class": "L",
+          "length_mm": 926.685,
+          "boundary_start": 13737937,
+          "boundary_end": 13737947
+        }
+      ]
+    },
+    "DN25": {
+      "diameter_mm": 25.0,
+      "pipe_count": 66,
+      "same_diameter_component_count": 30,
+      "same_diameter_component_sizes": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "same_diameter_junction_count": 12,
+      "axis_counts": {
+        "y": 24,
+        "z": 42
+      },
+      "total_length_mm": 88475.282,
+      "route_candidate_count": 36,
+      "route_candidates": [
+        {
+          "pipe_ids": [
+            13737359,
+            13737362
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3476.572,
+          "boundary_start": 13737359,
+          "boundary_end": 13737362
+        },
+        {
+          "pipe_ids": [
+            13737359,
+            13737374,
+            13737382
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6092.407,
+          "boundary_start": 13737359,
+          "boundary_end": 13737382
+        },
+        {
+          "pipe_ids": [
+            13737359,
+            13737382
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5600.107,
+          "boundary_start": 13737359,
+          "boundary_end": 13737382
+        },
+        {
+          "pipe_ids": [
+            13737425,
+            13737428
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3476.572,
+          "boundary_start": 13737425,
+          "boundary_end": 13737428
+        },
+        {
+          "pipe_ids": [
+            13737425,
+            13737438,
+            13737446
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6092.407,
+          "boundary_start": 13737425,
+          "boundary_end": 13737446
+        },
+        {
+          "pipe_ids": [
+            13737425,
+            13737446
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5600.107,
+          "boundary_start": 13737425,
+          "boundary_end": 13737446
+        },
+        {
+          "pipe_ids": [
+            13737484,
+            13737487
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3476.572,
+          "boundary_start": 13737484,
+          "boundary_end": 13737487
+        },
+        {
+          "pipe_ids": [
+            13737484,
+            13737497,
+            13737505
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6092.407,
+          "boundary_start": 13737484,
+          "boundary_end": 13737505
+        },
+        {
+          "pipe_ids": [
+            13737484,
+            13737505
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5600.107,
+          "boundary_start": 13737484,
+          "boundary_end": 13737505
+        },
+        {
+          "pipe_ids": [
+            13737543,
+            13737546
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3476.572,
+          "boundary_start": 13737543,
+          "boundary_end": 13737546
+        },
+        {
+          "pipe_ids": [
+            13737543,
+            13737556,
+            13737564
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6092.407,
+          "boundary_start": 13737543,
+          "boundary_end": 13737564
+        },
+        {
+          "pipe_ids": [
+            13737543,
+            13737564
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5600.107,
+          "boundary_start": 13737543,
+          "boundary_end": 13737564
+        },
+        {
+          "pipe_ids": [
+            13737602,
+            13737605
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3476.572,
+          "boundary_start": 13737602,
+          "boundary_end": 13737605
+        },
+        {
+          "pipe_ids": [
+            13737602,
+            13737615,
+            13737623
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6092.407,
+          "boundary_start": 13737602,
+          "boundary_end": 13737623
+        },
+        {
+          "pipe_ids": [
+            13737602,
+            13737623
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5600.107,
+          "boundary_start": 13737602,
+          "boundary_end": 13737623
+        },
+        {
+          "pipe_ids": [
+            13737661,
+            13737664
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3476.572,
+          "boundary_start": 13737661,
+          "boundary_end": 13737664
+        },
+        {
+          "pipe_ids": [
+            13737661,
+            13737674,
+            13737682
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6092.407,
+          "boundary_start": 13737661,
+          "boundary_end": 13737682
+        },
+        {
+          "pipe_ids": [
+            13737661,
+            13737682
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5600.107,
+          "boundary_start": 13737661,
+          "boundary_end": 13737682
+        },
+        {
+          "pipe_ids": [
+            13737720,
+            13737740,
+            13737748
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6434.216,
+          "boundary_start": 13737720,
+          "boundary_end": 13737748
+        },
+        {
+          "pipe_ids": [
+            13737720,
+            13737748
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5941.916,
+          "boundary_start": 13737720,
+          "boundary_end": 13737748
+        },
+        {
+          "pipe_ids": [
+            13737720,
+            13737752
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3466.468,
+          "boundary_start": 13737720,
+          "boundary_end": 13737752
+        },
+        {
+          "pipe_ids": [
+            13737763,
+            13737783,
+            13737791
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6434.216,
+          "boundary_start": 13737763,
+          "boundary_end": 13737791
+        },
+        {
+          "pipe_ids": [
+            13737763,
+            13737791
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5941.916,
+          "boundary_start": 13737763,
+          "boundary_end": 13737791
+        },
+        {
+          "pipe_ids": [
+            13737763,
+            13737795
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3466.468,
+          "boundary_start": 13737763,
+          "boundary_end": 13737795
+        },
+        {
+          "pipe_ids": [
+            13737805,
+            13737825,
+            13737833
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6434.216,
+          "boundary_start": 13737805,
+          "boundary_end": 13737833
+        },
+        {
+          "pipe_ids": [
+            13737805,
+            13737833
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5941.916,
+          "boundary_start": 13737805,
+          "boundary_end": 13737833
+        },
+        {
+          "pipe_ids": [
+            13737805,
+            13737837
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3466.468,
+          "boundary_start": 13737805,
+          "boundary_end": 13737837
+        },
+        {
+          "pipe_ids": [
+            13737847,
+            13737867,
+            13737875
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6434.216,
+          "boundary_start": 13737847,
+          "boundary_end": 13737875
+        },
+        {
+          "pipe_ids": [
+            13737847,
+            13737875
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5941.916,
+          "boundary_start": 13737847,
+          "boundary_end": 13737875
+        },
+        {
+          "pipe_ids": [
+            13737847,
+            13737879
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3466.468,
+          "boundary_start": 13737847,
+          "boundary_end": 13737879
+        },
+        {
+          "pipe_ids": [
+            13737889,
+            13737909,
+            13737917
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6434.216,
+          "boundary_start": 13737889,
+          "boundary_end": 13737917
+        },
+        {
+          "pipe_ids": [
+            13737889,
+            13737917
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5941.916,
+          "boundary_start": 13737889,
+          "boundary_end": 13737917
+        },
+        {
+          "pipe_ids": [
+            13737889,
+            13737921
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3466.468,
+          "boundary_start": 13737889,
+          "boundary_end": 13737921
+        },
+        {
+          "pipe_ids": [
+            13737931,
+            13737951,
+            13737959
+          ],
+          "segment_count": 3,
+          "turn_count": 2,
+          "axes": [
+            "y",
+            "z",
+            "y"
+          ],
+          "shape_class": "U",
+          "length_mm": 6434.216,
+          "boundary_start": 13737931,
+          "boundary_end": 13737959
+        },
+        {
+          "pipe_ids": [
+            13737931,
+            13737959
+          ],
+          "segment_count": 2,
+          "turn_count": 0,
+          "axes": [
+            "y",
+            "y"
+          ],
+          "shape_class": "linear",
+          "length_mm": 5941.916,
+          "boundary_start": 13737931,
+          "boundary_end": 13737959
+        },
+        {
+          "pipe_ids": [
+            13737931,
+            13737963
+          ],
+          "segment_count": 2,
+          "turn_count": 1,
+          "axes": [
+            "y",
+            "z"
+          ],
+          "shape_class": "L",
+          "length_mm": 3466.468,
+          "boundary_start": 13737931,
+          "boundary_end": 13737963
+        }
+      ]
+    },
+    "DN20": {
+      "diameter_mm": 20.0,
+      "pipe_count": 42,
+      "same_diameter_component_count": 42,
+      "same_diameter_component_sizes": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "same_diameter_junction_count": 0,
+      "axis_counts": {
+        "z": 42
+      },
+      "total_length_mm": 2389.8,
+      "route_candidate_count": 0,
+      "route_candidates": []
+    }
+  },
+  "shape_class": "compound_network",
+  "shape_reason": "元素圖含三通或四通節點，不能直接標成單一 L/U 路徑",
+  "pipe_length_summary": {
+    "min_mm": 29.05,
+    "max_mm": 8054.39,
+    "average_mm": 1072.997
+  }
+}

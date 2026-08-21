@@ -39,6 +39,14 @@ _NON_ROUTE_GEOMETRY_KINDS = {
 }
 
 
+def _float_or_none(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _interval_union_length(intervals: list[tuple[float, float]]) -> float:
     total = 0.0
     current_start: float | None = None
@@ -439,6 +447,7 @@ def analyze_diameter_evidence(
     segments: list[dict[str, Any]],
     maximum_label_distance: float,
     main_context_segments: list[dict[str, Any]] | None = None,
+    route_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Assign drawing diameter evidence to ordered branch segments.
 
@@ -647,8 +656,13 @@ def analyze_diameter_evidence(
             reducers.append(
                 {
                     "row_index": row_index,
-                    "after_segment_id": previous.get("segment_id"),
-                    "before_segment_id": current.get("segment_id"),
+                    # The segment before the fitting carries the larger
+                    # diameter; the segment after it carries the reduced
+                    # diameter.  The old field assignment was reversed,
+                    # which made the topology contract reject valid CAD
+                    # reductions even though the evidence was correct.
+                    "before_segment_id": previous.get("segment_id"),
+                    "after_segment_id": current.get("segment_id"),
                     "point": previous.get("end"),
                     "from_diameter_mm": float(before),
                     "to_diameter_mm": float(after),
@@ -681,7 +695,20 @@ def analyze_diameter_evidence(
         main_segment, point = nearest
         main_segment_id = str(main_segment.get("segment_id") or "")
         main_diameters = main_diameters_by_segment.get(main_segment_id, set())
-        main_diameter = next(iter(main_diameters)) if len(main_diameters) == 1 else None
+        if len(main_diameters) == 1:
+            main_diameter = next(iter(main_diameters))
+            main_diameter_evidence = "cad_text"
+        else:
+            # The selected Revit main is already an authoritative model
+            # element.  CAD text is preferred when present, but requiring a
+            # duplicated label on every main segment incorrectly turns a
+            # valid selected main into an unresolved tee.  Use only the
+            # segment's actual diameter; never infer a fixed/default size.
+            context_diameter = _float_or_none(main_segment.get("diameter_mm"))
+            main_diameter = context_diameter
+            main_diameter_evidence = (
+                "revit_main_context" if context_diameter is not None else "unresolved"
+            )
         branch_diameter = first.get("diameter_mm")
         review_required = main_diameter is None or branch_diameter is None
         if review_required:
@@ -703,7 +730,7 @@ def analyze_diameter_evidence(
                     float(branch_diameter) if branch_diameter is not None else None
                 ),
                 "review_required": review_required,
-                "evidence": "cad_text" if main_diameter is not None else "unresolved",
+                "evidence": main_diameter_evidence,
             }
         )
 
@@ -727,7 +754,7 @@ def analyze_diameter_evidence(
         warnings.append("cad_segment_geometry_review_required")
     warning_codes = list(dict.fromkeys(warnings))
     evidence_counts = Counter(str(item.get("evidence") or "unresolved") for item in results)
-    return {
+    result = {
         "status": "ready" if not warning_codes else "needs_attention",
         "default_diameter_mm": default_diameter,
         "default_note_count": len(default_notes),
@@ -771,6 +798,13 @@ def analyze_diameter_evidence(
         ),
         "warning_codes": warning_codes,
     }
+    if route_candidates is not None:
+        from .cad_route_graph import compare_cad_route_candidates
+
+        result["route_candidate_decision"] = compare_cad_route_candidates(
+            route_candidates
+        )
+    return result
 
 
 def _nearest_main_connection(

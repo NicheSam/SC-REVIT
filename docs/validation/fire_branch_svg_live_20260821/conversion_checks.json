@@ -1,0 +1,9 @@
+{
+  "renderer_svg": "E:\\Desktop\\Codex\\SC REVIT\\docs\\validation\\fire_branch_svg_live_20260821\\fire_branch_live_topology_renderer_fixture.svg",
+  "component_sheet_svg": "E:\\Desktop\\Codex\\SC REVIT\\docs\\validation\\fire_branch_svg_live_20260821\\fire_branch_live_component_sheet.svg",
+  "payload": "E:\\Desktop\\Codex\\SC REVIT\\docs\\validation\\fire_branch_svg_live_20260821\\fire_branch_live_component_readback.json",
+  "renderer_svg_bytes": 11123,
+  "component_sheet_svg_bytes": 7702,
+  "renderer_plan_ids": 11,
+  "component_plan_ids": 5
+}

@@ -8,8 +8,10 @@ fragment evidence.
 
 Coordinates are unit-agnostic. Callers must pass tolerances in the same model
 coordinate unit as the input points; no engineering tolerance is hidden here.
-The transform contract is supplied by the Revit side (the same
-ImportInstance.GetTotalTransform chain used by point placement).
+The Revit side must supply points after the ImportInstance geometry has been
+converted to model coordinates exactly once. A root GeometryInstance already
+contains its placement transform, so applying GetTotalTransform again would
+shift the graph and invalidate otherwise matching CAD evidence.
 """
 
 from __future__ import annotations
@@ -20,6 +22,252 @@ from typing import Any, Mapping, Sequence
 
 
 Point = tuple[float, float, float]
+
+
+def compare_cad_route_candidates(
+    candidates: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Select one CAD route without hiding the alternatives.
+
+    Route selection is intentionally lexicographic: reaching the requested
+    sprinkler and staying on one continuous CAD path outrank a shorter or
+    visually convenient route.  The complete candidate table is returned so
+    the SVG/review UI can explain why a candidate was selected or rejected.
+    """
+
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(candidates or []):
+        if not isinstance(raw, Mapping):
+            continue
+        candidate_id = str(
+            raw.get("candidate_id") or raw.get("id") or f"candidate-{index}"
+        ).strip()
+        if not candidate_id:
+            candidate_id = f"candidate-{index}"
+        if candidate_id in seen:
+            candidate_id = f"{candidate_id}:{index}"
+        seen.add(candidate_id)
+        metrics = {
+            "sprinkler_reached": bool(
+                raw.get("sprinkler_reached")
+                or raw.get("complete_to_sprinkler")
+                or raw.get("sprinkler_end_matched")
+            ),
+            "continuous_coverage_ratio": _candidate_ratio(
+                raw, "continuous_coverage_ratio"
+            ),
+            "coverage_ratio": _candidate_ratio(raw, "coverage_ratio"),
+            "diameter_evidence_ratio": _candidate_ratio(
+                raw, "diameter_evidence_ratio"
+            ),
+            "topology_consistency_ratio": _candidate_ratio(
+                raw, "topology_consistency_ratio"
+            ),
+            "non_route_intersections": _candidate_number(
+                raw, "non_route_intersections", "non_route_penalty"
+            ),
+            "turn_count": _candidate_number(raw, "turn_count"),
+            "length": _candidate_number(raw, "length", "length_mm"),
+            "anchor_distance": _candidate_number(raw, "anchor_distance"),
+        }
+        normalized.append(
+            {
+                "candidate_id": candidate_id,
+                "metrics": metrics,
+                "edge_ids": sorted(str(item) for item in (raw.get("edge_ids") or [])),
+                "source_fragment_ids": sorted(
+                    str(item) for item in (raw.get("source_fragment_ids") or [])
+                ),
+            }
+        )
+
+    normalized.sort(key=lambda item: item["candidate_id"])
+    if not normalized:
+        return {
+            "schema_version": "fire_branch_route_candidate_decision.v1",
+            "status": "needs_review",
+            "selected_candidate_id": None,
+            "criteria": ["到達目標灑水頭", "CAD 連續路徑", "證據完整度"],
+            "candidates": {},
+            "rejected_candidate_ids": [],
+        }
+
+    def rank_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        metrics = item["metrics"]
+        return (
+            -int(metrics["sprinkler_reached"]),
+            -metrics["continuous_coverage_ratio"],
+            -metrics["coverage_ratio"],
+            -metrics["diameter_evidence_ratio"],
+            -metrics["topology_consistency_ratio"],
+            metrics["non_route_intersections"],
+            metrics["turn_count"],
+            metrics["length"],
+            metrics["anchor_distance"],
+            item["candidate_id"],
+        )
+
+    ordered = sorted(normalized, key=rank_key)
+    selected = ordered[0]
+    result_candidates: dict[str, dict[str, Any]] = {}
+    for rank, item in enumerate(ordered, start=1):
+        metrics = item["metrics"]
+        reached = metrics["sprinkler_reached"]
+        reasons = [
+            "到達目標灑水頭" if reached else "未到達目標灑水頭",
+            f"CAD 連續覆蓋 {metrics['continuous_coverage_ratio']:.3f}",
+            f"管徑證據 {metrics['diameter_evidence_ratio']:.3f}",
+        ]
+        rejected_reasons: list[str] = []
+        if item is not selected:
+            if not reached and selected["metrics"]["sprinkler_reached"]:
+                rejected_reasons.append("未到達目標灑水頭")
+            if metrics["continuous_coverage_ratio"] < selected["metrics"]["continuous_coverage_ratio"]:
+                rejected_reasons.append("CAD 連續覆蓋較低")
+            if not rejected_reasons:
+                rejected_reasons.append("排序條件低於已選候選")
+        result_candidates[item["candidate_id"]] = {
+            **item,
+            "selected": item is selected,
+            "rank": rank,
+            "reasons": reasons,
+            "rejected_reasons": rejected_reasons,
+        }
+    return {
+        "schema_version": "fire_branch_route_candidate_decision.v1",
+        "status": "selected",
+        "selected_candidate_id": selected["candidate_id"],
+        "criteria": [
+            "先到達目標灑水頭",
+            "再看 CAD 連續覆蓋",
+            "再看管徑與拓樸證據",
+            "最後以轉折、長度及識別碼穩定排序",
+        ],
+        "candidates": result_candidates,
+        "rejected_candidate_ids": [
+            item["candidate_id"] for item in ordered[1:]
+        ],
+    }
+
+
+def build_revit_route_candidate_decisions(
+    assignments: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize Revit's per-sprinkler CAD assignment audit for the plan.
+
+    The Revit handler remains authoritative for the selected candidate.  This
+    adapter only gives the Python topology/SVG layers the same complete
+    candidate table and an explicit consistency check; it never replaces the
+    selected route or re-runs physical routing.
+    """
+
+    decisions: list[dict[str, Any]] = []
+    for assignment in assignments or []:
+        if not isinstance(assignment, Mapping):
+            continue
+        sprinkler_id = str(assignment.get("sprinkler_id") or "").strip()
+        raw_candidates = assignment.get("candidates") or []
+        normalized: list[dict[str, Any]] = []
+        revit_selected_key = _revit_candidate_key(
+            assignment.get("main_pipe_id"), assignment.get("source_import_id")
+        )
+        for index, raw in enumerate(raw_candidates):
+            if not isinstance(raw, Mapping):
+                continue
+            main_pipe_id = raw.get("main_pipe_id")
+            source_import_id = raw.get("source_import_id")
+            candidate_id = (
+                f"sprinkler:{sprinkler_id}:"
+                f"main:{main_pipe_id}:source:{source_import_id}:candidate:{index}"
+            )
+            item = dict(raw)
+            item.update(
+                {
+                    "candidate_id": candidate_id,
+                    "sprinkler_reached": bool(
+                        raw.get("sprinkler_end_matched")
+                    ),
+                    "anchor_distance": raw.get("mean_offset_mm"),
+                    "length": raw.get("branch_length_mm"),
+                    "edge_ids": [str(main_pipe_id)] if main_pipe_id is not None else [],
+                    "source_fragment_ids": (
+                        [str(source_import_id)]
+                        if source_import_id is not None
+                        else []
+                    ),
+                    "revit_candidate_key": _revit_candidate_key(
+                        main_pipe_id, source_import_id
+                    ),
+                }
+            )
+            normalized.append(item)
+
+        if normalized:
+            comparison = compare_cad_route_candidates(normalized)
+        else:
+            comparison = compare_cad_route_candidates([])
+        authoritative_id = next(
+            (
+                item["candidate_id"]
+                for item in normalized
+                if item.get("revit_candidate_key") == revit_selected_key
+            ),
+            None,
+        )
+        comparator_id = comparison.get("selected_candidate_id")
+        consistent = (
+            authoritative_id is not None
+            and comparator_id == authoritative_id
+        )
+        status = str(assignment.get("status") or "").strip() or "unknown"
+        if authoritative_id is None:
+            comparison_status = "needs_review"
+            selection_message = "Revit 沒有保留可核對的 CAD 候選。"
+        elif consistent:
+            comparison_status = "selected"
+            selection_message = "Revit 選取結果與候選排序一致。"
+        else:
+            comparison_status = "needs_review"
+            selection_message = (
+                "Revit 選取結果與 Python 候選排序不同，保留 Revit 結果並要求核對。"
+            )
+        comparison.update(
+            {
+                "status": comparison_status,
+                "sprinkler_id": sprinkler_id,
+                "revit_assignment_status": status,
+                "authority": "revit_cad_route_evidence",
+                "revit_selected_candidate_id": authoritative_id,
+                "selection_consistent": consistent,
+                "selection_message": selection_message,
+            }
+        )
+        decisions.append(comparison)
+    return decisions
+
+
+def _revit_candidate_key(main_pipe_id: Any, source_import_id: Any) -> str:
+    return f"main:{main_pipe_id}|source:{source_import_id}"
+
+
+def _candidate_ratio(raw: Mapping[str, Any], key: str) -> float:
+    try:
+        value = float(raw.get(key) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, value)) if math.isfinite(value) else 0.0
+
+
+def _candidate_number(raw: Mapping[str, Any], *keys: str) -> float:
+    for key in keys:
+        try:
+            value = float(raw.get(key) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            return max(0.0, value)
+    return 0.0
 
 
 def build_cad_route_graph(
@@ -85,6 +333,18 @@ def build_cad_route_graph(
     edges = _aggregate_edges(raw_edges, nodes)
     _finalize_nodes(nodes, edges)
     components = _build_components(nodes, edges)
+    component_by_edge: dict[str, str] = {}
+    component_by_node: dict[str, str] = {}
+    for component in components:
+        component_id = str(component["component_id"])
+        for edge_id in component["edge_ids"]:
+            component_by_edge[str(edge_id)] = component_id
+        for node_id in component["node_ids"]:
+            component_by_node[str(node_id)] = component_id
+    for edge in edges:
+        edge["component_id"] = component_by_edge.get(str(edge["edge_id"]))
+    for node in nodes:
+        node["component_id"] = component_by_node.get(str(node["node_id"]))
     return {
         "schema_version": "fire_branch_cad_route_graph.v1",
         "coordinate_tolerance": tolerance,

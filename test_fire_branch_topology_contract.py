@@ -238,9 +238,52 @@ class FireBranchTopologyContractTests(unittest.TestCase):
         self.assertIn("ReadFireBranchTopologyPlan(payload)", handler)
         self.assertIn("executionCrossPlans", handler)
         self.assertIn("PreparePlannedCrossBranchEnd(", handler)
+        self.assertIn("PlanEntityId", handler)
+        self.assertIn("topology_plan_identity", handler)
+        self.assertIn("branch_plan_entity_ids", handler)
+        self.assertIn("plan_entity_id = item.PlanEntityId", handler)
+        self.assertIn("ValidateFireBranchTopologyPlanIdentity(payload, requireDiameterPlan)", handler)
+        self.assertIn('schemaVersion != "fire_branch_topology_plan.v5"', handler)
         self.assertLess(
             handler.index("PreparePlannedCrossBranchEnd(", handler.index("foreach (FireBranchJunctionPlan crossPlan")),
             handler.index("TryCreateCrossAtPipeEnds(", handler.index("foreach (FireBranchJunctionPlan crossPlan")),
+        )
+
+    def test_cad_smart_mode_does_not_reject_topology_with_legacy_cross_guess(self):
+        handler = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
+        create_action = handler.index('if (action == "create_fire_branch_pipes"')
+        creation = handler[
+            handler.index("var rows = BuildFireBranchRows", create_action):
+            handler.index("int plannedRowCount = 0", handler.index("var rows = BuildFireBranchRows", create_action))
+        ]
+
+        self.assertIn("BuildFireBranchTopologyJunctionPlans(rows, topologyPlan)", handler)
+        self.assertIn("MergeFireBranchTopologyJunctionPlans(", creation)
+        self.assertNotIn("generatedCrossKeys", creation)
+        self.assertNotIn("executionCrossPlans.Keys.Any", creation)
+
+    def test_topology_only_sandbox_keeps_sprinkler_drop_path_out_of_scope(self):
+        handler = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn(
+            'bool topologyOnlySandbox = isSandbox && sandboxScope == "topology_only";',
+            handler,
+        )
+        self.assertIn(
+            'if (sandboxScope == "topology_only" && !isSandbox)',
+            handler,
+        )
+        self.assertIn(
+            "if (topologyOnlySandbox)\n                                                {\n                                                    // M2-M4 sandbox",
+            handler,
+        )
+        self.assertIn(
+            "sprinkler_connectivity_assessed = !topologyOnlySandbox",
+            handler,
+        )
+        self.assertIn(
+            "if (!topologyOnlySandbox)\n                                {\n                                    ValidateFireBranchJunctionRouting(",
+            handler,
         )
 
     def test_revit_consumes_planned_geometry_instead_of_rebuilding_average_row(self):
@@ -391,17 +434,16 @@ class FireBranchTopologyContractTests(unittest.TestCase):
         self.assertIn("sprinklerDropFeet", routing)
         self.assertIn("connector.Radius * 2.0", routing)
 
-    def test_confirmed_sprinkler_connector_path_is_frozen_while_branch_inlet_changes(self):
+    def test_confirmed_sprinkler_connector_path_uses_exact_endpoint_and_physical_reachability(self):
         handler = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
         connect = method_body(
             handler,
             "private static bool TryConnectCompletedDropToSprinkler",
             "private static FireDropAssembly CreateFireDropWithTransition",
         ).replace("\r\n", "\n")
-        self.assertEqual(
-            "706ade85816e82313e19f0072c1951db73fa35f359da6ef248a7571e0d2d1021",
-            hashlib.sha256(connect.encode("utf-8")).hexdigest(),
-        )
+        self.assertIn("FindConnectorNear(currentSprinkler, sprinklerPoint)", connect)
+        self.assertIn("IsPhysicallyReachableFromFireElement", connect)
+        self.assertIn("endpoint_distance_mm=", connect)
 
     def test_drop_uses_one_reducing_tee_without_branch_transition_spool(self):
         handler = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
@@ -486,32 +528,38 @@ class FireBranchTopologyContractTests(unittest.TestCase):
         self.assertIn("transactionGroup.RollBack()", source)
         self.assertIn('fireBranchStage = "partial_failure_decision"', source)
         self.assertIn("TaskDialogResult.CommandLink1", source)
-        self.assertIn('verification_status = partialFailureKept ? "partial" : "verified"', source)
+        self.assertIn('partialFailureKept ? "partial" : "failed"', source)
         self.assertIn("connected_sprinkler_count = verifiedConnectedSprinklerCount", source)
 
     def test_connector_verification_excludes_intentionally_skipped_sprinklers(self):
         source = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
 
         self.assertIn("List<FamilyInstance> plannedSprinklers = sprinklerData", source)
-        self.assertIn("var unconnectedSprinklerIds = plannedSprinklers", source)
+        self.assertIn("var unconnectedSprinklerIds = topologyOnlySandbox", source)
+        self.assertIn(": plannedSprinklers", source)
         self.assertNotIn("var unconnectedSprinklerIds = sprinklers", source)
 
     def test_branch_setting_controls_created_pipes_and_connected_sprinklers(self):
         source = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
         application = APPLICATION_SOURCE.read_text(encoding="utf-8")
 
-        self.assertIn("TryConnectCompletedDropToSprinkler", source)
-        self.assertIn("SprinklerConnectionPipe", source)
-        self.assertIn("sprinklerConnector.Radius * 2.0", source)
-        self.assertIn("NewTransitionFitting(dropConnector, stubConnector)", source)
+        self.assertIn("CreateFireDropForSystem", source)
+        self.assertIn("pipeConnector.ConnectTo(startConnector)", source)
+        self.assertIn("explicit system type did not persist after sprinkler connection", source)
+        self.assertNotIn("Pipe sprinklerStub", source)
+        self.assertNotIn("NewTransitionFitting(dropConnector, stubConnector)", source)
         self.assertNotIn('"drop_connector_bridge"', source)
         self.assertNotIn("maximumRepairGap", source)
         self.assertLess(
             source.index("foreach (ElementId additionalId in additionalCreatedIds"),
             source.index("foreach (FirePendingSprinklerConnection pending"),
         )
-        self.assertIn("CreateFirePipeFromConnector(", source)
-        self.assertNotIn("dropConnector.ConnectTo(sprinklerConnector)", source)
+        drop_start = source.index("private static FireDropAssembly CreateFireDropWithTransition")
+        drop_end = source.index("private static List<ElementId> ResolveConnectedFireSystemIds", drop_start)
+        drop_method = source[drop_start:drop_end]
+        self.assertIn("CreateFireDropForSystem(", drop_method)
+        self.assertNotIn("CreateFirePipeConnectedToSprinkler(", drop_method)
+        self.assertNotIn("DN25 drop was deleted or left disconnected after reducing tee creation", drop_method)
         self.assertNotIn("targetPipingSystem.Add(sprinklerConnectorSet)", source)
         self.assertIn("private static Pipe CreateFirePipeFromConnector(", application)
         self.assertIn("ResolveConnectedFireSystemIds(", source)
@@ -613,15 +661,17 @@ class FireBranchTopologyContractTests(unittest.TestCase):
         self.assertIn('item.get("actual_system_type_ids")', queue_client)
         self.assertIn('item.get("system_change_failures")', queue_client)
 
-    def test_drop_connects_directly_to_one_reducing_tee(self):
+    def test_drop_uses_stable_explicit_system_pipe_before_tee(self):
         source = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
 
         self.assertNotIn("branch transition pipe creation failed", source)
         self.assertNotIn("CreateFireDropWithTransition.branch.NewTransitionFitting", source)
         self.assertIn("currentBranchConnection", source)
-        self.assertIn("branchConnectionConnectors.Any(connector => !connector.IsConnected)", source)
+        self.assertIn("CreateFireDropForSystem", source)
+        self.assertIn("TryConnectPipeToRun(doc, branchSegments, branchConnectionPipe, tapPoint)", source)
+        self.assertNotIn("branchConnectionConnectors.Any(connector => !connector.IsConnected)", source)
 
-    def test_sprinkler_connection_uses_bidirectional_physical_references(self):
+    def test_sprinkler_connection_accepts_direct_or_fitting_mediated_physical_path(self):
         source = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
         verification = method_body(
             source,
@@ -629,11 +679,10 @@ class FireBranchTopologyContractTests(unittest.TestCase):
             "private static FireDropAssembly CreateFireDropWithTransition",
         )
 
-        self.assertIn("dropReferencesSprinkler", verification)
-        self.assertIn("sprinklerReferencesDrop", verification)
-        self.assertIn("reference.ConnectorType != ConnectorType.Logical", verification)
+        self.assertIn("IsPhysicallyReachableFromFireElement", verification)
+        self.assertIn("new HashSet<long> { currentDrop.Id.Value }", verification)
         self.assertIn("endpoint_distance_mm=", verification)
-        self.assertNotIn("IsConnectedTo(sprinklerConnector)", verification)
+        self.assertNotIn("dropReferencesSprinkler", verification)
 
     def test_queue_error_distinguishes_missing_and_wrong_system_state(self):
         message = _format_revit_error(

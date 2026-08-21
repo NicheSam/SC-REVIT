@@ -6,7 +6,10 @@
     create_fire_branch_selection_request,
     create_fire_branch_snapshot_request,
 )
-from sc_revit.core.revit_queue_client import wait_for_revit_response
+from sc_revit.core.revit_queue_client import (
+    format_fire_branch_verification_failure,
+    wait_for_revit_response,
+)
 from rfa_reader import RfaReaderError
 
 _FAILURE = "Revit 消防支管建立請求失敗"
@@ -66,6 +69,7 @@ def request_create_fire_branch_pipes(
     pilot_source_row_index: int | None = None,
     require_diameter_plan: bool = False,
     model_plan_hash: str | None = None,
+    source_mode: str = "cad",
     timeout_seconds: int = 180,
 ) -> dict:
     request = create_fire_branch_pipes_request(
@@ -88,21 +92,22 @@ def request_create_fire_branch_pipes(
         pilot_source_row_index=pilot_source_row_index,
         require_diameter_plan=require_diameter_plan,
         model_plan_hash=model_plan_hash,
+        source_mode=source_mode,
     )
     payload = _wait(request.request_id, timeout_seconds)
     verification_status = payload.get("verification_status")
     retained_partial = (
+        execution_mode != "sandbox"
+        and
         verification_status == "partial"
         and payload.get("partial_success") is True
         and payload.get("retention_decision") == "kept"
         and payload.get("model_changes_kept") is True
     )
     if verification_status != "verified" and not retained_partial:
-        raise RfaReaderError(
-            "Revit 消防支管建立回傳無法辨識的驗證狀態："
-            + str(verification_status or "未提供")
-            + "。完整診斷已保留於工作流程紀錄。"
-        )
+        error = RfaReaderError(format_fire_branch_verification_failure(payload))
+        error.payload = payload
+        raise error
     return payload
 
 
@@ -114,6 +119,7 @@ def request_create_fire_branch_preview(
     level_id: str | int,
     branch_offset_cm: float,
     height_reference: str,
+    source_mode: str = "cad",
     timeout_seconds: int = 180,
 ) -> dict:
     request = create_fire_branch_preview_request(
@@ -123,6 +129,7 @@ def request_create_fire_branch_preview(
         level_id=level_id,
         branch_offset_cm=branch_offset_cm,
         height_reference=height_reference,
+        source_mode=source_mode,
     )
     return _wait(request.request_id, timeout_seconds)
 

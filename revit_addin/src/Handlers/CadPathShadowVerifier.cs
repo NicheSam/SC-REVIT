@@ -636,9 +636,33 @@ namespace RfaMetadataAddin
                 IncludeNonVisibleObjects = false,
                 View = activeView
             };
-            foreach (ImportInstance importInstance in new FilteredElementCollector(doc, activeView.Id)
+            List<ImportInstance> visibleImports = new FilteredElementCollector(doc, activeView.Id)
                 .OfClass(typeof(ImportInstance))
                 .Cast<ImportInstance>()
+                .ToList();
+            // A view-specific CAD link is the authoritative source for this
+            // workflow.  Revit's view collector can also return imports owned
+            // by other views, so do not let another floor plan's DWG compete
+            // with the active view.  If the view has no view-owned import,
+            // retain only model-wide imports as the documented fallback.
+            List<ImportInstance> viewOwnedImports = visibleImports
+                .Where(item => item.OwnerViewId != null
+                    && item.OwnerViewId.Value == activeView.Id.Value)
+                .ToList();
+            List<ImportInstance> modelWideImports = visibleImports
+                .Where(item => item.OwnerViewId == null
+                    || item.OwnerViewId.Value < 0)
+                .ToList();
+            // Prefer the active view's owned import.  A model-wide link is
+            // accepted only when it is the sole visible CAD source; never
+            // merge several model-wide imports and accidentally cross-match
+            // another drawing or floor.
+            IEnumerable<ImportInstance> activeViewImports = viewOwnedImports.Count > 0
+                ? viewOwnedImports
+                : modelWideImports.Count == 1
+                    ? modelWideImports
+                    : Enumerable.Empty<ImportInstance>();
+            foreach (ImportInstance importInstance in activeViewImports
                 .OrderBy(item => item.Id.Value))
             {
                 Autodesk.Revit.DB.Transform importTransform = importInstance.GetTotalTransform();

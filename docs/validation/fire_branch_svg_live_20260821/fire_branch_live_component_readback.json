@@ -1,0 +1,72 @@
+{
+  "document": "大甲分局_MEP_sc168jobim",
+  "view_id": 13301161,
+  "view_name": "-1. 地下壹層 撒水",
+  "cad_import_id": 13379416,
+  "cad_name": "位置 <未共用>",
+  "cad_category": "自動撒水設備配置圖-地下壹層",
+  "pipe": {
+    "id": 13563852,
+    "family": "FS_消防撒水管",
+    "diameter_mm": 100.0,
+    "length_mm": 7005.735,
+    "connector_count": 2,
+    "start_mm": {
+      "x": 79090.7945,
+      "y": -49877.6369,
+      "z": 100.0
+    },
+    "end_mm": {
+      "x": 72085.0595,
+      "y": -49877.6369,
+      "z": 100.0
+    }
+  },
+  "tee": {
+    "id": 13722992,
+    "family": "FS_消防撒水管_三通_螺牙",
+    "connector_count": 3,
+    "connector_diameters_mm": [
+      40.0,
+      40.0,
+      40.0
+    ]
+  },
+  "cross": {
+    "id": 13563873,
+    "family": "FS_消防撒水管_十字_焊接",
+    "connector_count": 4,
+    "connector_diameters_mm": [
+      100.0,
+      100.0,
+      100.0,
+      100.0
+    ]
+  },
+  "reducer": {
+    "id": 13737368,
+    "family": "FS_消防撒水管_變徑_螺牙",
+    "connector_count": 2,
+    "connector_diameters_mm": [
+      20.0,
+      25.0
+    ]
+  },
+  "elbow": {
+    "id": 13563857,
+    "family": "FS_消防撒水管_彎頭_焊接",
+    "connector_count": 2,
+    "connector_diameters_mm": [
+      100.0,
+      100.0
+    ]
+  },
+  "counts": {
+    "fire_pipes": 276,
+    "fire_fittings": 168,
+    "tee": 50,
+    "cross": 17,
+    "reducer": 66,
+    "elbow": 35
+  }
+}

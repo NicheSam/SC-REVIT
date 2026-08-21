@@ -42,6 +42,65 @@ class FireBranchDevelopmentFlowTests(unittest.TestCase):
 
         self.assertIs(result, retained_partial)
 
+    def test_create_client_rejects_retained_partial_result_in_sandbox(self) -> None:
+        from sc_revit.fire_branch import client
+
+        invalid_sandbox_partial = {
+            "verification_status": "partial",
+            "partial_success": True,
+            "retention_decision": "kept",
+            "model_changes_kept": True,
+            "failed": [{"reason": "connector_verification_failed"}],
+        }
+        with patch.object(
+            client,
+            "create_fire_branch_pipes_request",
+            return_value=SimpleNamespace(request_id="sandbox-partial-request"),
+        ), patch.object(client, "_wait", return_value=invalid_sandbox_partial):
+            with self.assertRaisesRegex(client.RfaReaderError, "partial"):
+                client.request_create_fire_branch_pipes(
+                    main_pipe_id=1,
+                    sprinkler_ids=[2],
+                    pipe_type_id=3,
+                    system_type_id=4,
+                    level_id=5,
+                    diameter_mm=25,
+                    branch_offset_cm=0,
+                    height_reference="center",
+                    execution_mode="sandbox",
+                )
+
+    def test_verification_failure_formatter_explains_root_cause_and_recovery(self) -> None:
+        from sc_revit.core.revit_queue_client import format_fire_branch_verification_failure
+
+        message = format_fire_branch_verification_failure(
+            {
+                "verification_status": "failed",
+                "rollback_status": "verified",
+                "restoration_verified": True,
+                "connected_sprinkler_count": 25,
+                "unconnected_sprinkler_count": 4,
+                "failed": [
+                    {
+                        "reason": "opposite_side_endpoint_tee_creation_failed",
+                        "row": 58.09,
+                        "topology": "OppositeSidesSameElevation",
+                        "detail": "Revit rejected the fitting without an exception detail.",
+                    },
+                    {
+                        "reason": "connector_verification_failed",
+                        "unreachable_sprinkler_ids": [13599867, 13599868],
+                    },
+                ],
+            }
+        )
+
+        self.assertIn("主管端點兩側三通建立失敗", message)
+        self.assertIn("主管端點的第一個管件建立失敗", message)
+        self.assertIn("沙盒檢查已自動回復", message)
+        self.assertIn("13599867、13599868", message)
+        self.assertIn("完整診斷已保留", message)
+
     def test_hot_rule_identity_includes_diameter_analysis_rules(self) -> None:
         from sc_revit.fire_branch import diameter_analysis, hot_analysis
 
@@ -144,6 +203,7 @@ class FireBranchDevelopmentFlowTests(unittest.TestCase):
                     pilot_source_row_index=0,
                     require_diameter_plan=True,
                     model_plan_hash="a" * 64,
+                    source_mode="uniform",
                     diameter_plan=[
                         {
                             "segment_id": "row-0-0",
@@ -178,19 +238,77 @@ class FireBranchDevelopmentFlowTests(unittest.TestCase):
         self.assertEqual(0, payload["pilot_source_row_index"])
         self.assertTrue(payload["require_diameter_plan"])
         self.assertEqual("a" * 64, payload["model_plan_hash"])
+        self.assertEqual("uniform", payload["source_mode"])
+
+    def test_topology_only_sandbox_scope_is_carried_to_revit_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            request_dir = Path(temp_dir) / "requests"
+            response_dir = Path(temp_dir) / "responses"
+            error_dir = Path(temp_dir) / "errors"
+            with (
+                patch.object(queue_protocol, "REQUEST_DIR", request_dir),
+                patch.object(queue_protocol, "RESPONSE_DIR", response_dir),
+                patch.object(queue_protocol, "ERROR_DIR", error_dir),
+                patch.object(queue_protocol, "record_request_created"),
+            ):
+                request = queue_protocol.create_fire_branch_pipes_request(
+                    main_pipe_id=100,
+                    sprinkler_ids=[200, 201],
+                    pipe_type_id=300,
+                    system_type_id=400,
+                    level_id=500,
+                    diameter_mm=25,
+                    branch_offset_cm=0,
+                    height_reference="管中心",
+                    execution_mode="sandbox",
+                    sandbox_scope="topology_only",
+                )
+                payload = json.loads(
+                    (request_dir / f"{request.request_id}.json").read_text(encoding="utf-8")
+                )
+
+        self.assertEqual("test_fire_branch_pipes", payload["action"])
+        self.assertEqual("sandbox", payload["execution_mode"])
+        self.assertEqual("topology_only", payload["sandbox_scope"])
+        self.assertFalse(payload["delete_preview_after_create"])
+
+    def test_preview_request_carries_uniform_source_mode_to_revit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            request_dir = Path(temp_dir) / "requests"
+            response_dir = Path(temp_dir) / "responses"
+            error_dir = Path(temp_dir) / "errors"
+            with (
+                patch.object(queue_protocol, "REQUEST_DIR", request_dir),
+                patch.object(queue_protocol, "RESPONSE_DIR", response_dir),
+                patch.object(queue_protocol, "ERROR_DIR", error_dir),
+                patch.object(queue_protocol, "record_request_created"),
+            ):
+                request = queue_protocol.create_fire_branch_preview_request(
+                    main_pipe_id=100,
+                    sprinkler_ids=[200],
+                    level_id=500,
+                    branch_offset_cm=0,
+                    height_reference="管中心",
+                    source_mode="uniform",
+                )
+                payload = json.loads(
+                    (request_dir / f"{request.request_id}.json").read_text(encoding="utf-8")
+                )
+
+        self.assertEqual("uniform", payload["source_mode"])
 
     def test_gui_exposes_plain_language_development_flow(self) -> None:
         source = (ROOT / "gui_app.py").read_text(encoding="utf-8")
 
-        self.assertIn("目前模式：安全預檢", source)
+        self.assertIn("目前狀態", source)
         self.assertIn("分析並顯示預覽", source)
-        self.assertIn("建立前完整檢查（完成後自動復原）", source)
-        self.assertIn("正式建立消防支管", source)
-        self.assertNotIn("測試通過後才會開放正式建立", source)
+        self.assertIn("背景安全檢核", source)
+        self.assertIn("建立消防支管", source)
         self.assertNotIn("select_single_sprinkler(", source)
         self.assertNotIn("build_single_sprinkler_model_plan(", source)
         self.assertNotIn("len(sprinklers) != 1", source)
         self.assertIn('self._start_fire_branch_pipes("sandbox")', source)
+        self.assertIn("self._fire_commit_requested", source)
         self.assertIn("sandbox_scope=None", source)
         self.assertIn('self.fire_commit_button.configure(state="normal")', source)
         self.assertIn("詳細資料", source)
@@ -199,12 +317,22 @@ class FireBranchDevelopmentFlowTests(unittest.TestCase):
         self.assertIn('diameter_analysis["topology_plan"]', source)
         self.assertIn("管徑分析：已判斷", source)
 
+    def test_revit_routes_uniform_mode_through_the_stable_nearest_main_path(self) -> None:
+        source = (ROOT / "revit_addin" / "src" / "Handlers" / "FireBranchHandler.cs").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("BuildLegacyUniformFireBranchItems", source)
+        self.assertIn('sourceMode == "uniform"', source)
+        self.assertIn("FireBranchSandboxFailurePreprocessor", source)
+        self.assertIn("FailureProcessingResult.ProceedWithRollBack", source)
+
     def test_gui_resets_test_approval_when_context_changes_or_request_fails(self) -> None:
         source = (ROOT / "gui_app.py").read_text(encoding="utf-8")
 
         self.assertIn("def _reset_fire_sandbox_approval", source)
-        self.assertIn('self._reset_fire_sandbox_approval("請重新分析並執行建立前檢查")', source)
-        self.assertIn('self._reset_fire_sandbox_approval("建立前檢查未通過，請修正後重試")', source)
+        self.assertIn('self._reset_fire_sandbox_approval("請重新分析後再建立")', source)
+        self.assertIn('self._reset_fire_sandbox_approval("安全檢核未通過，請修正後重試")', source)
 
     def test_hot_worker_client_can_reload_from_project_source(self) -> None:
         from sc_revit.fire_branch.hot_worker_client import run_hot_preview_analysis
@@ -577,13 +705,15 @@ class FireBranchDevelopmentFlowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "殘差超過 1 mm"):
             _calibrate_dwg_to_revit(source, model, 1.0)
 
-    def test_revit_host_asks_whether_to_keep_partial_failure_evidence(self) -> None:
+    def test_revit_host_rolls_back_sandbox_and_only_commit_can_keep_partial_evidence(self) -> None:
         source = (
             ROOT / "revit_addin" / "src" / "Handlers" / "FireBranchHandler.cs"
         ).read_text(encoding="utf-8")
         self.assertIn('action == "test_fire_branch_pipes"', source)
         self.assertIn('executionMode == "sandbox"', source)
         self.assertIn("transactionGroup.RollBack()", source)
+        self.assertIn('fireBranchStage = "sandbox_restore_after_failure"', source)
+        self.assertIn("sandboxRolledBackEarly = true", source)
         self.assertIn('fireBranchStage = "partial_failure_decision"', source)
         self.assertIn('new TaskDialog("SC REVIT 消防支管")', source)
         self.assertIn("保留成功部分", source)
@@ -596,7 +726,9 @@ class FireBranchDevelopmentFlowTests(unittest.TestCase):
         self.assertIn("restoration_verified = restorationVerified", source)
         self.assertIn("residual_created_element_ids = residualCreatedElementIds", source)
         self.assertNotIn("model_restored = isSandbox", source)
-        self.assertIn("model_changes_kept = !isSandbox || partialFailureKept", source)
+        self.assertIn("model_changes_kept = !isSandbox", source)
+        self.assertIn("diagnostic_evidence_element_ids = evidenceElementIds", source)
+        self.assertIn('partialFailureKept ? "partial" : "failed"', source)
 
         gui_source = (ROOT / "gui_app.py").read_text(encoding="utf-8")
         self.assertIn("format_fire_branch_failure_item", gui_source)
@@ -629,23 +761,26 @@ class FireBranchDevelopmentFlowTests(unittest.TestCase):
         self.assertIn("require_diameter_plan", source)
         self.assertIn("model_plan_hash", source)
 
-    def test_revit_host_adapts_final_stub_to_actual_sprinkler_connector(self) -> None:
+    def test_revit_host_uses_stable_explicit_system_dn25_drop_sequence(self) -> None:
         source = (
             ROOT / "revit_addin" / "src" / "Handlers" / "FireBranchHandler.cs"
         ).read_text(encoding="utf-8")
-        application_source = (
-            ROOT / "revit_addin" / "src" / "RfaMetadataApplication.cs"
-        ).read_text(encoding="utf-8")
-
+        self.assertIn("CreateFireDropForSystem", source)
+        self.assertIn("pipeConnector.ConnectTo(startConnector)", source)
+        self.assertIn("explicit-system pipe creation returned null", source)
+        self.assertIn(
+            "Pipe pipe = CreateFirePipe(",
+            source,
+        )
+        drop_start = source.index("private static FireDropAssembly CreateFireDropWithTransition")
+        drop_end = source.index("private static List<ElementId> ResolveConnectedFireSystemIds", drop_start)
+        drop_method = source[drop_start:drop_end]
+        self.assertIn("CreateFireDropForSystem(", drop_method)
+        self.assertNotIn("CreateFirePipeConnectedToSprinkler(", drop_method)
+        self.assertNotIn("DN25 drop was deleted or left disconnected after reducing tee creation", drop_method)
+        self.assertIn("TryConnectPipeToRun", drop_method)
         self.assertIn("TryConnectCompletedDropToSprinkler", source)
-        self.assertIn("SprinklerConnectionPipe", source)
-        self.assertIn("sprinklerConnector.Radius * 2.0", source)
-        self.assertIn("SprinklerTransition", source)
-        self.assertIn("sprinklerStub", source)
-        self.assertIn("NewTransitionFitting(dropConnector, stubConnector)", source)
-        self.assertIn("CreateFirePipeFromConnector(", source)
-        self.assertIn("sprinklerConnector,", source)
-        self.assertNotIn("dropConnector.ConnectTo(sprinklerConnector)", source)
+        self.assertIn("IsPhysicallyReachableFromFireElement(", source)
         self.assertIn("FireSprinklerDropDiameterMillimeters", source)
         self.assertLess(
             source.index("ApplyFireBranchDiameterPlan(", source.index("CreateFireDropWithTransition(")),
@@ -653,10 +788,7 @@ class FireBranchDevelopmentFlowTests(unittest.TestCase):
         )
         self.assertIn("doc.GetElement(sprinklerId) as FamilyInstance", source)
         self.assertIn("FindConnectorNear(currentSprinkler, sprinklerPoint)", source)
-        self.assertIn(
-            "Pipe.Create(doc, pipeTypeId, levelId, startConnector, end)",
-            application_source,
-        )
+        self.assertIn("pipe.MEPSystem", source)
 
     def test_revit_host_does_not_preassign_sprinklers_before_physical_connection(self) -> None:
         source = (

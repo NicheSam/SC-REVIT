@@ -460,6 +460,7 @@ def create_fire_branch_pipes_request(
     pilot_source_row_index: int | None = None,
     require_diameter_plan: bool = False,
     model_plan_hash: str | None = None,
+    source_mode: str = "cad",
 ) -> QueueRequest:
     if execution_mode not in {"commit", "sandbox"}:
         raise ValueError("execution_mode must be 'commit' or 'sandbox'")
@@ -494,6 +495,7 @@ def create_fire_branch_pipes_request(
         "delete_preview_after_create": delete_preview_after_create,
         "execution_mode": execution_mode,
         "require_diameter_plan": bool(require_diameter_plan),
+        "source_mode": str(source_mode or "cad"),
     }
     if diameter_plan:
         payload["diameter_plan"] = diameter_plan
@@ -521,6 +523,7 @@ def create_fire_branch_preview_request(
     level_id: str | int,
     branch_offset_cm: float,
     height_reference: str,
+    source_mode: str = "cad",
 ) -> QueueRequest:
     ensure_queue_dirs()
     request = QueueRequest(
@@ -537,6 +540,7 @@ def create_fire_branch_preview_request(
         "level_id": str(level_id),
         "branch_offset_cm": branch_offset_cm,
         "height_reference": height_reference,
+        "source_mode": str(source_mode or "cad"),
     }
     _write_request_json(request, payload)
     return request

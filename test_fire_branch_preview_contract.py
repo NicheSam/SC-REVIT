@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
 
+from sc_revit.fire_branch.network_preview import FireBranchNetworkPreview
+
 
 ROOT = Path(__file__).resolve().parent
 FIRE_BRANCH_SOURCE = ROOT / "revit_addin" / "src" / "Handlers" / "FireBranchHandler.cs"
@@ -10,6 +12,54 @@ CAD_POINT_SOURCE = ROOT / "revit_addin" / "src" / "Handlers" / "CadPointHandler.
 
 
 class FireBranchPreviewContractTests(unittest.TestCase):
+    def test_fittings_are_read_only_in_network_preview(self):
+        source = (ROOT / "sc_revit" / "fire_branch" / "network_preview.py").read_text(encoding="utf-8")
+
+        self.assertNotIn('text="修改接頭"', source)
+        self.assertNotIn('text="修改異徑"', source)
+        self.assertNotIn("command=self._apply_junction_kind", source)
+        self.assertNotIn("command=self._apply_reducer", source)
+        self.assertNotIn("def _apply_junction_kind", source)
+        self.assertNotIn("def _apply_reducer", source)
+        self.assertNotIn("_junction_kind_var", source)
+        self.assertNotIn("_reducer_from_var", source)
+        self.assertNotIn("_reducer_to_var", source)
+        self.assertIn("接頭由管段管徑自動推導", source)
+        self.assertIn("異徑由前後管段管徑自動推導", source)
+
+    def test_edit_callback_keeps_previous_preview_when_rebuild_raises(self):
+        class _Status:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        class _PreviewStub:
+            _append_plan_revision = FireBranchNetworkPreview._append_plan_revision
+
+            def __init__(self):
+                self._plan_history = [{"revision": 1}]
+                self._plan_history_index = 0
+                self._status_var = _Status()
+                self.calls = []
+                self.fail_revision = None
+
+            def _use_plan(self, plan, **_kwargs):
+                self.calls.append(plan["revision"])
+                if plan["revision"] == self.fail_revision:
+                    raise RuntimeError("測試重繪失敗")
+
+        preview = _PreviewStub()
+        self.assertTrue(preview._append_plan_revision({"revision": 2}))
+        self.assertEqual(1, preview._plan_history_index)
+        preview.fail_revision = 3
+
+        self.assertFalse(preview._append_plan_revision({"revision": 3}))
+        self.assertEqual(1, preview._plan_history_index)
+        self.assertEqual([2, 3, 2], preview.calls)
+        self.assertIn("修改未套用", preview._status_var.value)
+
     def test_fire_branch_preview_uses_direct_context_at_plan_display_z(self):
         source = FIRE_BRANCH_SOURCE.read_text(encoding="utf-8")
 
